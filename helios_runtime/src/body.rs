@@ -17,9 +17,9 @@
 use crate::port::{ChannelKey, InstanceKey, Keyed, Provenance};
 
 use helios_core::control::actuation_model::ActuationModel;
-use helios_core::spatial::FrameId;
+use helios_core::spatial::{transforms::Convention, FrameId};
 
-use std::any::TypeId;
+use std::{any::TypeId, collections::HashMap};
 
 /// Everything the agent's body offers the pipeline at the bus seam: the
 /// channels it measures, and the actuators that take the command back off the
@@ -43,6 +43,11 @@ pub struct BodyCapabilities {
     /// time; leaving it out here would refuse the build of a stack that reads
     /// it, even as an optional input.
     pub publishes: Vec<BodyChannel>,
+    /// Each frame of the body, `base_link` and every mount, with its axis
+    /// convention as the body's config declares it. The body owns each, so
+    /// its convention here is the frame's one convention; a node defining
+    /// one fails the build.
+    pub frames: HashMap<FrameId, Convention>,
     /// The actuators the body exposes and the setpoint kind each accepts.
     /// The build checks every actuator the pipeline drives against it, so a
     /// misnamed actuator or a setpoint of the wrong kind fails the build
@@ -68,16 +73,23 @@ pub struct BodyCapabilities {
 /// body channel that states none, and an instance another writer also
 /// writes.
 ///
+/// A channel the unit writes at a nominal rate states it, shared by every
+/// instance it lists: a sensor at its device's rate, a truth rig at the
+/// host's. A value written once, such as a static edge, or only on an event
+/// states none; a unit whose instances differ declares one channel for each
+/// rate.
+///
 /// The build completes each into a
 /// [`ChannelDescription`](crate::port::ChannelDescription) whose writer is the
 /// body, so a host never states a channel's writer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BodyChannel {
     key: ChannelKey,
     unit: String,
     provenance: Provenance,
     mount: Option<FrameId>,
     instances: Vec<InstanceKey>,
+    rate_hz: Option<f64>,
 }
 
 impl BodyChannel {
@@ -92,6 +104,7 @@ impl BodyChannel {
             provenance,
             mount: None,
             instances: Vec::new(),
+            rate_hz: None,
         }
     }
 
@@ -126,6 +139,23 @@ impl BodyChannel {
         self
     }
 
+    /// States that the unit writes the channel `hz` times a second,
+    /// nominally.
+    ///
+    /// # Panics
+    ///
+    /// If `hz` is not finite and positive: a host bug, caught when the host
+    /// describes its body.
+    pub fn with_rate(mut self, hz: f64) -> Self {
+        assert!(
+            hz.is_finite() && hz > 0.0,
+            "a rate must be finite and positive, got {hz} for {}",
+            self.key
+        );
+        self.rate_hz = Some(hz);
+        self
+    }
+
     pub fn key(&self) -> &ChannelKey {
         &self.key
     }
@@ -146,6 +176,12 @@ impl BodyChannel {
     /// channel that holds one value.
     pub fn instances(&self) -> &[InstanceKey] {
         &self.instances
+    }
+
+    /// How many times a second the unit writes the channel, nominally.
+    /// `None` for a value written once or on an event.
+    pub fn rate_hz(&self) -> Option<f64> {
+        self.rate_hz
     }
 }
 
@@ -175,6 +211,7 @@ mod tests {
     fn default_is_empty() {
         let caps = BodyCapabilities::default();
         assert!(caps.publishes.is_empty());
+        assert!(caps.frames.is_empty());
         assert_eq!(caps.actuation, ActuationModel::default());
     }
 

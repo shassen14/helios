@@ -18,6 +18,10 @@
 //! A writer of a keyed channel also states the instances it writes: the body
 //! with the channel, a node on its output port. Several writers may share a keyed channel, each
 //! described with its own instances.
+//!
+//! A description carries the nominal rate its writer writes at: the body
+//! states it with the channel, and the builder gives a node output its
+//! node's. An outside input has none.
 
 use crate::body::BodyChannel;
 use crate::port::channel::ChannelKey;
@@ -29,12 +33,13 @@ use helios_core::spatial::FrameId;
 ///
 /// Readers are not part of a description: who reads a channel is a fact of the
 /// graph, not of the channel.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChannelDescription {
     key: ChannelKey,
     writer: Writer,
     mount: Option<FrameId>,
     instances: Vec<InstanceKey>,
+    rate_hz: Option<f64>,
 }
 
 impl ChannelDescription {
@@ -48,6 +53,7 @@ impl ChannelDescription {
             },
             mount: channel.mount().cloned(),
             instances: channel.instances().to_vec(),
+            rate_hz: channel.rate_hz(),
         }
     }
 
@@ -59,17 +65,20 @@ impl ChannelDescription {
             writer: Writer::Outside,
             mount: None,
             instances: Vec::new(),
+            rate_hz: None,
         }
     }
 
     /// A channel node `node` writes, from one of its output ports. It has no
-    /// mount until the builder resolves the output's rule.
+    /// mount until the builder resolves the output's rule, and no rate until
+    /// the builder gives it the node's.
     pub(crate) fn node(key: ChannelKey, node: impl Into<String>) -> Self {
         Self {
             key,
             writer: Writer::Node { node: node.into() },
             mount: None,
             instances: Vec::new(),
+            rate_hz: None,
         }
     }
 
@@ -85,6 +94,14 @@ impl ChannelDescription {
     /// channel carries its own.
     pub(crate) fn with_instances(mut self, instances: Vec<InstanceKey>) -> Self {
         self.instances = instances;
+        self
+    }
+
+    /// The description with `rate_hz` as the rate its node writes it at, as
+    /// the builder derives it from the node's gate and the host's tick. A
+    /// body channel carries its own.
+    pub(crate) fn with_rate(mut self, rate_hz: Option<f64>) -> Self {
+        self.rate_hz = rate_hz;
         self
     }
 
@@ -106,6 +123,15 @@ impl ChannelDescription {
     /// channel that holds one value.
     pub fn instances(&self) -> &[InstanceKey] {
         &self.instances
+    }
+
+    /// How many times a second the writer writes the channel, nominally,
+    /// the same for every instance it writes: a body channel's as the host
+    /// stated it, a node output's from the node's gate or else the host's
+    /// tick. `None` for an outside input, a value written once, or a node
+    /// output when the host declared no tick rate.
+    pub fn rate_hz(&self) -> Option<f64> {
+        self.rate_hz
     }
 }
 
@@ -203,6 +229,20 @@ mod tests {
         assert_eq!(ChannelDescription::body(&unmounted).mount(), None);
         assert_eq!(ChannelDescription::outside(key()).mount(), None);
         assert_eq!(ChannelDescription::node(key(), "ekf").mount(), None);
+    }
+
+    /// A body channel's description carries the rate the host stated; an
+    /// outside input has none, and a node output none until the builder
+    /// gives it one.
+    #[test]
+    fn a_body_channel_keeps_its_rate() {
+        let gps = BodyChannel::new(key(), "gps", Provenance::Simulated).with_rate(10.0);
+        assert_eq!(ChannelDescription::body(&gps).rate_hz(), Some(10.0));
+
+        let unrated = BodyChannel::new(key(), "battery", Provenance::Simulated);
+        assert_eq!(ChannelDescription::body(&unrated).rate_hz(), None);
+        assert_eq!(ChannelDescription::outside(key()).rate_hz(), None);
+        assert_eq!(ChannelDescription::node(key(), "ekf").rate_hz(), None);
     }
 
     /// A keyed body channel's description carries the instances the host

@@ -9,13 +9,13 @@ use super::declaration::NodeDeclaration;
 
 use crate::{
     port::{ChannelDescription, MountRule, Writer},
-    ChannelKey, MountRefusal, NodeId, PipelineBuildError, PortDescriptor,
+    ChannelKey, FrameOwner, MountRefusal, NodeId, PipelineBuildError, PortDescriptor,
 };
 
 use helios_core::kernel::identifier::is_dotted_name;
 use helios_core::prelude::AgentId;
 use helios_core::spatial::id::FrameScope;
-use helios_core::spatial::FrameId;
+use helios_core::spatial::{transforms::Convention, FrameId};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -117,11 +117,17 @@ impl std::fmt::Display for MountLookupError {
 /// part measures, so another agent's frame, a global frame or `base_link` is
 /// a wiring mistake. A mount at a frame a node defines is refused with the
 /// frame's owners. One error per channel.
+///
+/// Every mount that passes must also be in `body_frames`, where the body
+/// gives it its convention; one error per frame left out, naming the first
+/// unit mounted there.
 pub(super) fn check_body_mounts(
     agent: &AgentId,
     descriptions: &[ChannelDescription],
+    body_frames: &HashMap<FrameId, Convention>,
     errors: &mut Vec<PipelineBuildError>,
 ) {
+    let mut unlisted = HashSet::new();
     for description in descriptions {
         let (Writer::Body { unit, .. }, Some(mount)) = (description.writer(), description.mount())
         else {
@@ -133,6 +139,11 @@ pub(super) fn check_body_mounts(
                 channel: description.key().clone(),
                 mount: mount.clone(),
                 refusal,
+            });
+        } else if !body_frames.contains_key(mount) && unlisted.insert(mount) {
+            errors.push(PipelineBuildError::FrameWithoutConvention {
+                frame: mount.clone(),
+                owner: FrameOwner::Unit { unit: unit.clone() },
             });
         }
     }
@@ -266,10 +277,23 @@ mod tests {
         ChannelDescription::body(&channel)
     }
 
-    fn refusals(descriptions: &[ChannelDescription]) -> Vec<MountRefusal> {
+    fn mount_errors(
+        descriptions: &[ChannelDescription],
+        body_frames: &HashMap<FrameId, Convention>,
+    ) -> Vec<PipelineBuildError> {
         let mut errors = vec![];
-        check_body_mounts(&agent(), descriptions, &mut errors);
+        check_body_mounts(&agent(), descriptions, body_frames, &mut errors);
         errors
+    }
+
+    /// The refusals of `descriptions` over a body listing every mount.
+    fn refusals(descriptions: &[ChannelDescription]) -> Vec<MountRefusal> {
+        let body_frames = descriptions
+            .iter()
+            .filter_map(|description| description.mount())
+            .map(|mount| (mount.clone(), Convention::Flu))
+            .collect();
+        mount_errors(descriptions, &body_frames)
             .into_iter()
             .map(|error| match error {
                 PipelineBuildError::RefusedBodyMount { refusal, .. } => refusal,
@@ -312,16 +336,42 @@ mod tests {
     /// The refusal names the unit, the channel and the frame.
     #[test]
     fn a_refused_mount_names_unit_channel_and_frame() {
-        let mut errors = vec![];
-        check_body_mounts(
-            &agent(),
+        let errors = mount_errors(
             &[body("gps", Some(FrameId::base_link(agent())))],
-            &mut errors,
+            &HashMap::new(),
         );
         let message = errors[0].to_string();
         assert!(message.contains("unit \"gps\""), "{message}");
         assert!(message.contains(&sensor("gps").to_string()), "{message}");
         assert!(message.contains("agent.car.base_link"), "{message}");
+    }
+
+    /// A mount the body gives no convention is refused once, however many
+    /// channels share it, naming the first unit there; a refused mount is
+    /// reported only as refused.
+    #[test]
+    fn a_mount_without_a_convention_is_refused_once() {
+        let imu = FrameId::agent(agent(), "imu");
+        let descriptions = [
+            body("imu.accel", Some(imu.clone())),
+            body("imu.gyro", Some(imu.clone())),
+            body("gps", Some(FrameId::base_link(agent()))),
+        ];
+
+        let errors = mount_errors(&descriptions, &HashMap::new());
+
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            matches!(&errors[0], PipelineBuildError::FrameWithoutConvention { frame, owner: FrameOwner::Unit { unit } }
+                if *frame == imu && unit == "imu.accel"),
+            "{:?}",
+            errors[0]
+        );
+        assert!(
+            matches!(errors[1], PipelineBuildError::RefusedBodyMount { .. }),
+            "{:?}",
+            errors[1]
+        );
     }
 
     fn deproject(input: &str, output: &str, rule_input: &str) -> NodeDeclaration {

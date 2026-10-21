@@ -88,15 +88,22 @@ pub enum PipelineBuildError {
         mount: FrameId,
         refusal: MountRefusal,
     },
-    /// A frame has two owners: two nodes define it, or a node defines one the
-    /// body owns (its `base_link`, or a frame it mounts a channel at). A frame
-    /// means what its one owner says it does, so a pose held in it can't be
-    /// two things. Reported once per extra owner.
+    /// A frame has two owners: two nodes define it, a node defines one the
+    /// body owns (its `base_link`, a frame it mounts a channel at, or another
+    /// of its frames) or the host owns (a world frame), or the host and the
+    /// body both name it. A frame means what its one owner says it does, in
+    /// the axes its owner gives it, so a pose held in it can't be two things.
+    /// Reported once per extra owner.
     FrameDefinedTwice {
         frame: FrameId,
         first: FrameOwner,
         second: FrameOwner,
     },
+    /// The body owns a frame, its `base_link` or a frame it mounts a channel
+    /// at, but does not list it in
+    /// [`BodyCapabilities::frames`](crate::BodyCapabilities::frames), so the
+    /// frame has no axis convention. Reported once per frame.
+    FrameWithoutConvention { frame: FrameId, owner: FrameOwner },
     /// A node reads a channel whose kind its class may not read, such as an
     /// algorithm reading truth. Isolating an algorithm under perfect upstream
     /// swaps the node upstream of it for a mock instead. Reported once per
@@ -305,6 +312,13 @@ impl std::fmt::Display for PipelineBuildError {
                     "frame {frame} is defined by {first} and by {second}; a frame has one owner"
                 )
             }
+            PipelineBuildError::FrameWithoutConvention { frame, owner } => {
+                write!(
+                    f,
+                    "frame {frame} is owned by {owner}, but the body lists no axis convention \
+                     for it; the body lists each of its frames with its convention"
+                )
+            }
             PipelineBuildError::KindNotReadable {
                 node_name,
                 class,
@@ -458,13 +472,15 @@ impl std::fmt::Display for MountRefusal {
 /// Who owns a frame, as reported in [`PipelineBuildError::FrameDefinedTwice`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameOwner {
-    /// The body, as its `base_link`.
+    /// The body, as its `base_link` or another of its frames.
     Body,
     /// The body unit that mounts a channel at the frame.
     Unit { unit: String },
     /// The node that declares it defines the frame, such as an estimator
     /// holding its state in it.
     Node { node: String },
+    /// The host, as one of its world frames.
+    Host,
 }
 
 impl std::fmt::Display for FrameOwner {
@@ -473,6 +489,7 @@ impl std::fmt::Display for FrameOwner {
             FrameOwner::Body => write!(f, "the body"),
             FrameOwner::Unit { unit } => write!(f, "unit \"{unit}\""),
             FrameOwner::Node { node } => write!(f, "node \"{node}\""),
+            FrameOwner::Host => write!(f, "the host"),
         }
     }
 }

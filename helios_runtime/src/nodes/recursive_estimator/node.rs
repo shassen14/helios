@@ -91,10 +91,11 @@ impl RecursiveEstimatorNode {
     /// channel named after the node. `mount_readings` are the channels whose
     /// mounts the builder and the aiding models resolve, each with the axes
     /// it is read in. The node defines `root`, the frame it holds its state
-    /// in.
+    /// in, in the axes `root_convention`.
     pub(crate) fn declare_ports<'a>(
         name: &str,
         root: &FrameId,
+        root_convention: Convention,
         input_required: &[ChannelKey],
         input_optional: &[ChannelKey],
         aiding: impl IntoIterator<Item = (&'a str, &'a ChannelKey)>,
@@ -103,7 +104,7 @@ impl RecursiveEstimatorNode {
         let mut builder = PortDescriptorBuilder::algorithm()
             .inputs_from_slices(input_required, input_optional)
             .output(estimator_output(name))
-            .defines_frame(root.clone());
+            .defines_frame(root.clone(), root_convention);
         for (entry, channel) in aiding {
             builder = aiding_ports(builder, entry, channel);
         }

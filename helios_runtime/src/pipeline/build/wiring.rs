@@ -11,7 +11,7 @@ use super::declaration::NodeDeclaration;
 use super::instances::check_instances;
 use super::kinds::check_kind_access;
 use super::mounts::{check_body_mounts, check_mount_rules};
-use super::owners::check_frame_owners;
+use super::owners::{check_frame_owners, FrameConventions};
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
@@ -21,6 +21,7 @@ use crate::{
 
 use helios_core::kernel::identifier::{is_dotted_name, is_level, LEVEL_SEPARATOR};
 use helios_core::prelude::AgentId;
+use helios_core::spatial::{transforms::Convention, FrameId};
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -30,8 +31,8 @@ use std::{
 /// Checks the graph's wiring and returns every problem found. An empty list
 /// means each node name is unique and fits one part of a watcher path, every
 /// unit the body declares is one level, every mount the body states is a frame
-/// on `agent`'s body other than `base_link`, every frame the body or a node
-/// owns has one owner, every output mounted at an input's mount names a
+/// on `agent`'s body other than `base_link`, every frame the body, the host
+/// or a node owns has one owner, every output mounted at an input's mount names a
 /// channel its node reads in the same tick, every node reads and writes only
 /// the channel kinds its class may, every channel name is well formed and
 /// names one channel, every watchable leaf a node declares is well formed and
@@ -40,17 +41,29 @@ use std::{
 /// required or optional, has exactly one supplier: a node output, a body
 /// channel, or a declared outside input, and every writer of a keyed channel
 /// declares instances no other writer does. `descriptions` holds every
-/// channel some writer declares.
+/// channel some writer declares; `body_frames` and `host_frames` the frames
+/// the body and the host own, with their conventions.
+///
+/// Also returns each owned frame's convention, as its owner gives it.
 pub(super) fn check_wiring(
     agent: &AgentId,
     nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
-) -> Vec<PipelineBuildError> {
+    body_frames: &HashMap<FrameId, Convention>,
+    host_frames: &HashMap<FrameId, Convention>,
+) -> (Vec<PipelineBuildError>, FrameConventions) {
     let mut errors = vec![];
     check_node_names(nodes, &mut errors);
     check_unit_names(descriptions, &mut errors);
-    check_body_mounts(agent, descriptions, &mut errors);
-    check_frame_owners(agent, nodes, descriptions, &mut errors);
+    check_body_mounts(agent, descriptions, body_frames, &mut errors);
+    let conventions = check_frame_owners(
+        agent,
+        nodes,
+        descriptions,
+        body_frames,
+        host_frames,
+        &mut errors,
+    );
     check_mount_rules(nodes, &mut errors);
     check_kind_access(nodes, &mut errors);
     let refused_names = check_channel_names(nodes, descriptions, &mut errors);
@@ -58,7 +71,7 @@ pub(super) fn check_wiring(
     let supplier_of = map_suppliers(descriptions, &mut errors);
     check_instances(descriptions, &mut errors);
     check_inputs_supplied(nodes, &supplier_of, &refused_names, &mut errors);
-    errors
+    (errors, conventions)
 }
 
 /// Errors, logs and the within-level order all identify a node by name, so a

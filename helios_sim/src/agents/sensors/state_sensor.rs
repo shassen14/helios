@@ -169,7 +169,7 @@ mod tests {
 
     use helios_core::interchange::measurement::sensor::GpsPosition;
     use helios_core::prelude::{AgentId, TfProvider};
-    use helios_core::spatial::FrameId;
+    use helios_core::spatial::{transforms::Convention, FrameId};
     use helios_runtime::port::{ChannelKey, PortBus, PortDescriptorBuilder};
     use helios_runtime::{
         BodyCapabilities, PipelineBuilder, PipelineNode, PortDescriptor, TickContext,
@@ -180,6 +180,7 @@ mod tests {
     use nalgebra::Vector3;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+    use std::collections::HashMap;
 
     /// Counts `sample` calls so the tests can assert exactly when the generic
     /// system consults a sensor.
@@ -245,7 +246,12 @@ mod tests {
                 SensorTimer::from_rate(RATE_HZ),
                 SensorRng(ChaCha8Rng::seed_from_u64(TEST_SEED)),
                 GlobalTransform::default(),
-                SensorPublishChannel::new::<GpsPosition>(TEST_CHANNEL, TEST_UNIT, test_mount()),
+                SensorPublishChannel::new::<GpsPosition>(
+                    TEST_CHANNEL,
+                    TEST_UNIT,
+                    test_mount(),
+                    RATE_HZ,
+                ),
                 ChildOf(agent),
             ))
             .id();
@@ -378,6 +384,7 @@ mod tests {
             .add_node(Box::new(consumer))
             .with_body_capabilities(BodyCapabilities {
                 publishes: vec![channel.description().clone()],
+                frames: HashMap::from([(test_mount(), Convention::Flu)]),
                 ..Default::default()
             })
             .build()
@@ -457,6 +464,7 @@ mod tests {
                         "test.channel",
                         "test_unit",
                         FrameId::agent(AgentId::new("car_1"), *name),
+                        RATE_HZ,
                     ),
                     ChildOf(agent),
                 ))

@@ -16,7 +16,7 @@
 use super::config::{AidingConfig, AugmentationConfig, RecursiveEstimatorConfig};
 use super::nis_health::NisWindow;
 use super::node::RecursiveEstimatorNode;
-use super::plan::{AidingPlan, AugmentationPlan, EstimatorPlan};
+use super::plan::{state_root_convention, AidingPlan, AugmentationPlan, EstimatorPlan};
 
 use crate::assembly::{AutonomyRegistry, BuildContext, BuildFailure, FactoryOutput};
 use crate::nodes::estimation::EstimatorComponents;
@@ -78,9 +78,12 @@ fn build(
     let filter = components.parse_filter(FILTER_KEY, config.filter, ctx)?;
 
     let input = dynamics.component.input();
+    let root = &ctx.frames().root;
+    let root_convention = state_root_convention(&dynamics.component.dynamics().schema(), ctx)?;
     let descriptor = RecursiveEstimatorNode::declare_ports(
         ctx.node_name(),
-        &ctx.frames().root,
+        root,
+        root_convention,
         input.required_channels(),
         input.optional_channels(),
         aiding

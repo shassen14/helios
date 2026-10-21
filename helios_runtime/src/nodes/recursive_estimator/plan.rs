@@ -169,10 +169,10 @@ fn augmentation_blocks(
 /// augmentation blocks, with P₀ and Q from that schema and the mean pose from
 /// `pose`.
 ///
-/// Fails if the dynamics hold the state in another root than the node's (see
-/// [`check_state_root`]), if an aiding model's measurement disagrees with the
-/// state (a frame the state can't anchor, a convention it doesn't use),
-/// naming the sensor, or if the state can't hold the pose.
+/// Fails if an aiding model's measurement disagrees with the state (a frame
+/// the state can't anchor, a convention it doesn't use), naming the sensor,
+/// or if the state can't hold the pose. The state's root was checked when the
+/// node was declared ([`state_root_convention`]).
 ///
 /// Built valid at time zero; the node restamps it with the pipeline clock on
 /// its first tick.
@@ -190,7 +190,6 @@ fn seeded_state(
         Arc::new(base.extended(augmentation))
     };
 
-    check_state_root(&schema, ctx)?;
     for source in aiding {
         check_measurement_state_agreement(&schema, &source.model().schema(), source.sensor())
             .map_err(|err| format!("aiding channel {}: {err}", source.channel()))?;
@@ -203,16 +202,20 @@ fn seeded_state(
     Ok(state)
 }
 
-/// Fails unless the state is held in the root the node defines, `ctx`'s: a
-/// position, if the state holds one, is in that root, and the agent's `odom`
-/// appears in the state only when it is that root.
+/// The axes the state holds the root the node defines, `ctx`'s, in. Fails
+/// unless the state is held in that root: a position, if the state holds one,
+/// is in that root, the agent's `odom` appears in the state only when it is
+/// that root, and some block names the root.
 ///
 /// The node declares its root from the context, but the dynamics build the
 /// state. A dynamics that names `odom` instead of the context's root would
 /// publish a shadow estimate in the authoritative estimate's frame while the
 /// build believed it held elsewhere. A state with no position (attitude or
 /// velocity only) is checked by the second rule alone.
-fn check_state_root(schema: &StateSchema, ctx: &BuildContext<'_>) -> Result<(), String> {
+pub(super) fn state_root_convention(
+    schema: &StateSchema,
+    ctx: &BuildContext<'_>,
+) -> Result<Convention, String> {
     let root = &ctx.frames().root;
     if let Some(position) = schema.reference_frame() {
         if &position != root {
@@ -231,7 +234,12 @@ fn check_state_root(schema: &StateSchema, ctx: &BuildContext<'_>) -> Result<(), 
              context gives"
         ));
     }
-    Ok(())
+    schema.convention_of(root).ok_or_else(|| {
+        format!(
+            "the dynamics hold nothing in {root}, the root this node holds its estimate in; \
+             dynamics build the state in the frames the build context gives"
+        )
+    })
 }
 
 /// The pose of `base_link` in the estimate's root that `pose` describes: a translation and

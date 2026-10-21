@@ -105,6 +105,8 @@ mod tests {
     use helios_core::spatial::FrameId;
     use nalgebra::Vector3;
 
+    const GPS_RATE_HZ: f64 = 10.0;
+
     fn gps_reading() -> SensorReading<GpsPosition> {
         SensorReading {
             sensor: FrameId::agent(AgentId::new("test_agent"), "gps"),
@@ -120,6 +122,7 @@ mod tests {
             "gps.primary",
             "gps",
             FrameId::agent(AgentId::new("test_agent"), "gps.primary"),
+            GPS_RATE_HZ,
         )
     }
 

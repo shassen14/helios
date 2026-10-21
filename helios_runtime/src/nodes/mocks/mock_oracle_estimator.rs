@@ -85,16 +85,20 @@ impl MockOracleEstimatorNode {
     pub(crate) fn new(name: impl Into<String>, frames: EstimationFrames) -> Self {
         let name = name.into();
         let output = estimator_output(&name);
+        let schema = Arc::new(kinematic_carrier_schema(&frames));
+        let root_convention = schema
+            .convention_of(&frames.root)
+            .expect("the carrier schema holds its position in the root");
         let descriptor = PortDescriptorBuilder::mock()
             .input(truth_tf())
             .optional(truth_twist())
             .output(output.clone())
-            .defines_frame(frames.root.clone())
+            .defines_frame(frames.root.clone(), root_convention)
             .build();
         Self {
             name,
             output,
-            schema: Arc::new(kinematic_carrier_schema(&frames)),
+            schema,
             pose_instance: InstanceKey::of::<StampedTransform>(&frames.body),
             twist_instance: InstanceKey::of::<StampedTwist<Flu>>(&frames.body),
             frames,

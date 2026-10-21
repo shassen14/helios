@@ -24,7 +24,7 @@ pub mod rate_gate;
 pub use autonomy_pipeline::{AutonomyPipeline, ReadMount};
 pub(crate) use build::NodeDeclaration;
 pub use build::{
-    ChannelUses, CycleEdge, FrameOwner, InputMounts, MountLookupError, MountRefusal,
-    NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
+    ChannelUses, CycleEdge, FrameConventions, FrameOwner, InputMounts, MountLookupError,
+    MountRefusal, NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
 };
 pub use node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};

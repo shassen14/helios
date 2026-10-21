@@ -8,6 +8,7 @@ pub mod assembly;
 pub mod body;
 pub mod channels;
 pub mod diagnostics;
+pub mod host;
 pub mod nodes;
 pub mod observe;
 pub mod pipeline;
@@ -17,10 +18,12 @@ pub mod stamped;
 pub mod tf_service;
 
 pub use crate::body::{BodyCapabilities, BodyChannel};
+pub use crate::host::HostDeclaration;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
-    AutonomyPipeline, ChannelUses, CycleEdge, FrameOwner, InputMounts, MountLookupError,
-    MountRefusal, NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder, ReadMount,
+    AutonomyPipeline, ChannelUses, CycleEdge, FrameConventions, FrameOwner, InputMounts,
+    MountLookupError, MountRefusal, NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
+    ReadMount,
 };
 pub use crate::port::{
     ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, MountReading,

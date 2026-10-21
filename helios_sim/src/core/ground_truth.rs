@@ -9,7 +9,9 @@ use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::quantities::FreeVector;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::{ErasedTransform, Transform as CoreTransform};
+use helios_core::spatial::transforms::{
+    Convention, ConventionOf, ErasedTransform, Transform as CoreTransform,
+};
 use helios_core::spatial::FrameId;
 use helios_runtime::channels::{truth_tf, truth_twist};
 use helios_runtime::port::{ChannelError, ChannelKey};
@@ -22,6 +24,13 @@ use std::collections::HashSet;
 /// The unit that publishes ground truth: the simulator's truth rig, a perfect
 /// sensor every simulated body carries.
 pub const TRUTH_RIG_UNIT: &str = "truth_rig";
+
+/// The datum's axes: the world axes [`GroundTruthState`] holds, which truth is
+/// published in.
+type DatumAxes = Enu;
+
+/// The axis convention of the world's datum, as the host declares it.
+pub const DATUM_CONVENTION: Convention = DatumAxes::CONVENTION;
 
 /// Mirrors Avian3D physics state into [`GroundTruthState`] each tick:
 /// pose (world ENU), linear/angular velocity (world ENU), and derived
@@ -76,15 +85,17 @@ pub fn ground_truth_sync_system(
 
 /// The channels [`publish_truth_channels_system`] writes for `agent`, as
 /// the body publishes them: `truth.tf` and `truth.twist`, each with one
-/// instance, the agent's `base_link`, and exact because the simulator is
-/// ground truth.
-pub fn truth_body_channels(agent: &AgentId) -> [BodyChannel; 2] {
+/// instance, the agent's `base_link`, exact because the simulator is ground
+/// truth, and written every tick, at the host's `tick_rate_hz`.
+pub fn truth_body_channels(agent: &AgentId, tick_rate_hz: f64) -> [BodyChannel; 2] {
     let base_link = FrameId::base_link(agent.clone());
     [
         BodyChannel::new(truth_tf(), TRUTH_RIG_UNIT, Provenance::Exact)
-            .with_instances::<StampedTransform>([base_link.clone()]),
+            .with_instances::<StampedTransform>([base_link.clone()])
+            .with_rate(tick_rate_hz),
         BodyChannel::new(truth_twist(), TRUTH_RIG_UNIT, Provenance::Exact)
-            .with_instances::<StampedTwist<Flu>>([base_link]),
+            .with_instances::<StampedTwist<Flu>>([base_link])
+            .with_rate(tick_rate_hz),
     ]
 }
 
@@ -168,7 +179,7 @@ fn truth_messages(
     now: MonotonicTime,
 ) -> (StampedTransform, StampedTwist<Flu>) {
     let base_link = FrameId::base_link(agent.clone());
-    let body_to_datum = CoreTransform::<Flu, Enu>::from_isometry(ground_truth.pose);
+    let body_to_datum = CoreTransform::<Flu, DatumAxes>::from_isometry(ground_truth.pose);
     let datum_to_body = body_to_datum.inverse();
 
     let pose = StampedTransform {
@@ -182,8 +193,9 @@ fn truth_messages(
         relative_to: datum.clone(),
         expressed_in: base_link,
         stamp: now,
-        linear: FreeVector::<Enu>::from_raw(ground_truth.linear_velocity).reexpress(&datum_to_body),
-        angular: FreeVector::<Enu>::from_raw(ground_truth.angular_velocity)
+        linear: FreeVector::<DatumAxes>::from_raw(ground_truth.linear_velocity)
+            .reexpress(&datum_to_body),
+        angular: FreeVector::<DatumAxes>::from_raw(ground_truth.angular_velocity)
             .reexpress(&datum_to_body),
     };
     (pose, twist)
@@ -220,8 +232,6 @@ fn warn_dropped_truth(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use helios_core::spatial::transforms::Convention;
 
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

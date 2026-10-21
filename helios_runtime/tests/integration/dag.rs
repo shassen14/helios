@@ -3,6 +3,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc, Mutex,
@@ -27,10 +28,10 @@ use helios_runtime::{
         PortDescriptorBuilder,
     },
     prelude::{Health, PipelineNode, Stamped, TickContext},
-    BodyCapabilities, BodyChannel, MountRefusal, Provenance, Writer,
+    BodyCapabilities, BodyChannel, FrameOwner, HostDeclaration, MountRefusal, Provenance, Writer,
 };
 
-use crate::common::MockRuntime;
+use crate::common::{host, mount_frames, MockRuntime, TICK_RATE_HZ};
 
 /// The agent every pipeline in this file serves.
 const AGENT: &str = "bot";
@@ -1511,13 +1512,14 @@ fn a_body_channels_mount_is_checked_on_write() {
     type Batch = Vec<SensorReading<u32>>;
     let gps = ChannelKey::measurement::<Batch>("gps");
     let frame = |leaf: &str| FrameId::agent(AgentId::new(AGENT), leaf);
+    let publishes = vec![
+        BodyChannel::new(gps.clone(), BODY_UNIT, Provenance::Simulated).with_mount(frame("gps")),
+    ];
     let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::new("consumer", gps.clone())))
         .with_body_capabilities(BodyCapabilities {
-            publishes: vec![
-                BodyChannel::new(gps.clone(), BODY_UNIT, Provenance::Simulated)
-                    .with_mount(frame("gps")),
-            ],
+            frames: mount_frames(&publishes),
+            publishes,
             ..Default::default()
         })
         .build()
@@ -1833,11 +1835,13 @@ fn a_plan_is_built_with_the_mounts_its_inputs_resolve_to() {
             Ok(Box::new(node) as Box<dyn PipelineNode>)
         }),
     );
+    let publishes = vec![
+        BodyChannel::new(range.clone(), BODY_UNIT, Provenance::Simulated)
+            .with_mount(lidar_mount.clone()),
+    ];
     let body = BodyCapabilities {
-        publishes: vec![
-            BodyChannel::new(range.clone(), BODY_UNIT, Provenance::Simulated)
-                .with_mount(lidar_mount.clone()),
-        ],
+        frames: mount_frames(&publishes),
+        publishes,
         ..Default::default()
     };
 
@@ -1878,15 +1882,17 @@ fn read_mounts_lists_each_read_mount_once_with_the_axes_it_is_read_in() {
     let accel = ChannelKey::measurement::<Sensor>("imu.accel");
     let gyro = ChannelKey::measurement::<Truth>("imu.gyro");
     let unread = ChannelKey::measurement::<ChA>("mag");
+    let publishes = vec![
+        BodyChannel::new(accel.clone(), BODY_UNIT, Provenance::Simulated)
+            .with_mount(imu_mount.clone()),
+        BodyChannel::new(gyro.clone(), BODY_UNIT, Provenance::Simulated)
+            .with_mount(imu_mount.clone()),
+        BodyChannel::new(unread, BODY_UNIT, Provenance::Simulated)
+            .with_mount(FrameId::agent(agent.clone(), "mag")),
+    ];
     let body = BodyCapabilities {
-        publishes: vec![
-            BodyChannel::new(accel.clone(), BODY_UNIT, Provenance::Simulated)
-                .with_mount(imu_mount.clone()),
-            BodyChannel::new(gyro.clone(), BODY_UNIT, Provenance::Simulated)
-                .with_mount(imu_mount.clone()),
-            BodyChannel::new(unread, BODY_UNIT, Provenance::Simulated)
-                .with_mount(FrameId::agent(agent.clone(), "mag")),
-        ],
+        frames: mount_frames(&publishes),
+        publishes,
         ..Default::default()
     };
 
@@ -2089,6 +2095,150 @@ fn a_plan_built_under_another_name_is_refused() {
             errors.as_slice(),
             [PipelineBuildError::ConstructedNodeMisnamed { node_name, built_name }]
                 if node_name == "planned_as" && built_name == "built_as"
+        ),
+        "{errors:?}"
+    );
+}
+
+// =========================================================================
+// == Rates and frame conventions ==
+// =========================================================================
+
+/// A node writing `output`, gated to `rate_hz` when given.
+fn writing_at(name: &str, output: ChannelKey, rate_hz: Option<f64>) -> Box<dyn PipelineNode> {
+    let descriptor = PortDescriptorBuilder::algorithm().output(output);
+    let descriptor = match rate_hz {
+        Some(hz) => descriptor.rate_hz(hz),
+        None => descriptor,
+    };
+    Box::new(DeclaringNode {
+        name: name.to_string(),
+        descriptor: descriptor.build(),
+    })
+}
+
+/// The rate the description of `key` carries in `pipeline`.
+fn rate_of(pipeline: &helios_runtime::AutonomyPipeline, key: &ChannelKey) -> Option<f64> {
+    pipeline
+        .descriptions()
+        .iter()
+        .find(|description| description.key() == key)
+        .and_then(|description| description.rate_hz())
+}
+
+/// A body channel keeps its stated rate; a gated node's outputs carry its
+/// gate, capped at the host's tick, since a node fires at most once a tick;
+/// an ungated node's carry the tick; an outside input carries none.
+#[test]
+fn each_writer_s_description_carries_its_rate() {
+    let gps = ikey_named::<Sensor>("gps");
+    let (slow, fast, every_tick) = (
+        ikey_named::<ChA>("slow"),
+        ikey_named::<ChB>("fast"),
+        ikey_named::<ChC>("every_tick"),
+    );
+    let goal = ikey_named::<ChD>("goal");
+
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(writing_at("planner", slow.clone(), Some(2.0)))
+        .add_node(writing_at("fast", fast.clone(), Some(10.0 * TICK_RATE_HZ)))
+        .add_node(writing_at("relay", every_tick.clone(), None))
+        .with_body_capabilities(BodyCapabilities {
+            publishes: vec![
+                BodyChannel::new(gps.clone(), BODY_UNIT, Provenance::Exact).with_rate(10.0)
+            ],
+            ..Default::default()
+        })
+        .with_outside_inputs(vec![goal.clone()])
+        .with_host(host())
+        .build()
+        .unwrap_or_else(|errors| panic!("{errors:?}"));
+
+    assert_eq!(rate_of(&pipeline, &gps), Some(10.0));
+    assert_eq!(rate_of(&pipeline, &slow), Some(2.0));
+    assert_eq!(rate_of(&pipeline, &fast), Some(TICK_RATE_HZ));
+    assert_eq!(rate_of(&pipeline, &every_tick), Some(TICK_RATE_HZ));
+    assert_eq!(rate_of(&pipeline, &goal), None);
+}
+
+/// Without the host's declaration an ungated node's outputs have no rate:
+/// the tick it would inherit is unknown.
+#[test]
+fn without_a_host_an_ungated_output_has_no_rate() {
+    let (slow, every_tick) = (ikey_named::<ChA>("slow"), ikey_named::<ChC>("every_tick"));
+
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(writing_at("planner", slow.clone(), Some(2.0)))
+        .add_node(writing_at("relay", every_tick.clone(), None))
+        .build()
+        .unwrap_or_else(|errors| panic!("{errors:?}"));
+
+    assert_eq!(rate_of(&pipeline, &slow), Some(2.0));
+    assert_eq!(rate_of(&pipeline, &every_tick), None);
+}
+
+/// The body's frames, the host's datum and the root a node defines each reach
+/// the built pipeline's table, in the convention their owner gives.
+#[test]
+fn the_built_pipeline_exposes_each_owner_s_convention() {
+    let base_link = FrameId::base_link(AgentId::new(AGENT));
+    let odom = FrameId::odom(AgentId::new(AGENT));
+    let datum = FrameId::global("datum");
+    let estimator = Box::new(DeclaringNode {
+        name: "ekf".to_string(),
+        descriptor: PortDescriptorBuilder::algorithm()
+            .defines_frame(odom.clone(), Convention::Enu)
+            .build(),
+    });
+
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(estimator)
+        .with_body_capabilities(BodyCapabilities {
+            frames: HashMap::from([(base_link.clone(), Convention::Flu)]),
+            ..Default::default()
+        })
+        .with_host(HostDeclaration {
+            world_frames: HashMap::from([(datum.clone(), Convention::Enu)]),
+            ..host()
+        })
+        .build()
+        .unwrap_or_else(|errors| panic!("{errors:?}"));
+
+    let conventions = pipeline.frame_conventions();
+    assert_eq!(conventions.convention_of(&base_link), Some(Convention::Flu));
+    assert_eq!(conventions.convention_of(&odom), Some(Convention::Enu));
+    assert_eq!(conventions.convention_of(&datum), Some(Convention::Enu));
+}
+
+/// A node defining the host's datum fails the build: the host owns it.
+#[test]
+fn a_node_defining_a_host_frame_fails_the_build() {
+    let datum = FrameId::global("datum");
+    let estimator = Box::new(DeclaringNode {
+        name: "ekf".to_string(),
+        descriptor: PortDescriptorBuilder::algorithm()
+            .defines_frame(datum.clone(), Convention::Enu)
+            .build(),
+    });
+
+    let Err(errors) = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(estimator)
+        .with_host(HostDeclaration {
+            world_frames: HashMap::from([(datum.clone(), Convention::Enu)]),
+            ..host()
+        })
+        .build()
+    else {
+        panic!("expected the datum's second owner to be refused");
+    };
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::FrameDefinedTwice {
+                frame,
+                first: FrameOwner::Host,
+                ..
+            }] if *frame == datum
         ),
         "{errors:?}"
     );

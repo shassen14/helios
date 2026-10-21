@@ -32,12 +32,12 @@ use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::quantities::{FluVector, FreeVector};
 use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::{ErasedTransform, Transform};
+use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform};
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 use nalgebra::{Isometry3, Vector3};
 
-use crate::common::MockRuntime;
+use crate::common::{host, mount_frames, MockRuntime};
 
 /// A `[nodes]` entry for a teleop mapper named `teleop` with a car's tuning:
 /// only surge and yaw are active.
@@ -135,6 +135,7 @@ fn channels_with_imu(agent: &AgentId, others: Vec<BodyChannel>) -> Vec<BodyChann
 /// A body publishing `channels` and driving no actuators.
 fn body_publishing(channels: Vec<BodyChannel>) -> BodyCapabilities {
     BodyCapabilities {
+        frames: mount_frames(&channels),
         publishes: channels,
         ..Default::default()
     }
@@ -186,6 +187,7 @@ fn teleop_only_stack_builds_without_a_controller() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         teleop_body(),
+        host(),
     );
 
     assert!(
@@ -205,6 +207,7 @@ fn empty_or_dotted_agent_name_is_refused_alone() {
             &AutonomyRegistry::default(),
             AgentId::new(name),
             teleop_body(),
+            host(),
         );
         let Err(errors) = result else {
             panic!("agent name {name:?} should be refused");
@@ -231,6 +234,7 @@ fn teleop_reference_is_intent_driven_not_free_running() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         teleop_body(),
+        host(),
     )
     .expect("teleop-only stack must build");
 
@@ -257,6 +261,7 @@ fn teleop_intent_is_mapped_into_the_reference() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         teleop_body(),
+        host(),
     )
     .expect("teleop stack with a mapper config must build");
 
@@ -320,6 +325,7 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
             &AgentId::new("test_agent"),
             vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
+        host(),
     )
     .expect("estimator + grid stack must build");
 
@@ -361,6 +367,7 @@ fn two_grids_publish_to_distinct_channels() {
                 cloud(&AgentId::new("test_agent"), "scan.far"),
             ],
         )),
+        host(),
     )
     .expect("two grids under distinct keys must build");
 
@@ -500,6 +507,7 @@ fn state_and_reference_body() -> BodyCapabilities {
             ),
         ],
         actuation: test_actuation(),
+        ..Default::default()
     }
 }
 
@@ -512,6 +520,7 @@ fn drive_force_stack_builds_both_controllers_and_the_allocator() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     )
     .expect("DriveForce stack must build");
 
@@ -552,6 +561,7 @@ fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     )
     .expect("DriveForce stack must build");
 
@@ -653,6 +663,7 @@ fn decoupled_stack_builds_both_spaces_and_both_allocators() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     )
     .expect("decoupled two-allocator stack must build");
 
@@ -691,6 +702,7 @@ fn decoupled_legs_merge_into_one_actuator_terminal() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     )
     .expect("decoupled two-allocator stack must build");
 
@@ -764,6 +776,7 @@ fn a_controller_of_the_wrong_type_fails_the_build_naming_it() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     ) else {
         panic!("a controller of the wrong type must not build");
     };
@@ -811,6 +824,7 @@ fn two_folds_of_one_type_drive_two_allocators() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     )
     .expect("two folds of one type must build");
 
@@ -856,6 +870,7 @@ fn an_allocator_with_no_command_fold_fails_the_build_naming_its_input() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     ) else {
         panic!("an allocator with no command source must not build");
     };
@@ -888,6 +903,7 @@ fn an_actuator_the_body_lacks_fails_the_build_naming_the_body() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     ) else {
         panic!("an actuator the body lacks must not build");
     };
@@ -916,6 +932,7 @@ fn a_setpoint_kind_the_body_does_not_accept_fails_the_build() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     ) else {
         panic!("a setpoint kind the actuator does not accept must not build");
     };
@@ -945,6 +962,7 @@ fn two_allocators_driving_one_actuator_fail_the_build_naming_both() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     ) else {
         panic!("two members driving one actuator must not build");
     };
@@ -970,6 +988,7 @@ fn an_allocator_outside_the_actuator_seam_does_not_reach_the_body() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         state_and_reference_body(),
+        host(),
     )
     .expect("an unmerged allocator is not an error");
 
@@ -1025,6 +1044,7 @@ fn planner_without_a_map_fails_the_build_naming_it() {
             &AgentId::new("test_agent"),
             vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
+        host(),
     ) else {
         panic!("a planner with no map must not build");
     };
@@ -1068,6 +1088,7 @@ fn follower_reads_the_path_of_the_planner_its_section_names() {
             &AgentId::new("test_agent"),
             vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
+        host(),
     );
     assert!(
         built.is_ok(),
@@ -1092,6 +1113,7 @@ fn follower_naming_no_planner_fails_the_build_naming_it() {
             &AgentId::new("test_agent"),
             vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
+        host(),
     ) else {
         panic!("a follower naming no planner must not build");
     };
@@ -1134,6 +1156,7 @@ fn teleop_preferred_over_a_follower_wins_the_reference_while_fresh() {
             &AgentId::new("test_agent"),
             vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
+        host(),
     )
     .expect("a follower and teleop sharing the seam must build");
 
@@ -1182,6 +1205,7 @@ fn reference_naming_no_node_fails_the_build_naming_it() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         teleop_body(),
+        host(),
     ) else {
         panic!("a seam naming a missing node must not build");
     };
@@ -1209,6 +1233,7 @@ fn controllers_without_a_reference_section_fail_naming_the_reference() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         body,
+        host(),
     ) else {
         panic!("controllers with no reference must not build");
     };
@@ -1294,6 +1319,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
             vec![measurement_channel::<MagneticField>(MAG_CHANNEL, MAG_UNIT)
                 .with_mount(FrameId::agent(agent.clone(), MAG_MOUNT))],
         )),
+        host(),
     )
     .expect("mag-bias augmentation stack must build");
 
@@ -1404,6 +1430,7 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
         body_publishing(vec![measurement_channel::<RangeField<Flu>>(
             input, LIDAR_UNIT,
         )]),
+        host(),
     )
     .expect("a lone deproject node over a host channel must build");
 
@@ -1512,6 +1539,7 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
             &AgentId::new("test_agent"),
             vec![range_field(&AgentId::new("test_agent"), "lidar")],
         )),
+        host(),
     )
     .expect("a mapper reading a deprojected channel must build");
 
@@ -1546,6 +1574,7 @@ fn mapper_reading_an_unpublished_channel_fails_the_build() {
             &AgentId::new("test_agent"),
             vec![range_field(&AgentId::new("test_agent"), "lidar")],
         )),
+        host(),
     )
     .err()
     .expect("a mapper reading an unpublished channel must not build");
@@ -1577,8 +1606,14 @@ fn mapper_builds_a_map_from_a_host_range_field() {
         range_field(&agent, "lidar"),
     ]);
 
-    let pipeline = build_pipeline(&stack, &AutonomyRegistry::default(), agent.clone(), body)
-        .expect("deproject feeding a mapper must build");
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        agent.clone(),
+        body,
+        host(),
+    )
+    .expect("deproject feeding a mapper must build");
 
     let now = MonotonicTime(1.0);
     pipeline
@@ -1646,6 +1681,7 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
         body_publishing(vec![measurement_channel::<AngularRate>(
             "imu.gyro", IMU_UNIT,
         )]),
+        host(),
     )
     .err()
     .expect("an estimator without its accelerometer channel must not build");
@@ -1693,6 +1729,7 @@ fn estimator_aided_by_a_host_channel_builds() {
                     .with_mount(FrameId::agent(agent.clone(), "mag.primary")),
             ],
         )),
+        host(),
     );
 
     assert!(
@@ -1723,6 +1760,7 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
                 MAG_UNIT,
             )],
         )),
+        host(),
     )
     .err()
     .expect("an estimator aided by an unpublished channel must not build");
@@ -1778,6 +1816,7 @@ fn planner_goals_are_declared_once_per_goal_channel() {
             &AgentId::new("test_agent"),
             vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
+        host(),
     )
     .expect("a stack of planners over a declared grid must build");
 
@@ -1812,6 +1851,7 @@ fn teleop_intent_is_declared_as_an_outside_input() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         teleop_body(),
+        host(),
     )
     .expect("teleop-only stack must build");
 
@@ -1831,6 +1871,7 @@ fn stack_without_planner_or_teleop_declares_no_outside_inputs() {
             &AgentId::new("test_agent"),
             vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
+        host(),
     )
     .expect("an estimator and a mapper must build");
 
@@ -1874,11 +1915,28 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
                 .with_instances::<StampedTwist<Flu>>([FrameId::base_link(agent.clone())]),
         ],
     ));
-    let pipeline = build_pipeline(&stack, &AutonomyRegistry::default(), agent.clone(), body)
-        .expect("an estimate beside a shadow builds");
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        agent.clone(),
+        body,
+        host(),
+    )
+    .expect("an estimate beside a shadow builds");
     assert_eq!(
         pipeline.estimate_root(),
         Some(&FrameId::odom(agent.clone()))
+    );
+    // The oracle and the shadow each give the root they define its
+    // convention.
+    let conventions = pipeline.frame_conventions();
+    assert_eq!(
+        conventions.convention_of(&FrameId::odom(agent.clone())),
+        Some(Convention::Enu)
+    );
+    assert_eq!(
+        conventions.convention_of(&FrameId::agent(agent.clone(), "nav_ekf.odom")),
+        Some(Convention::Enu)
     );
 
     pipeline
@@ -1932,6 +1990,7 @@ fn a_stack_naming_no_estimate_exposes_no_root() {
         &AutonomyRegistry::default(),
         agent.clone(),
         body_publishing(channels_with_imu(&agent, vec![])),
+        host(),
     )
     .expect("an estimator alone builds");
 

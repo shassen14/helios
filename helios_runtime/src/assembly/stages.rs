@@ -8,7 +8,7 @@
 //!
 //! ## What the host provides
 //!
-//! Two things cannot come from config — they are host-specific runtime tokens:
+//! Three things cannot come from config — they are host-specific runtime tokens:
 //!
 //! - `agent` — the agent's stable [`AgentId`], the config name every subsystem
 //!   uses to key this agent's frames. It must be non-empty and free of `.`,
@@ -21,7 +21,11 @@
 //!   channels, oracle reference channels, later health channels. It goes to
 //!   [`PipelineBuilder::with_body_capabilities`] as given, so a node reading a
 //!   measurement channel the body does not publish, and no node writes, fails the
-//!   build rather than silently never running.
+//!   build rather than silently never running. It also lists the body's
+//!   frames with their conventions, and each channel's nominal rate.
+//! - `host` — the host's own facts: the rate it ticks at, which an ungated
+//!   node's outputs inherit, and its world frames (the datum) with their
+//!   conventions.
 //!
 //! Inputs an operator or mission system sends — each planner's goal, and the
 //! teleop intent when teleop is wired — are not body channels. They are
@@ -41,6 +45,7 @@ use super::seams::estimate::estimate_relay;
 use super::seams::reference::reference_selector;
 
 use crate::body::BodyCapabilities;
+use crate::host::HostDeclaration;
 use crate::pipeline::dag_log::log_resolved_dag;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
@@ -65,14 +70,17 @@ use std::collections::HashSet;
 ///   this agent owns is keyed by it. An empty or dotted name is a
 ///   [`MalformedAgentName`](PipelineAssemblyError::MalformedAgentName), and
 ///   nothing else is checked.
-/// - `body` — the body as the host describes it: its actuators and every
-///   channel it publishes. Goals and teleop intent are not the body's; each
-///   node's factory declares the ones it reads as outside inputs.
+/// - `body` — the body as the host describes it: its actuators, its frames
+///   and every channel it publishes. Goals and teleop intent are not the
+///   body's; each node's factory declares the ones it reads as outside
+///   inputs.
+/// - `host` — the host's tick rate and world frames.
 pub fn build_pipeline(
     stack: &AutonomyStackConfig,
     registry: &AutonomyRegistry,
     agent: AgentId,
     body: BodyCapabilities,
+    host: HostDeclaration,
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
     // Checked first and alone: every frame and watcher path for this agent
     // is built from its name, so anything checked after would only repeat it.
@@ -161,6 +169,7 @@ pub fn build_pipeline(
     let pipeline = builder
         .with_body_capabilities(body)
         .with_outside_inputs(outside_inputs)
+        .with_host(host)
         .build()
         .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])?;
 

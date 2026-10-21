@@ -117,6 +117,7 @@ fn spawn_gps_sensors(
                             channel,
                             sensor_name,
                             frame.id.clone(),
+                            gps_config.rate,
                         ),
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),

@@ -9,7 +9,8 @@
 //!   the loops `cycle` finds;
 //! - `mounts` checks the mounts writers state and resolves each node
 //!   output's mount in level order;
-//! - `owners` checks every frame the body or a node owns has one owner;
+//! - `owners` checks every frame the body, the host or a node owns has one
+//!   owner, and gathers each owned frame's axis convention;
 //! - `kinds` checks every node reads and writes only the channel kinds its
 //!   class may;
 //! - `instances` checks every instance of a keyed channel has one writer;
@@ -35,3 +36,4 @@ pub(crate) use declaration::NodeDeclaration;
 pub use declaration::{NodeConstructor, NodePlan};
 pub use error::{ChannelUses, CycleEdge, FrameOwner, MountRefusal, PipelineBuildError};
 pub use mounts::{InputMounts, MountLookupError};
+pub use owners::FrameConventions;

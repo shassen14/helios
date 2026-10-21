@@ -3,7 +3,8 @@ use crate::brain_bridge::components::{
     SensorPublishChannel, TeleopControlled, TfServiceComponent,
 };
 use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
-use crate::core::ground_truth::truth_body_channels;
+use crate::core::ground_truth::{truth_body_channels, DATUM_CONVENTION};
+use crate::core::transforms::{TfTree, TrackedFrame};
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
@@ -13,28 +14,37 @@ use helios_core::control::commands::TwistIntent;
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::transforms::tf::buffer::TfWindow;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::{EdgeEnds, ErasedTransform};
+use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 use helios_core::spatial::FrameId;
 use helios_runtime::channels::control;
 use helios_runtime::tf_service::TfService;
-use helios_runtime::{build_pipeline, AutonomyPipeline, BodyCapabilities, BodyChannel, ChannelKey};
+use helios_runtime::{
+    build_pipeline, AutonomyPipeline, BodyCapabilities, BodyChannel, ChannelKey, HostDeclaration,
+};
 
 use std::any::TypeId;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 /// Spawns the autonomy pipeline for agents with real estimation.
 ///
-/// Collects the [`SensorPublishChannel`]s of each agent's descendants into the
-/// body passed to `build_pipeline()`. Descendants, not children: a sensor
-/// entity may hang under its installation's frame entity, as an IMU's two do.
+/// Collects the [`SensorPublishChannel`]s of each agent's descendants, and
+/// the [`TrackedFrame`]s of the agent and its descendants, into the body
+/// passed to `build_pipeline()`. Descendants, not children: a sensor entity
+/// may hang under its installation's frame entity, as an IMU's two do. The
+/// host declares its tick rate, the scenario's, and the world's datum.
+#[allow(clippy::too_many_arguments)] // one Bevy system, each parameter a query or resource it reads
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
     agent_query: Query<(Entity, &SpawnAgentConfigRequest, &AgentIdComponent)>,
     children: Query<&Children>,
     channel_query: Query<&SensorPublishChannel>,
+    frame_query: Query<&TrackedFrame>,
     registry: Res<RuntimeAutonomyRegistry>,
+    config: Res<ScenarioConfig>,
+    tf_tree: Res<TfTree>,
 ) {
     let _span = tracing::info_span!("sim.scene_build.autonomy").entered();
+    let host = host_declaration(config.common.simulation.frequency_hz, tf_tree.datum());
     for (agent_entity, request, agent_id) in &agent_query {
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
@@ -51,12 +61,25 @@ pub fn spawn_autonomy_pipeline(
             .map(|channel| channel.description().clone())
             .collect();
 
-        let body =
-            build_host_body_capabilities(&agent, sensor_channels, &agent_config.vehicle.actuation);
+        // Every frame of the body, as its spawners tracked it: `base_link` on
+        // the agent, each installation and mount below it.
+        let frames: HashMap<FrameId, Convention> = std::iter::once(agent_entity)
+            .chain(children.iter_descendants(agent_entity))
+            .filter_map(|entity| frame_query.get(entity).ok())
+            .map(|frame| (frame.id.clone(), frame.convention))
+            .collect();
+
+        let body = build_host_body_capabilities(
+            &agent,
+            sensor_channels,
+            frames,
+            &agent_config.vehicle.actuation,
+            host.tick_rate_hz,
+        );
 
         // A pipeline is bound only with a tf service that serves every mount
         // it reads; either failing leaves the agent without both.
-        let bound = build_pipeline(stack, &registry.0, agent.clone(), body)
+        let bound = build_pipeline(stack, &registry.0, agent.clone(), body, host.clone())
             .map_err(|errors| errors.iter().map(ToString::to_string).collect())
             .and_then(|pipeline| {
                 let static_seeds = build_static_seeds(agent_config, &agent);
@@ -189,16 +212,31 @@ pub fn spawn_actuator_command(
     }
 }
 
+/// The sim host's [`HostDeclaration`]: it ticks at the scenario's
+/// `tick_rate_hz`, and names one world frame, the datum truth is published
+/// in, once the world layout has set it.
+fn host_declaration(tick_rate_hz: f64, datum: Option<&FrameId>) -> HostDeclaration {
+    HostDeclaration {
+        tick_rate_hz,
+        world_frames: datum
+            .map(|datum| (datum.clone(), DATUM_CONVENTION))
+            .into_iter()
+            .collect(),
+    }
+}
+
 /// Builds the sim host's [`BodyCapabilities`] for one agent: everything the
 /// body offers the autonomy graph, distinct from anything the autonomy stack
 /// itself declares.
 ///
 /// - `publishes`: the truth rig's two channels for `agent`
-///   ([`truth_body_channels`]), then `sensor_channels`, each sensor's
-///   channel as its spawner described it. Every installed sensor is listed,
-///   read by the stack or not. Health channels are intentionally omitted: no
-///   sim publisher exists for them yet, and advertising a channel the host
-///   never writes would let a consumer build and then read `None` forever.
+///   ([`truth_body_channels`]), written every tick at `tick_rate_hz`, then
+///   `sensor_channels`, each sensor's channel as its spawner described it.
+///   Every installed sensor is listed, read by the stack or not. Health
+///   channels are intentionally omitted: no sim publisher exists for them
+///   yet, and advertising a channel the host never writes would let a
+///   consumer build and then read `None` forever.
+/// - `frames`: the body's frames as its spawners tracked them.
 /// - `actuation`: the vehicle's actuators, from its entity file. The
 ///   assembler checks every actuator the pipeline drives against it, so an
 ///   allocator naming a missing actuator or writing the wrong setpoint kind
@@ -206,13 +244,16 @@ pub fn spawn_actuator_command(
 fn build_host_body_capabilities(
     agent: &AgentId,
     sensor_channels: Vec<BodyChannel>,
+    frames: HashMap<FrameId, Convention>,
     actuation: &ActuationModel,
+    tick_rate_hz: f64,
 ) -> BodyCapabilities {
     BodyCapabilities {
-        publishes: truth_body_channels(agent)
+        publishes: truth_body_channels(agent, tick_rate_hz)
             .into_iter()
             .chain(sensor_channels)
             .collect(),
+        frames,
         actuation: actuation.clone(),
     }
 }
@@ -253,6 +294,10 @@ mod tests {
     use helios_core::prelude::{AgentId, FrameId};
     use helios_runtime::channels::control::intent;
     use helios_runtime::port::ChannelKey;
+
+    const TICK_RATE_HZ: f64 = 400.0;
+    const GPS_RATE_HZ: f64 = 10.0;
+    const MAG_RATE_HZ: f64 = 50.0;
 
     /// A goal input keyed the way a planner declares it: a `PlannerGoal` on the
     /// named channel.
@@ -331,9 +376,69 @@ mod tests {
             SignConvention::Normal,
         )]);
 
-        let caps = build_host_body_capabilities(&AgentId::new("car"), vec![], &actuation);
+        let caps = build_host_body_capabilities(
+            &AgentId::new("car"),
+            vec![],
+            HashMap::new(),
+            &actuation,
+            TICK_RATE_HZ,
+        );
 
         assert_eq!(caps.actuation, actuation);
+    }
+
+    /// The body carries the frames its spawners tracked, as given.
+    #[test]
+    fn frames_are_the_tracked_frames() {
+        let agent = AgentId::new("car");
+        let frames = HashMap::from([
+            (FrameId::base_link(agent.clone()), Convention::Flu),
+            (FrameId::agent(agent.clone(), "gps"), Convention::Enu),
+        ]);
+
+        let caps = build_host_body_capabilities(
+            &agent,
+            vec![],
+            frames.clone(),
+            &ActuationModel::default(),
+            TICK_RATE_HZ,
+        );
+
+        assert_eq!(caps.frames, frames);
+    }
+
+    /// The truth rig writes every tick, so its channels carry the host's
+    /// tick rate.
+    #[test]
+    fn the_truth_rig_writes_at_the_tick_rate() {
+        let caps = build_host_body_capabilities(
+            &AgentId::new("car"),
+            vec![],
+            HashMap::new(),
+            &ActuationModel::default(),
+            TICK_RATE_HZ,
+        );
+
+        assert!(caps
+            .publishes
+            .iter()
+            .all(|channel| channel.rate_hz() == Some(TICK_RATE_HZ)));
+    }
+
+    /// The host ticks at the scenario's rate and names the datum once the
+    /// world layout has set it, and no world frame before.
+    #[test]
+    fn the_host_declares_its_tick_and_the_datum() {
+        let datum = FrameId::global("datum");
+
+        let host = host_declaration(TICK_RATE_HZ, Some(&datum));
+        assert_eq!(host.tick_rate_hz, TICK_RATE_HZ);
+        assert_eq!(
+            host.world_frames,
+            HashMap::from([(datum, DATUM_CONVENTION)])
+        );
+
+        assert!(host_declaration(TICK_RATE_HZ, None).world_frames.is_empty());
     }
 
     /// The body publishes the truth rig's channels and every sensor's, each
@@ -345,18 +450,25 @@ mod tests {
             "gps",
             "gps",
             FrameId::agent(agent.clone(), "gps"),
+            GPS_RATE_HZ,
         );
         let mag = SensorPublishChannel::new::<MagneticField>(
             "mag",
             "mag",
             FrameId::agent(agent.clone(), "mag"),
+            MAG_RATE_HZ,
         );
         let sensors = vec![gps.description().clone(), mag.description().clone()];
 
-        let caps =
-            build_host_body_capabilities(&agent, sensors.clone(), &ActuationModel::default());
+        let caps = build_host_body_capabilities(
+            &agent,
+            sensors.clone(),
+            HashMap::new(),
+            &ActuationModel::default(),
+            TICK_RATE_HZ,
+        );
 
-        let expected: Vec<BodyChannel> = truth_body_channels(&agent)
+        let expected: Vec<BodyChannel> = truth_body_channels(&agent, TICK_RATE_HZ)
             .into_iter()
             .chain(sensors)
             .collect();

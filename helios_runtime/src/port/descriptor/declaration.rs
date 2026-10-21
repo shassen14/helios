@@ -57,9 +57,9 @@ use std::{any::TypeId, sync::Arc};
 /// it in before the first tick.
 ///
 /// Each frame the node defines, one whose meaning it alone gives (the root an
-/// estimator holds its state in), is listed in
+/// estimator holds its state in), is listed with its axis convention in
 /// [`defined_frames`](Self::defined_frames), so the build can refuse a frame
-/// with two owners.
+/// with two owners and give each frame its owner's convention.
 ///
 /// Each value the node can emit for watchers is declared as an [`Observable`],
 /// read with [`observables`](Self::observables). These never touch the bus:
@@ -81,7 +81,7 @@ pub struct PortDescriptor {
     mount_readings: Vec<MountReading>,
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
-    defined_frames: Vec<FrameId>,
+    defined_frames: Vec<(FrameId, Convention)>,
     rate: Option<f64>,
 }
 
@@ -142,7 +142,7 @@ impl PortDescriptor {
     }
 
     /// Records the frames the node defines. For the builder.
-    pub(crate) fn with_defined_frames(mut self, frames: Vec<FrameId>) -> Self {
+    pub(crate) fn with_defined_frames(mut self, frames: Vec<(FrameId, Convention)>) -> Self {
         self.defined_frames = frames;
         self
     }
@@ -241,9 +241,9 @@ impl PortDescriptor {
         &self.observables
     }
 
-    /// The frames this node defines, in declaration order. Empty for a node
-    /// that defines none.
-    pub fn defined_frames(&self) -> &[FrameId] {
+    /// The frames this node defines, each with the axis convention it gives
+    /// it, in declaration order. Empty for a node that defines none.
+    pub fn defined_frames(&self) -> &[(FrameId, Convention)] {
         &self.defined_frames
     }
 

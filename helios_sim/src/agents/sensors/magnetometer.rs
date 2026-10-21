@@ -133,6 +133,7 @@ fn spawn_magnetometer_sensors(
                             channel,
                             sensor_name,
                             frame.id.clone(),
+                            mag_config.rate,
                         ),
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),

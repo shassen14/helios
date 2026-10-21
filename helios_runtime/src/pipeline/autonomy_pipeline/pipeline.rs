@@ -8,6 +8,7 @@ use super::{
 
 use crate::{
     channels::{control, estimate::estimate},
+    pipeline::FrameConventions,
     port::{ChannelDescription, ChannelKey, InputPort, MountReading, PortBus, Writer},
     prelude::{Stamped, TickContext},
 };
@@ -46,6 +47,9 @@ pub struct AutonomyPipeline {
     /// Every channel some writer declared, kept from the build: the body's,
     /// then the outside inputs, then the nodes' outputs.
     pub(in crate::pipeline) descriptions: Vec<ChannelDescription>,
+    /// Each frame's axis convention, as the body, the host and the nodes
+    /// declared it.
+    pub(in crate::pipeline) frame_conventions: FrameConventions,
     /// The frame the estimate holds the body's pose in, when the stack names
     /// an estimate.
     pub(in crate::pipeline) estimate_root: Option<FrameId>,
@@ -74,6 +78,12 @@ impl AutonomyPipeline {
     /// the build refuses a read without a writer.
     pub fn descriptions(&self) -> &[ChannelDescription] {
         &self.descriptions
+    }
+
+    /// Each frame of the run with its axis convention: the body's frames,
+    /// the host's world frames, and every frame a node holds values in.
+    pub fn frame_conventions(&self) -> &FrameConventions {
+        &self.frame_conventions
     }
 
     /// The inputs declared as sent from outside the robot (goals, teleop

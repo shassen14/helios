@@ -135,6 +135,7 @@ fn spawn_raycasting_sensors(
                         channel,
                         sensor_name,
                         frame.id.clone(),
+                        lidar_config.get_rate(),
                     ),
                     RaycastingSensor {
                         timer: Timer::new(
@@ -282,6 +283,7 @@ mod tests {
 
     use avian3d::collider_tree::ColliderTrees;
     use bevy::ecs::system::RunSystemOnce;
+    use std::collections::HashMap;
     use std::f64::consts::TAU;
     use std::sync::Arc;
 
@@ -359,7 +361,7 @@ mod tests {
     /// clock advanced by `advance`. Returns the world and the sensor entity.
     fn world_with_lidar(sensor_pose: GlobalTransform, advance: Duration) -> (World, Entity) {
         let mut world = World::new();
-        let channel = SensorPublishChannel::new::<RangeField<Flu>>(CHANNEL, UNIT, mount());
+        let channel = SensorPublishChannel::new::<RangeField<Flu>>(CHANNEL, UNIT, mount(), RATE_HZ);
 
         let mut time = Time::<()>::default();
         time.advance_by(advance);
@@ -370,6 +372,7 @@ mod tests {
             .add_node(Box::new(FakeScanConsumer::new()))
             .with_body_capabilities(BodyCapabilities {
                 publishes: vec![channel.description().clone()],
+                frames: HashMap::from([(mount(), Convention::Flu)]),
                 ..Default::default()
             })
             .build()

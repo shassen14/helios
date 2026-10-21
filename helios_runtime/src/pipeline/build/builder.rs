@@ -13,11 +13,12 @@ use super::{
 use crate::{
     pipeline::autonomy_pipeline::{HostWrites, ScheduledNode},
     port::{ChannelDescription, PortBus, Writer},
-    AutonomyPipeline, BodyCapabilities, ChannelKey, NodeId, PipelineBuildError, PipelineNode,
+    AutonomyPipeline, BodyCapabilities, ChannelKey, HostDeclaration, NodeId, PipelineBuildError,
+    PipelineNode,
 };
 
 use helios_core::prelude::AgentId;
-use helios_core::spatial::FrameId;
+use helios_core::spatial::{transforms::Convention, FrameId};
 
 use std::collections::{HashMap, HashSet};
 
@@ -38,7 +39,10 @@ use std::collections::{HashMap, HashSet};
 /// 3. Declare the inputs sent from outside the robot — goals, teleop intent —
 ///    via [`with_outside_inputs`](Self::with_outside_inputs). These count as
 ///    supplied the same way.
-/// 4. Call [`build`](Self::build) — returns either a fully validated
+/// 4. Declare the host's tick rate and world frames via
+///    [`with_host`](Self::with_host). Without it, an ungated node's outputs
+///    have no rate and no world frame has a convention.
+/// 5. Call [`build`](Self::build) — returns either a fully validated
 ///    pipeline or every detected error.
 ///
 /// All bus slots use last-known-good semantics; nothing is cleared per tick.
@@ -49,6 +53,8 @@ pub struct PipelineBuilder {
     nodes: Vec<NodeDeclaration>,
     capabilities: BodyCapabilities,
     outside_inputs: Vec<ChannelKey>,
+    tick_rate_hz: Option<f64>,
+    world_frames: HashMap<FrameId, Convention>,
     estimate_root: Option<FrameId>,
 }
 
@@ -63,6 +69,8 @@ impl PipelineBuilder {
             nodes: vec![],
             capabilities: BodyCapabilities::default(),
             outside_inputs: vec![],
+            tick_rate_hz: None,
+            world_frames: HashMap::new(),
             estimate_root: None,
         }
     }
@@ -113,6 +121,15 @@ impl PipelineBuilder {
         self
     }
 
+    /// Declares the host's facts: the rate it ticks at, which a node that
+    /// is not rate-gated writes its outputs at, and its world frames with
+    /// their conventions.
+    pub fn with_host(mut self, host: HostDeclaration) -> Self {
+        self.tick_rate_hz = Some(host.tick_rate_hz);
+        self.world_frames = host.world_frames;
+        self
+    }
+
     /// Names the frame the estimate holds the body's pose in, which the built
     /// pipeline exposes through [`AutonomyPipeline::estimate_root`]. Set by
     /// the estimate seam, which knows which estimator is authoritative.
@@ -143,9 +160,12 @@ impl PipelineBuilder {
     ///      declares is not one level.
     ///    - [`PipelineBuildError::RefusedBodyMount`] — the body states a
     ///      mount off its own body, at `base_link`, or with a malformed leaf.
+    ///    - [`PipelineBuildError::FrameWithoutConvention`] — the body mounts a
+    ///      channel at a frame it lists no convention for.
     ///    - [`PipelineBuildError::FrameDefinedTwice`] — two nodes define one
-    ///      frame, or a node defines `base_link` or a frame the body mounts a
-    ///      channel at.
+    ///      frame, a node defines `base_link`, a frame the body mounts a
+    ///      channel at or lists, or a host world frame, or the host and the
+    ///      body both name one.
     ///    - [`PipelineBuildError::MountFromUnreadInput`] — a node mounts an
     ///      output at the mount of a channel it does not read in the same
     ///      tick.
@@ -189,7 +209,13 @@ impl PipelineBuilder {
     /// at `0`, indexing into the pipeline's rate-timer array.
     pub fn build(self) -> Result<AutonomyPipeline, Vec<PipelineBuildError>> {
         let descriptions = self.describe_channels();
-        let errors = check_wiring(&self.agent, &self.nodes, &descriptions);
+        let (errors, frame_conventions) = check_wiring(
+            &self.agent,
+            &self.nodes,
+            &descriptions,
+            &self.capabilities.frames,
+            &self.world_frames,
+        );
 
         // Stop before ordering: a node downstream of a missing input would
         // otherwise be reported as a cycle member too.
@@ -227,6 +253,7 @@ impl PipelineBuilder {
             bus,
             host_writes,
             descriptions,
+            frame_conventions,
             estimate_root: self.estimate_root,
         })
     }
@@ -236,6 +263,10 @@ impl PipelineBuilder {
     /// node's outputs in the order nodes were added. A channel two writers
     /// declare appears twice; the wiring check refuses it unless it is keyed
     /// and their instances differ.
+    ///
+    /// A node's outputs are written at its gate's rate, or the host's tick
+    /// rate when ungated; a node fires at most once a tick, so a gate faster
+    /// than the tick runs at the tick.
     fn describe_channels(&self) -> Vec<ChannelDescription> {
         let body = self
             .capabilities
@@ -247,9 +278,15 @@ impl PipelineBuilder {
             .iter()
             .map(|key| ChannelDescription::outside(key.clone()));
         let nodes = self.nodes.iter().flat_map(|node| {
-            node.port_descriptor().output_ports().iter().map(|port| {
+            let descriptor = node.port_descriptor();
+            let rate_hz = match (descriptor.rate(), self.tick_rate_hz) {
+                (Some(gate), Some(tick)) => Some(gate.min(tick)),
+                (gate, tick) => gate.or(tick),
+            };
+            descriptor.output_ports().iter().map(move |port| {
                 ChannelDescription::node(port.channel().clone(), node.name())
                     .with_instances(port.instances().to_vec())
+                    .with_rate(rate_hz)
             })
         });
         body.chain(outside).chain(nodes).collect()

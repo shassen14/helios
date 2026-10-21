@@ -53,7 +53,7 @@ pub struct PortDescriptorBuilder {
     mount_readings: Vec<(ChannelKey, Convention)>,
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
-    defined_frames: Vec<FrameId>,
+    defined_frames: Vec<(FrameId, Convention)>,
     rate: Option<f64>,
 }
 
@@ -214,11 +214,12 @@ impl PortDescriptorBuilder {
         self
     }
 
-    /// Declares a frame this node defines: one whose meaning it alone gives,
-    /// such as the root an estimator holds its state in. The build refuses a
-    /// frame two nodes define, or one the body owns.
-    pub fn defines_frame(mut self, frame: FrameId) -> Self {
-        self.defined_frames.push(frame);
+    /// Declares a frame this node defines, in the axes `convention`: one whose
+    /// meaning it alone gives, such as the root an estimator holds its state
+    /// in. The build refuses a frame two nodes define, or one the body or the
+    /// host owns, so the owner's convention is the frame's one convention.
+    pub fn defines_frame(mut self, frame: FrameId, convention: Convention) -> Self {
+        self.defined_frames.push((frame, convention));
         self
     }
 

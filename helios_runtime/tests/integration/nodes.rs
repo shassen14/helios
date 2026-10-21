@@ -1,6 +1,8 @@
 // `[nodes]` integration tests: entries built through registered factories by
 // build_pipeline, using only the public API.
 
+use crate::common::{host, mount_frames};
+
 use helios_runtime::channels::{truth_tf, truth_twist};
 use helios_runtime::port::{ChannelKey, PortBus, PortDescriptorBuilder};
 use helios_runtime::{
@@ -130,6 +132,7 @@ fn build(
         &registry_with_test_kind(),
         AgentId::new("test_agent"),
         body,
+        host(),
     )
 }
 
@@ -264,13 +267,15 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
 
     let agent = AgentId::new("test_agent");
     let mount = FrameId::agent(agent.clone(), IMU_MOUNT);
+    let publishes = vec![
+        measurement_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
+        measurement_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
+        measurement_channel::<PointCloud<Flu>>("lidar", LIDAR_UNIT)
+            .with_mount(FrameId::agent(agent, LIDAR_MOUNT)),
+    ];
     let body = BodyCapabilities {
-        publishes: vec![
-            measurement_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
-            measurement_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
-            measurement_channel::<PointCloud<Flu>>("lidar", LIDAR_UNIT)
-                .with_mount(FrameId::agent(agent, LIDAR_MOUNT)),
-        ],
+        frames: mount_frames(&publishes),
+        publishes,
         ..Default::default()
     };
     let pipeline = build(&stack, body).expect("a grid reading another node's output must build");
@@ -321,11 +326,13 @@ fn a_grid_reading_an_unmounted_cloud_fails_the_build() {
     };
 
     let mount = FrameId::agent(AgentId::new("test_agent"), IMU_MOUNT);
+    let publishes = vec![
+        measurement_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
+        measurement_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
+    ];
     let body = BodyCapabilities {
-        publishes: vec![
-            measurement_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
-            measurement_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
-        ],
+        frames: mount_frames(&publishes),
+        publishes,
         ..Default::default()
     };
     let errors = build_err(&stack, body);
@@ -429,6 +436,7 @@ fn build_on(body: BodyCapabilities) -> Result<AutonomyPipeline, Vec<PipelineAsse
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         body,
+        host(),
     )
 }
 

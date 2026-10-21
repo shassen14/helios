@@ -87,15 +87,21 @@ pub struct SensorPublishChannel {
 impl SensorPublishChannel {
     /// Channel `name` of installation `unit`, carrying batches of `P` readings
     /// as [`SensorPublisher`](super::SensorPublisher) writes them, measured in
-    /// `mount`, the installation's frame.
-    pub fn new<P: Send + Sync + 'static>(name: &str, unit: &str, mount: FrameId) -> Self {
+    /// `mount`, the installation's frame, at its device's `rate_hz`.
+    pub fn new<P: Send + Sync + 'static>(
+        name: &str,
+        unit: &str,
+        mount: FrameId,
+        rate_hz: f64,
+    ) -> Self {
         Self {
             description: BodyChannel::new(
                 ChannelKey::measurement::<Vec<SensorReading<P>>>(name),
                 unit,
                 Provenance::Simulated,
             )
-            .with_mount(mount.clone()),
+            .with_mount(mount.clone())
+            .with_rate(rate_hz),
             mount,
         }
     }
