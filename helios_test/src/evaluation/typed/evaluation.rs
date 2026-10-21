@@ -3,11 +3,7 @@
 //! they arrive, and at finalize lined up, fitted, computed and read into
 //! components, once for every typed kind.
 
-use super::{
-    component::Component,
-    input::{Inputs, LinedUp},
-    kind::TypedEvaluator,
-};
+use super::{buffer::LinedUp, component::Component, input::Inputs, kind::TypedEvaluator};
 use crate::evaluation::{
     derived::{Derived, Refused},
     kind::{Evaluator, InputRejection, Metric},

@@ -3,6 +3,7 @@
 //! erased once by [`Typed`] into the form the collector feeds.
 
 mod adapter;
+mod buffer;
 mod component;
 mod evaluation;
 mod input;

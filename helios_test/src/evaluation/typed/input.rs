@@ -1,8 +1,8 @@
 //! [`Base`] and [`Input`]: the roles of a typed kind, and [`Inputs`], a tuple
-//! of one to three of them, the base first. The one place a payload is
-//! downcast, and the one place a role's values are lined up at the base's
-//! stamps.
+//! of one to three of them, the base first, each role's values kept in a
+//! [`RoleBuffer`].
 
+use super::buffer::{Lined, LinedUp, Lining, RoleBuffer};
 use crate::evaluation::kind::{InputRejection, Role};
 
 use helios_core::prelude::MonotonicTime;
@@ -12,11 +12,6 @@ use std::any::Any;
 /// A value for a role the evaluation doesn't have.
 const NO_SUCH_ROLE: InputRejection =
     InputRejection("a value for a role the evaluation doesn't have");
-
-/// A value of another payload type than its role reads. Setup binds each
-/// role to a series of its type, so this is never reached.
-const NOT_ITS_PAYLOAD: InputRejection =
-    InputRejection("a value of another type than its role reads");
 
 /// _Pre-step._ The base role of evaluator `E`: its name, and what it keeps of
 /// a payload `P` as a value `K`. Each of its values is one sample, so it
@@ -75,72 +70,11 @@ impl<E, P: 'static, K> Input<E, P, K> {
     fn role(&self) -> Role {
         Role::of::<P>(self.name)
     }
-
-    /// Its value at the base stamp `at`, from its `values` in stamp order, or
-    /// `None` where it has none: before its first value, or, interpolated,
-    /// after its last or between two it can't blend. Never extrapolated.
-    fn line_up<'a>(
-        &self,
-        values: &[&'a (MonotonicTime, K)],
-        at: MonotonicTime,
-    ) -> Option<Lined<'a, K>> {
-        match self.lining {
-            Lining::Hold => {
-                let after = values.partition_point(|(stamp, _)| stamp.0 <= at.0);
-                let (_, held) = values.get(after.checked_sub(1)?).copied()?;
-                Some(Lined::Kept(held))
-            }
-            Lining::Interpolate(blend) => {
-                let after = values.partition_point(|(stamp, _)| stamp.0 < at.0);
-                let (after_at, after_value) = values.get(after).copied()?;
-                if after_at.0 == at.0 {
-                    return Some(Lined::Kept(after_value));
-                }
-                let (before_at, before_value) = values.get(after.checked_sub(1)?).copied()?;
-                let fraction = (at.0 - before_at.0) / (after_at.0 - before_at.0);
-                blend(before_value, after_value, fraction).map(Lined::Blended)
-            }
-        }
-    }
 }
 
 /// What a role keeps of one payload, as its evaluator reads it, or why the
 /// payload is refused.
 type Project<E, P, K> = fn(&E, &P) -> Result<K, InputRejection>;
-
-/// How a role other than the base lines up, with an interpolated role's
-/// blend.
-enum Lining<K> {
-    Hold,
-    Interpolate(fn(&K, &K, f64) -> Option<K>),
-}
-
-/// _Per-step._ One role's value lined up at a base sample: one it kept, or
-/// one blended from the two it kept around the sample.
-pub enum Lined<'a, K> {
-    Kept(&'a K),
-    Blended(K),
-}
-
-impl<K> Lined<'_, K> {
-    fn value(&self) -> &K {
-        match self {
-            Lined::Kept(value) => value,
-            Lined::Blended(value) => value,
-        }
-    }
-}
-
-/// _Per-step._ Every base value within a run, and each covered one's
-/// values, lined up in role order.
-pub struct LinedUp<L> {
-    /// Base values stamped within the run.
-    pub base_samples: usize,
-    /// Base values some role had no value for.
-    pub uncovered: usize,
-    /// Each covered base value's stamp and its row, in stamp order.
-    pub rows: Vec<(MonotonicTime, L)>,
-}
 
 /// _Pre-step._ The roles of evaluator `E`: a tuple of a [`Base`] and up to two
 /// [`Input`]s, which keeps each role's values typed and lines them up into
@@ -214,10 +148,7 @@ macro_rules! inputs_for_tuple {
             > Inputs<E> for (Base<E, $base_payload, $base_kept>, $(Input<E, $payload, $kept>,)*)
         {
             type Row<'a> = (&'a $base_kept, $(&'a $kept,)*);
-            type Kept = (
-                Vec<(MonotonicTime, $base_kept)>,
-                $(Vec<(MonotonicTime, $kept)>,)*
-            );
+            type Kept = (RoleBuffer<$base_kept>, $(RoleBuffer<$kept>,)*);
             type LinedRow<'a> = (&'a $base_kept, $(Lined<'a, $kept>,)*);
 
             fn roles(&self) -> Vec<Role> {
@@ -233,8 +164,10 @@ macro_rules! inputs_for_tuple {
                 payload: &dyn Any,
             ) -> Result<(), InputRejection> {
                 match role {
-                    0 => keep(self.0.project, evaluator, &mut kept.0, at, payload),
-                    $($index => keep(self.$index.project, evaluator, &mut kept.$index, at, payload),)*
+                    0 => kept.0.keep(at, payload, |payload| (self.0.project)(evaluator, payload)),
+                    $($index => kept.$index.keep(at, payload, |payload| {
+                        (self.$index.project)(evaluator, payload)
+                    }),)*
                     _ => Err(NO_SUCH_ROLE),
                 }
             }
@@ -244,17 +177,14 @@ macro_rules! inputs_for_tuple {
                 kept: &'a Self::Kept,
                 until: MonotonicTime,
             ) -> LinedUp<Self::LinedRow<'a>> {
-                let ordered = (
-                    in_stamp_order(&kept.0, until),
-                    $(in_stamp_order(&kept.$index, until),)*
-                );
+                let base = kept.0.up_to(until);
                 let mut lined = LinedUp {
-                    base_samples: ordered.0.len(),
+                    base_samples: base.len(),
                     uncovered: 0,
                     rows: Vec::new(),
                 };
-                for (at, base) in ordered.0.iter().copied() {
-                    match (Some(base), $(self.$index.line_up(&ordered.$index, *at),)*) {
+                for (at, base) in base {
+                    match (Some(base), $(kept.$index.at(*at, until, &self.$index.lining),)*) {
                         (Some(base), $(Some($value),)*) => {
                             lined.rows.push((*at, (base, $($value,)*)))
                         }
@@ -275,34 +205,10 @@ inputs_for_tuple!((P0, K0));
 inputs_for_tuple!((P0, K0), (1, P1, K1, value1));
 inputs_for_tuple!((P0, K0), (1, P1, K1, value1), (2, P2, K2, value2));
 
-/// What `project` keeps of `payload`, stamped `at`, added to `kept`, or why
-/// it is refused.
-fn keep<E, P: 'static, K>(
-    project: Project<E, P, K>,
-    evaluator: &E,
-    kept: &mut Vec<(MonotonicTime, K)>,
-    at: MonotonicTime,
-    payload: &dyn Any,
-) -> Result<(), InputRejection> {
-    let payload = payload.downcast_ref::<P>().ok_or(NOT_ITS_PAYLOAD)?;
-    kept.push((at, project(evaluator, payload)?));
-    Ok(())
-}
-
-/// `values` stamped at or before `until`, in stamp order; values of one
-/// stamp keep the order they arrived in.
-fn in_stamp_order<K>(
-    values: &[(MonotonicTime, K)],
-    until: MonotonicTime,
-) -> Vec<&(MonotonicTime, K)> {
-    let mut values: Vec<_> = values.iter().filter(|(at, _)| at.0 <= until.0).collect();
-    values.sort_by(|a, b| a.0 .0.total_cmp(&b.0 .0));
-    values
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evaluation::typed::buffer::NOT_ITS_PAYLOAD;
 
     /// Keeps a finite `f64` as it is; refuses a negative one.
     fn kept(_: &(), value: &f64) -> Result<f64, InputRejection> {
@@ -360,9 +266,9 @@ mod tests {
         let no_role = inputs.keep(&(), &mut kept, 3, at(1.0), &1.0);
 
         assert_eq!(label, Ok(()));
-        assert_eq!(kept.2, vec![(at(1.0), 4.0)]);
+        assert_eq!(kept.2.up_to(at(1.0)), [(at(1.0), 4.0)]);
         assert_eq!(negative, Err(InputRejection("a negative value")));
-        assert!(kept.0.is_empty());
+        assert!(kept.0.up_to(at(1.0)).is_empty());
         assert_eq!(not_a_label, Err(NOT_ITS_PAYLOAD));
         assert_eq!(no_role, Err(NO_SUCH_ROLE));
     }
