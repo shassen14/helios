@@ -93,7 +93,7 @@ impl<E: TypedEvaluator> Evaluator for TypedEvaluation<E> {
                     .map(|(index, (component, refused))| {
                         wanted
                             .contains(&index)
-                            .then(|| component.values(&outputs, until, refused))
+                            .then(|| component.values(&outputs, refused))
                     })
                     .collect()
             }
@@ -138,9 +138,8 @@ mod tests {
     /// Reads finite `f64`s, kept as they are, the second role held or
     /// interpolated linearly. Fits the sum of every covered base value,
     /// refusing a run with a negative one; a base value of zero is one it
-    /// can't compute. Offers the base minus the other role, the fit, the
-    /// base's reciprocal (which refuses a base above 100), and the sum of
-    /// every difference over the run.
+    /// can't compute. Offers the base minus the other role, the fit, and the
+    /// base's reciprocal (which refuses a base above 100).
     struct Difference;
 
     /// One sample: the base, the other role and the fit.
@@ -169,14 +168,6 @@ mod tests {
                         Ok(1.0 / v.base)
                     }
                 }),
-                Component::whole_run(
-                    "total",
-                    SiUnit::Meters,
-                    |run: &[(MonotonicTime, Values)]| {
-                        (!run.is_empty())
-                            .then(|| run.iter().map(|(_, v)| v.base - v.other).sum::<f64>())
-                    },
-                ),
             ]
         }
 
@@ -206,7 +197,6 @@ mod tests {
     const DIFFERENCE: usize = 0;
     const SUM: usize = 1;
     const RECIPROCAL: usize = 2;
-    const TOTAL: usize = 3;
 
     /// A base and one role held.
     fn held() -> TypedEvaluation<Difference> {
@@ -228,7 +218,7 @@ mod tests {
 
     /// Every metric of `evaluation` up to `until`.
     fn derive_all(evaluation: &TypedEvaluation<Difference>, until: f64) -> Derived {
-        evaluation.derive(at(until), &[DIFFERENCE, SUM, RECIPROCAL, TOTAL])
+        evaluation.derive(at(until), &[DIFFERENCE, SUM, RECIPROCAL])
     }
 
     fn at(t: f64) -> MonotonicTime {
@@ -401,7 +391,6 @@ mod tests {
         );
         assert_eq!((derived.base_samples, derived.uncovered), (3, 1));
         assert!(series(&derived, DIFFERENCE).samples().is_empty());
-        assert!(series(&derived, TOTAL).samples().is_empty());
         assert_eq!(
             series(&derived, DIFFERENCE).rejection(),
             Some(Rejection::Evaluation(InputRejection("a negative base")))
@@ -444,28 +433,11 @@ mod tests {
             values(&derived, SUM),
             vec![(1.0, AssertionValue::Float(11.0))]
         );
-        assert!(derived.metrics[TOTAL].is_none());
     }
 
     #[test]
-    fn a_whole_run_metric_is_one_sample_stamped_at_the_runs_end() {
-        let mut evaluation = held();
-        evaluation.receive(1, at(1.0), &10.0);
-        evaluation.receive(0, at(1.0), &11.0);
-        evaluation.receive(0, at(2.0), &13.0);
-
-        let derived = derive_all(&evaluation, 10.0);
-        let nothing_covered = held().derive(at(10.0), &[TOTAL]);
-
-        assert_eq!(
-            values(&derived, TOTAL),
-            vec![(10.0, AssertionValue::Float(4.0))]
-        );
-        assert!(series(&nothing_covered, TOTAL).samples().is_empty());
-    }
-
-    #[test]
-    fn a_metric_refused_at_one_sample_is_counted_apart_from_the_samples_and_marks_only_its_series() {
+    fn a_metric_refused_at_one_sample_is_counted_apart_from_the_samples_and_marks_only_its_series()
+    {
         let mut evaluation = held();
         evaluation.receive(1, at(1.0), &10.0);
         evaluation.receive(0, at(1.0), &11.0);
@@ -485,7 +457,6 @@ mod tests {
                     count: 1,
                     first: Some(InputRejection("a base above 100")),
                 },
-                Refused::default(),
             ]
         );
         assert_eq!(

@@ -219,9 +219,7 @@ mod tests {
         let errors = [(MonotonicTime(0.0), *error)];
         components()
             .iter()
-            .flat_map(|component| {
-                component.values(&errors, MonotonicTime(0.0), &mut Default::default())
-            })
+            .flat_map(|component| component.values(&errors, &mut Default::default()))
             .map(|(_, value)| value)
             .collect()
     }

@@ -289,7 +289,7 @@ mod tests {
                 .into_iter()
                 .find(|component| component.metric().name == name)
                 .expect("offered");
-            let values = component.values(&sample, MonotonicTime(1.0), &mut refused);
+            let values = component.values(&sample, &mut refused);
             (values.len(), refused)
         };
 
