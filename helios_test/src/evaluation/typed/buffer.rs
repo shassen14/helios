@@ -78,10 +78,13 @@ impl<K> Default for RoleBuffer<K> {
     }
 }
 
-/// How a role other than the base lines up, with an interpolated role's
-/// blend.
-pub(super) enum Lining<K> {
+/// _Pre-step._ How a role other than the base lines up at each base stamp.
+pub enum Lining<K> {
+    /// The value in force: a goal, a command.
     Hold,
+    /// Blended from the two values around the stamp by the function given:
+    /// the value `fraction` of the way from the first to the second, `None`
+    /// when the two can't be blended.
     Interpolate(fn(&K, &K, f64) -> Option<K>),
 }
 

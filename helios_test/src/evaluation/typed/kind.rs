@@ -5,7 +5,7 @@
 use super::{component::Component, input::Inputs};
 use crate::evaluation::kind::{BoundInput, InputRejection};
 
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::de::DeserializeOwned;
 
 /// _Pre-step._ An evaluator kind, typed: its name, its parameters, its
 /// inputs, the metrics it offers, and how one entry's evaluator is bound.
@@ -14,7 +14,8 @@ pub trait TypedKind: Send + Sync + 'static {
     const NAME: &'static str;
 
     /// An entry's `[evaluate.params]`, read strictly: a struct with
-    /// `#[serde(deny_unknown_fields)]`, or [`NoParams`].
+    /// `#[serde(deny_unknown_fields)]`, or
+    /// [`NoParams`](super::NoParams).
     type Params: DeserializeOwned;
 
     /// One entry's evaluator.
@@ -83,9 +84,3 @@ pub type RowOf<'a, E> = <<E as TypedEvaluator>::Inputs as Inputs<E>>::Row<'a>;
 
 /// The output type of a kind's evaluator.
 pub type OutputOf<K> = <<K as TypedKind>::Evaluator as TypedEvaluator>::Output;
-
-/// _Pre-step._ The parameters of a kind that reads none: any key is
-/// refused.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoParams {}
