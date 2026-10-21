@@ -155,9 +155,34 @@ impl<K: TwoInputs> EvaluatorKind for TwoInputsKind<K> {
         let [base, other] = inputs else {
             return Err(vec![format!("{} needs both of its inputs bound", K::NAME)]);
         };
-        let kind = K::bind(params, base, other)?;
-        Ok(Box::new(TwoInputsEvaluation::new(kind)))
+        let evaluation = TwoInputsEvaluation::new(K::bind(params, base, other)?);
+        // A fixed menu is the kind's components written a second time, one
+        // read before binding and one after, so the types can't make them
+        // one list; load checks a run file's names against the first and
+        // setup against the second.
+        if let Some(menu) = self.menu() {
+            let offered = evaluation.metrics();
+            if offered != menu {
+                return Err(vec![format!(
+                    "{} offers {} once bound, but its menu is {}: a kind with a fixed menu \
+                     offers exactly its menu",
+                    K::NAME,
+                    listed(&offered),
+                    listed(&menu)
+                )]);
+            }
+        }
+        Ok(Box::new(evaluation))
     }
+}
+
+/// `metrics` as a run file names them, each with its unit.
+fn listed(metrics: &[Metric]) -> String {
+    let each: Vec<String> = metrics
+        .iter()
+        .map(|metric| format!("{} ({})", metric.name, metric.si_unit))
+        .collect();
+    format!("[{}]", each.join(", "))
 }
 
 /// _Per-step._ One entry's evaluation by the two-input kind `K`: the
@@ -271,10 +296,15 @@ mod tests {
     /// interpolated linearly. Fits the sum of every covered base value,
     /// refusing a run with a negative one; a base value of zero is one it
     /// can't compute. Offers the base minus the other input, the fit, and
-    /// the base's reciprocal (which refuses a base above 100).
+    /// the base's reciprocal (which refuses a base above 100). Bound to a
+    /// base of instance [`DRIFTED`], it offers one metric fewer than its menu.
     struct Difference {
         interpolated: bool,
+        drifted: bool,
     }
+
+    /// The base instance [`Difference`] binds to offering less than its menu.
+    const DRIFTED: &str = "drifted";
 
     /// One sample: the base, the other input and the fit.
     #[derive(Clone, Copy)]
@@ -326,11 +356,16 @@ mod tests {
             }
             Ok(Self {
                 interpolated: false,
+                drifted: base.instance.as_deref() == Some(DRIFTED),
             })
         }
 
         fn components(&self) -> Vec<Component<Values>> {
-            components()
+            let mut components = components();
+            if self.drifted {
+                components.pop();
+            }
+            components
         }
 
         fn fit(&self, run: &[(&f64, &f64)]) -> Result<f64, InputRejection> {
@@ -376,12 +411,16 @@ mod tests {
     fn held() -> TwoInputsEvaluation<Difference> {
         TwoInputsEvaluation::new(Difference {
             interpolated: false,
+            drifted: false,
         })
     }
 
     /// The other input interpolated linearly.
     fn interpolated() -> TwoInputsEvaluation<Difference> {
-        TwoInputsEvaluation::new(Difference { interpolated: true })
+        TwoInputsEvaluation::new(Difference {
+            interpolated: true,
+            drifted: false,
+        })
     }
 
     /// `value` as the other input sends it.
@@ -438,6 +477,30 @@ mod tests {
 
         assert_eq!(kind.menu(), Some(evaluation.metrics()));
         assert_eq!(names, vec!["difference", "sum", "reciprocal"]);
+    }
+
+    #[test]
+    fn a_bound_evaluation_offering_other_than_the_fixed_menu_is_refused_naming_both() {
+        let kind = TwoInputsKind::<Difference>::new();
+        let drifted = BoundInput {
+            instance: Some(DRIFTED.to_owned()),
+            ..input("car")
+        };
+
+        let problems = kind
+            .build(&toml::Table::new(), &[drifted, input("car")])
+            .err()
+            .expect("one metric fewer than its menu");
+
+        assert_eq!(
+            problems,
+            vec![
+                "difference offers [difference (m), sum (m)] once bound, but its menu is \
+                 [difference (m), sum (m), reciprocal (dimensionless)]: a kind with a fixed menu offers \
+                 exactly its menu"
+                    .to_owned()
+            ]
+        );
     }
 
     #[test]
