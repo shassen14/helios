@@ -7,7 +7,7 @@ use crate::evaluation::{
     kind::{BoundInput, InputRejection},
     typed::{
         projections::{body_twist, reference_twist},
-        Base, Component, Input, NoParams, TypedEvaluator, TypedKind,
+        Component, Lining, NoParams, TwoInputs,
     },
 };
 
@@ -17,81 +17,74 @@ use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::FrameId;
 use helios_core::spatial::conventions::Flu;
 
-/// The body's true velocity, from a truth source: the base.
-const TRUTH: &str = "truth";
-
-/// The guidance reference the body's controllers track, held until the
-/// next one.
-const REFERENCE: &str = "reference";
-
-/// _Pre-step._ The `twist_tracking` kind. Both inputs are expressed in the
+/// _Per-step._ The `twist_tracking` kind, bound to one entry: compares
+/// velocities of `body`, expressed in it. Both inputs are expressed in the
 /// body's `base_link`: the reference by its type's contract, the truth by
 /// its value's `expressed_in`, which each value is checked for. So they
 /// compare with no anchor between trees, and the kind has no frame policy.
-pub struct TwistTracking;
+pub struct TwistTracking {
+    body: FrameId,
+}
 
-impl TypedKind for TwistTracking {
+impl TwoInputs for TwistTracking {
     const NAME: &'static str = "twist_tracking";
+    /// The body's true velocity, from a truth source.
+    const BASE: &'static str = "truth";
+    /// The guidance reference the body's controllers track.
+    const OTHER: &'static str = "reference";
     type Params = NoParams;
-    type Evaluator = TwistTrackingEvaluator;
+    type BasePayload = StampedTwist<Flu>;
+    type BaseValue = BodyTwist;
+    type OtherPayload = BodyTwistRef;
+    type OtherValue = BodyTwist;
+    type Fit = ();
+    type Output = TwistError;
 
-    fn inputs(&self) -> <TwistTrackingEvaluator as TypedEvaluator>::Inputs {
-        (
-            Base::new(TRUTH, |evaluator: &TwistTrackingEvaluator, truth| {
-                body_twist(truth, &evaluator.body)
-            }),
-            Input::held(REFERENCE, |_, reference| Ok(reference_twist(reference))),
-        )
+    fn keep_base(&self, truth: &StampedTwist<Flu>) -> Result<BodyTwist, InputRejection> {
+        body_twist(truth, &self.body)
     }
 
-    fn menu(&self) -> Option<Vec<Component<TwistError>>> {
+    fn keep_other(&self, reference: &BodyTwistRef) -> Result<BodyTwist, InputRejection> {
+        Ok(reference_twist(reference))
+    }
+
+    /// A reference holds until the next.
+    fn other_lining(&self) -> Lining<BodyTwist> {
+        Lining::Hold
+    }
+
+    fn menu() -> Option<Vec<Component<TwistError>>> {
         Some(components())
     }
 
     fn bind(
-        &self,
         _params: NoParams,
-        inputs: &[BoundInput],
-    ) -> Result<TwistTrackingEvaluator, Vec<String>> {
-        let (Some(truth), Some(reference)) = (inputs.first(), inputs.get(1)) else {
-            return Err(vec![format!(
-                "{} needs both of its inputs bound",
-                Self::NAME
-            )]);
-        };
+        truth: &BoundInput,
+        reference: &BoundInput,
+    ) -> Result<Self, Vec<String>> {
         if truth.agent != reference.agent {
             return Err(vec![format!(
-                "the {TRUTH} is agent '{}''s and the {REFERENCE} agent '{}''s: a reference is \
-                 compared with the velocity of the body it was given to",
-                truth.agent, reference.agent
+                "the {} is agent '{}''s and the {} agent '{}''s: a reference is compared with \
+                 the velocity of the body it was given to",
+                Self::BASE,
+                truth.agent,
+                Self::OTHER,
+                reference.agent
             )]);
         }
         let body = FrameId::base_link(reference.agent.clone());
-        let moving = truth.frame(TRUTH).map_err(|problem| vec![problem])?;
+        let moving = truth.frame(Self::BASE).map_err(|problem| vec![problem])?;
         if moving.as_ref() != Some(&body) {
             return Err(vec![format!(
-                "the {TRUTH} is the velocity of '{}', and the {REFERENCE} is expressed in \
-                 '{body}': select instance = \"{body}\"",
-                moving.map_or_else(|| "no instance".to_owned(), |frame| frame.to_string())
+                "the {} is the velocity of '{}', and the {} is expressed in '{body}': select \
+                 instance = \"{body}\"",
+                Self::BASE,
+                moving.map_or_else(|| "no instance".to_owned(), |frame| frame.to_string()),
+                Self::OTHER
             )]);
         }
-        Ok(TwistTrackingEvaluator { body })
+        Ok(Self { body })
     }
-}
-
-/// _Per-step._ One `twist_tracking` entry: compares velocities of `body`,
-/// expressed in it.
-pub struct TwistTrackingEvaluator {
-    body: FrameId,
-}
-
-impl TypedEvaluator for TwistTrackingEvaluator {
-    type Inputs = (
-        Base<Self, StampedTwist<Flu>, BodyTwist>,
-        Input<Self, BodyTwistRef, BodyTwist>,
-    );
-    type Fit = ();
-    type Output = TwistError;
 
     fn components(&self) -> Vec<Component<TwistError>> {
         components()
@@ -103,7 +96,8 @@ impl TypedEvaluator for TwistTrackingEvaluator {
 
     fn compute(
         &self,
-        (truth, reference): (&BodyTwist, &BodyTwist),
+        truth: &BodyTwist,
+        reference: &BodyTwist,
         _fit: &(),
     ) -> Result<TwistError, InputRejection> {
         Ok(TwistError {
@@ -177,7 +171,7 @@ fn components() -> Vec<Component<TwistError>> {
 mod tests {
     use super::*;
 
-    use crate::evaluation::{kind::EvaluatorKind, typed::Typed};
+    use crate::evaluation::{kind::EvaluatorKind, typed::TwoInputsKind};
 
     use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::quantities::FreeVector;
@@ -196,10 +190,13 @@ mod tests {
         FrameId::base_link(AgentId::new(agent))
     }
 
-    fn evaluator() -> TwistTrackingEvaluator {
+    fn kind() -> TwoInputsKind<TwistTracking> {
+        TwoInputsKind::new()
+    }
+
+    fn evaluator() -> TwistTracking {
         let truth = input(CAR, Some(base_link(CAR).to_string()));
-        TwistTracking
-            .bind(NoParams {}, &[truth, input(CAR, None)])
+        TwistTracking::bind(NoParams {}, &truth, &input(CAR, None))
             .unwrap_or_else(|problems| panic!("{problems:?}"))
     }
 
@@ -231,7 +228,7 @@ mod tests {
         let evaluator = evaluator();
 
         let error = evaluator
-            .compute((&truth(4.0, 0.25), &reference(5.0, 0.5)), &())
+            .compute(&truth(4.0, 0.25), &reference(5.0, 0.5), &())
             .expect("computed");
 
         let values = read(&error);
@@ -255,7 +252,7 @@ mod tests {
 
     #[test]
     fn the_menu_follows_the_flu_axes_then_speed_with_their_units() {
-        let menu: Vec<(&str, SiUnit)> = Typed(TwistTracking)
+        let menu: Vec<(&str, SiUnit)> = kind()
             .menu()
             .expect("a fixed menu")
             .iter()
@@ -280,7 +277,7 @@ mod tests {
     #[test]
     fn a_truth_velocity_of_another_frame_is_refused_on_arrival() {
         let truth = input(CAR, Some(base_link(CAR).to_string()));
-        let mut evaluation = Typed(TwistTracking)
+        let mut evaluation = kind()
             .build(&toml::Table::new(), &[truth, input(CAR, None)])
             .unwrap_or_else(|problems| panic!("{problems:?}"));
         let in_datum = StampedTwist::<Flu> {
@@ -301,7 +298,7 @@ mod tests {
     fn inputs_from_two_agents_are_refused() {
         let truth = input(CAR, Some(base_link(CAR).to_string()));
 
-        let refused = TwistTracking.bind(NoParams {}, &[truth, input("truck", None)]);
+        let refused = TwistTracking::bind(NoParams {}, &truth, &input("truck", None));
 
         assert!(refused.is_err());
     }
@@ -310,8 +307,7 @@ mod tests {
     fn a_truth_instance_other_than_the_body_names_the_one_to_select() {
         let wheel = input(CAR, Some("agent.car.wheel".to_owned()));
 
-        let problems = TwistTracking
-            .bind(NoParams {}, &[wheel, input(CAR, None)])
+        let problems = TwistTracking::bind(NoParams {}, &wheel, &input(CAR, None))
             .err()
             .expect("another frame's velocity");
 
@@ -325,8 +321,7 @@ mod tests {
     fn a_truth_instance_that_isnt_a_frame_is_refused_naming_it() {
         let ros_frame = input(CAR, Some("base_link".to_owned()));
 
-        let problems = TwistTracking
-            .bind(NoParams {}, &[ros_frame, input(CAR, None)])
+        let problems = TwistTracking::bind(NoParams {}, &ros_frame, &input(CAR, None))
             .err()
             .expect("not a frame");
 
@@ -341,9 +336,7 @@ mod tests {
         let mut params = toml::Table::new();
         params.insert("gain".to_owned(), toml::Value::Float(1.0));
 
-        assert!(Typed(TwistTracking).check_params(&params).is_err());
-        assert!(Typed(TwistTracking)
-            .check_params(&toml::Table::new())
-            .is_ok());
+        assert!(kind().check_params(&params).is_err());
+        assert!(kind().check_params(&toml::Table::new()).is_ok());
     }
 }
