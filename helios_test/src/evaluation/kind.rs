@@ -1,7 +1,6 @@
 //! What an evaluator kind declares and builds, erased: the form the
 //! machinery stores and feeds. A kind is code someone adds to the registry:
-//! it names its input roles, how each lines up in time with the others, and
-//! builds one [`Evaluator`] per run-file entry, which names the metrics it
+//! it names its input roles, the first of them the base, and builds one [`Evaluator`] per run-file entry, which names the metrics it
 //! offers. An evaluation is untyped only here, where the collector hands it
 //! each payload of a stream that carries every type. A kind is usually
 //! written typed ([`TypedKind`](super::typed::TypedKind)) and erased once by
@@ -25,8 +24,8 @@ pub trait EvaluatorKind: Send + Sync {
     /// The name a run file's `kind` gives.
     fn name(&self) -> &'static str;
 
-    /// Its input roles, exactly one of them [`Alignment::Base`]. Each entry
-    /// names one series for every role.
+    /// Its input roles, the first of them the base: each of its values is one
+    /// sample of every metric. Each entry names one series for every role.
     fn roles(&self) -> Vec<Role>;
 
     /// The metrics every evaluator of this kind offers, when they are fixed,
@@ -79,43 +78,23 @@ pub trait Evaluator: Send + Sync {
 }
 
 /// _Pre-step._ One input a kind reads: its name in `[evaluate.inputs]`, the
-/// payload type its series must carry, and how it lines up in time.
+/// payload type its series must carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Role {
     pub name: &'static str,
     pub payload: TypeId,
     pub payload_name: &'static str,
-    pub alignment: Alignment,
 }
 
 impl Role {
     /// The role `name`, reading values of type `T`.
-    pub fn of<T: 'static>(name: &'static str, alignment: Alignment) -> Self {
+    pub fn of<T: 'static>(name: &'static str) -> Self {
         Self {
             name,
             payload: TypeId::of::<T>(),
             payload_name: std::any::type_name::<T>(),
-            alignment,
         }
     }
-}
-
-/// _Pre-step._ How a role's values line up with the base's. A fact about
-/// the input, so the kind declares it and a run file never does: a goal or
-/// a command holds until the next one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Alignment {
-    /// Its stamps are the metrics' stamps: each of its values is one sample
-    /// of every metric.
-    Base,
-    /// The latest value stamped at or before the base sample. A base sample
-    /// with none yet is uncovered.
-    Hold,
-    /// The value at the base sample's stamp, between the two values that
-    /// bracket it, as the role's type blends them. Never
-    /// extrapolated: a base sample before the first value or after the
-    /// last is uncovered.
-    Interpolate,
 }
 
 /// _Pre-step._ One metric an evaluator offers, and its unit.

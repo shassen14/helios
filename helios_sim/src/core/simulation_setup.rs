@@ -6,7 +6,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 
 use super::components::GroundTruthState;
-use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
+use super::transforms::TfTree;
 use crate::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::core::components::ConfiguredMissionGoal;
 use crate::core::ground_truth::publish_truth_channels_system;
@@ -56,28 +56,13 @@ impl Plugin for SimulationSetupPlugin {
             ),
         );
 
-        // TF tree update strategy:
-        // - Structural system (Precomputation): inserts/removes entries when TrackedFrame is
-        //   added or removed. No-op on the vast majority of ticks.
-        // - Incremental system (Precomputation): updates poses for Changed<GlobalTransform>.
-        //   Handles first-tick initialization; no-op every tick after that until physics runs.
-        // - Incremental system (StateSync): updates poses after Avian3D physics, so
-        //   oracle publishing and any downstream consumers see the latest state.
         app.add_systems(
             FixedUpdate,
             (
-                (tf_tree_structural_system, tf_tree_incremental_update_system)
-                    .chain()
-                    .in_set(SimulationSet::Precomputation)
-                    .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
                 publish_truth_channels_system
                     .after(ground_truth_sync_system)
                     .in_set(SimulationSet::StateSync)
-                    .run_if(in_state(AppState::Running)),
-                tf_tree_incremental_update_system
-                    .in_set(SimulationSet::StateSync)
-                    .after(ground_truth_sync_system)
                     .run_if(in_state(AppState::Running)),
             ),
         );

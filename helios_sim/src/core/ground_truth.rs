@@ -133,11 +133,11 @@ pub fn publish_truth_channels_system(
         *has_logged_first_tick = true;
     }
 
-    // The world layout roots the truth tree at the datum before any agent
+    // The world layout sets the datum before any agent
     // ticks, so a missing datum is a scheduling bug, not a startup race.
     let Some(datum) = tf_tree.datum() else {
         if !*has_warned_no_datum {
-            warn!("The truth tree has no datum; ground truth is not published.");
+            warn!("The world has no datum; ground truth is not published.");
             *has_warned_no_datum = true;
         }
         return;

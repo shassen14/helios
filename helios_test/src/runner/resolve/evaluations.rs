@@ -13,7 +13,7 @@ use crate::{
     assertion::{AssertionTarget, EntryName},
     collector::{instance_of, EvaluationId, ObservationCollector},
     evaluation::{
-        kind::{Alignment, BoundInput, Metric, Role},
+        kind::{BoundInput, Metric, Role},
         Evaluation, EvaluatorRegistry,
     },
 };
@@ -177,10 +177,7 @@ fn plan(
         kind: kind.name(),
         params: evaluation.params.clone(),
         id,
-        held: roles
-            .iter()
-            .zip(&bound)
-            .any(|(role, input)| role.alignment == Alignment::Base && input.held),
+        held: bound.first().is_some_and(|base| base.held),
         nondeterministic: bound.iter().any(|input| input.nondeterministic),
         metrics,
         inputs: bound.into_iter().map(|input| input.planned).collect(),

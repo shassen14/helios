@@ -3,7 +3,7 @@
 //! downcast, and the one place a role's values are lined up at the base's
 //! stamps.
 
-use crate::evaluation::kind::{Alignment, InputRejection, Role};
+use crate::evaluation::kind::{InputRejection, Role};
 
 use helios_core::prelude::MonotonicTime;
 
@@ -33,13 +33,13 @@ impl<E, P: 'static, K> Base<E, P, K> {
     }
 
     fn role(&self) -> Role {
-        Role::of::<P>(self.name, Alignment::Base)
+        Role::of::<P>(self.name)
     }
 }
 
 /// _Pre-step._ A role of evaluator `E` other than the base: its name, what it
 /// keeps of a payload `P` as a value `K`, and how it lines up with the base.
-/// Its constructor fixes the alignment, and an interpolated role can't be
+/// Its constructor fixes how it lines up, and an interpolated role can't be
 /// declared without its blend.
 pub struct Input<E, P, K> {
     name: &'static str,
@@ -73,11 +73,7 @@ impl<E, P: 'static, K> Input<E, P, K> {
     }
 
     fn role(&self) -> Role {
-        let alignment = match self.lining {
-            Lining::Hold => Alignment::Hold,
-            Lining::Interpolate(_) => Alignment::Interpolate,
-        };
-        Role::of::<P>(self.name, alignment)
+        Role::of::<P>(self.name)
     }
 
     /// Its value at the base stamp `at`, from its `values` in stamp order, or
@@ -178,7 +174,7 @@ pub trait Inputs<E>: sealed::Sealed + Send + Sync + 'static {
     /// Every value in `kept` stamped at or before `until`, each role taken
     /// in stamp order, so the order the values arrived in never matters.
     /// Each base value is one sample, each other role lined up at its stamp
-    /// as its alignment says; a base value some role has no value for is
+    /// as its lining says; a base value some role has no value for is
     /// uncovered.
     fn line_up<'a>(
         &self,
@@ -340,15 +336,15 @@ mod tests {
     }
 
     #[test]
-    fn each_role_is_erased_with_its_alignment_and_payload() {
+    fn each_role_is_erased_with_its_payload() {
         let roles = inputs().roles();
 
         assert_eq!(
             roles,
             vec![
-                Role::of::<f64>("base", Alignment::Base),
-                Role::of::<f64>("smooth", Alignment::Interpolate),
-                Role::of::<String>("label", Alignment::Hold),
+                Role::of::<f64>("base"),
+                Role::of::<f64>("smooth"),
+                Role::of::<String>("label"),
             ]
         );
     }

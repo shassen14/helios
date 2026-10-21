@@ -56,8 +56,8 @@ impl SensorInstallationConfig {
     /// The frame this unit contributes to `agent`'s body, where `key` is its
     /// table key in the sensor fit: one frame per installation, named by the
     /// key, whatever channels the unit publishes on. The sensor spawners stamp
-    /// it on the truth tree and as each channel's mount, and the estimated tf
-    /// buffer is seeded from it, so the two trees cannot fork a mount.
+    /// it on the sensor's frame entity and as each channel's mount, and the
+    /// estimated tf buffer is seeded from it, so the two cannot fork a mount.
     pub fn frame(&self, agent: &AgentId, key: &str) -> InstallationFrame {
         InstallationFrame {
             id: FrameId::agent(agent.clone(), key),
@@ -326,7 +326,7 @@ impl LidarConfig {
 #[cfg(test)]
 mod tests {
     //! `frame` is the single source of an installation's frame: the spawners
-    //! stamp it on the truth tree and as every channel's mount, and the
+    //! stamp it on the sensor's frame entity and as every channel's mount, and the
     //! estimated tf buffer is seeded from it (`brain_bridge::spawn::
     //! build_static_seeds`). These pin that it is named by the installation,
     //! never by a channel, and carries the installation's pose.

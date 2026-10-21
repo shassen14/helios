@@ -16,8 +16,8 @@ pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
 /// Written at spawn time alongside [`AutonomyPipelineComponent`], and folded
 /// once per tick by `run_pipeline_tick` (before the pipeline ticks) so nodes
 /// query a frozen buffer. Its provider is the *estimated* chain, wired only from
-/// edge channels — nodes can no longer reach the sim's truth tree, which is the
-/// point of the split.
+/// edge channels — nodes can't reach the sim's truth, which is the point of the
+/// split.
 #[derive(Component)]
 pub struct TfServiceComponent(pub TfService);
 

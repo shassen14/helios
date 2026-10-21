@@ -24,7 +24,7 @@ pub fn run_pipeline_tick(
         // then hand every node a read-only view of it. The `&mut` fold and the
         // shared provider borrow cannot overlap, so all nodes this tick query one
         // frozen buffer regardless of execution order — and, wired only from edge
-        // channels, that buffer cannot reach the sim's truth tree.
+        // channels, that buffer cannot reach the sim's truth.
         service_comp.0.fold(pipeline_comp.0.bus());
         pipeline_comp
             .0

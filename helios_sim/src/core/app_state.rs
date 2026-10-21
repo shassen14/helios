@@ -85,8 +85,8 @@ pub enum SceneBuildSet {
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimulationSet {
-    /// Prepare per-frame data before anything reads it: rebuild the TF tree from
-    /// the current physics transforms. Runs first.
+    /// Reserved: per-frame data prepared before anything reads it. Nothing runs
+    /// here yet. Runs first.
     Precomputation,
 
     /// Simulate raw physical sensors (IMU, GPS, LiDAR, …) and publish

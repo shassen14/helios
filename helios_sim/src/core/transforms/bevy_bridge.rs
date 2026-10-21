@@ -35,9 +35,9 @@ use std::sync::LazyLock;
 /// Implements `Frame` so it can tag core quantities (`Point<Bevy>`,
 /// `FreeVector<Bevy>`) and drive typed rotations, but deliberately does **not**
 /// implement `ConventionOf`. It is a rendering relabel, not a robotics frame, so
-/// it has no `Convention` and structurally cannot enter the `TfTree` /
-/// `ErasedTransform` graph, both of which require one. A `Point<Bevy>` is a
-/// legal terminal value; it can never be routed through the transform tree.
+/// it has no `Convention` and structurally cannot enter an `ErasedTransform`,
+/// which requires one. A `Point<Bevy>` is a legal terminal value; it can never
+/// be routed through a tf tree.
 pub struct Bevy;
 
 impl Frame for Bevy {}
@@ -177,8 +177,8 @@ pub fn per_axis_to_bevy<F: EnuBasis>(values: Vector3<f64>) -> Vector3<f64> {
 /// root coordinates, with no per-frame branch here.
 ///
 /// `root` is the render anchor's convention. Only `Enu` is drawable today — the
-/// scene is anchored to the ENU world and `TfTree::resolve` emits only ENU roots
-/// (`World`/`map`/`odom`) — so a non-ENU root returns `None`, a loud skip the
+/// scene is anchored to the ENU world, and the datum, `map` and `odom` are all
+/// ENU — so a non-ENU root returns `None`, a loud skip the
 /// caller warns on, rather than silently drawing a triad relabeled through the
 /// wrong anchor. The day a second render anchor exists, this guard becomes a
 /// `match` over `root`.

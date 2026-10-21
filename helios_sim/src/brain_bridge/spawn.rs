@@ -40,7 +40,7 @@ pub fn spawn_autonomy_pipeline(
         let stack = agent_config.autonomy_stack();
         // The canonical scope stamped on the shell at `CreateRequests`; the
         // static seeds name every installation's frame under it, matching what
-        // the sensor spawners stamped on the tf tree.
+        // the sensor spawners stamped on their frame entities.
         let agent = agent_id.0.clone();
 
         // Every channel this agent's sensors publish, as their spawners
@@ -116,7 +116,7 @@ pub fn spawn_autonomy_pipeline(
 ///
 /// Seeded with the static sensor mounts and draining the pipeline's `tf`
 /// channel, so its tree is fed only by the graph's own producers, never the
-/// sim's truth tree. Fails with every rejected seed, or with the mounts the
+/// sim's truth. Fails with every rejected seed, or with the mounts the
 /// pipeline reads that are not below `base_link` or that a node reads in other
 /// axes than the tree holds. A producer declares each edge's child but not its
 /// parent, so no edge is declared yet; the one today, `odom → base_link`, lies
@@ -142,12 +142,12 @@ fn estimated_tf_service(
 /// The static transform edges seeding this agent's estimated tf buffer: one
 /// `base_link → installation` edge per sensor installation, built from the
 /// same [`frame`](crate::config::structs::SensorInstallationConfig::frame) the
-/// sensor spawners stamp on the truth tree.
+/// sensor spawners stamp on their frame entities.
 ///
-/// Single-sourcing the mount here (rather than reading it back off the truth
-/// tree) is what keeps the estimated and truth trees from disagreeing on a mount
-/// while leaving the estimated buffer structurally unable to reach the truth
-/// tree. Each mount is time-invariant, so it is stamped at `t = 0` and folded
+/// Single-sourcing the mount here (rather than reading it back off the sim's
+/// entities) is what keeps the estimated tree and the sim from disagreeing on a
+/// mount while leaving the estimated buffer structurally unable to reach the
+/// sim's truth. Each mount is time-invariant, so it is stamped at `t = 0` and folded
 /// once when the [`TfService`] is constructed. Each edge's child is the
 /// installation, in its device's convention, and its parent `base_link`, in
 /// the body convention its topology declares.
