@@ -1,25 +1,21 @@
-//! [`PoseError`]: the kind, its roles and the metrics it offers, and the
-//! checks that bind one entry's evaluator.
+//! [`PoseError`]: the kind, its inputs and the metrics it offers, and the
+//! checks that bind one entry.
 
-use super::{config::PoseErrorConfig, evaluator::PoseErrorEvaluator};
+use super::{
+    config::{Align, PoseErrorConfig},
+    roots::Roots,
+};
 use crate::evaluation::{
     kind::{BoundInput, InputRejection},
     typed::{
-        projections::{blend_rooted_poses, rooted_pose},
-        Base, Component, Input, TypedEvaluator, TypedKind,
+        projections::{blend_rooted_poses, rooted_pose, RootedPose},
+        Component, Lining, TwoInputs,
     },
 };
 
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::FrameId;
-use helios_core::spatial::transforms::{NoHeading, PoseDifference};
-
-/// The frame's pose as an estimator believes it: the base.
-const ESTIMATE: &str = "estimate";
-
-/// The frame's true pose, from a truth source, interpolated to each
-/// estimate's stamp.
-const TRUTH: &str = "truth";
+use helios_core::spatial::transforms::{tf::stamped::StampedTransform, NoHeading, PoseDifference};
 
 /// A heading, along or cross of a frame that faces no way.
 const FACES_NO_WAY: InputRejection =
@@ -29,35 +25,54 @@ const FACES_NO_WAY: InputRejection =
 const FACES_STRAIGHT_UP: InputRejection =
     InputRejection("a pose facing straight up or down, which has no heading");
 
-/// _Pre-step._ The `pose_error` kind. Both inputs are edges of a transform
+/// _Per-step._ The `pose_error` kind, bound to one entry: grades one frame's
+/// pose under the frame policy `align`. Both inputs are edges of a transform
 /// tree with one child, the frame graded; each edge's parent is its tree's
 /// root. An edge's instance is its child, so binding both inputs to one
-/// instance is what picks the frame, and no edge of another reaches it. Its `align` parameter says how the two roots relate: one frame
-/// under `declared`, or placed one in the other by the first sample's two
-/// poses under `first_pose`, so a constant offset between the roots is not
-/// graded, nor the estimate's error at that first sample. That fits an
-/// estimator that starts where its body is. One that starts elsewhere and
-/// is pulled in by an aiding sensor (an EKF at its origin until the first GPS
-/// fix) carries its starting offset into every later sample.
-pub struct PoseError;
+/// instance is what picks the frame, and no edge of another reaches it. Its
+/// `align` parameter says how the two roots relate: one frame under
+/// `declared`, or placed one in the other by the first sample's two poses
+/// under `first_pose`, so a constant offset between the roots is not graded,
+/// nor the estimate's error at that first sample. That fits an estimator that
+/// starts where its body is. One that starts elsewhere and is pulled in by an
+/// aiding sensor (an EKF at its origin until the first GPS fix) carries its
+/// starting offset into every later sample.
+pub struct PoseError {
+    align: Align,
+}
 
-impl TypedKind for PoseError {
+impl TwoInputs for PoseError {
     const NAME: &'static str = "pose_error";
+    /// The frame's pose as an estimator believes it.
+    const BASE: &'static str = "estimate";
+    /// The frame's true pose, from a truth source.
+    const OTHER: &'static str = "truth";
     type Params = PoseErrorConfig;
-    type Evaluator = PoseErrorEvaluator;
+    type BasePayload = StampedTransform;
+    type BaseValue = RootedPose;
+    type OtherPayload = StampedTransform;
+    type OtherValue = RootedPose;
+    type Fit = Roots;
+    type Output = PoseDifference;
 
-    fn inputs(&self) -> <PoseErrorEvaluator as TypedEvaluator>::Inputs {
-        (
-            Base::new(ESTIMATE, |_, edge| rooted_pose(edge)),
-            Input::interpolated(TRUTH, |_, edge| rooted_pose(edge), blend_rooted_poses),
-        )
+    fn keep_base(&self, edge: &StampedTransform) -> Result<RootedPose, InputRejection> {
+        rooted_pose(edge)
     }
 
-    fn menu(&self) -> Option<Vec<Component<PoseDifference>>> {
+    fn keep_other(&self, edge: &StampedTransform) -> Result<RootedPose, InputRejection> {
+        rooted_pose(edge)
+    }
+
+    /// The truth is interpolated to each estimate's stamp.
+    fn other_lining(&self) -> Lining<RootedPose> {
+        Lining::Interpolate(blend_rooted_poses)
+    }
+
+    fn menu() -> Option<Vec<Component<PoseDifference>>> {
         Some(components())
     }
 
-    fn check(&self, params: &PoseErrorConfig) -> Result<(), String> {
+    fn check(params: &PoseErrorConfig) -> Result<(), String> {
         match params.align.unbuilt_until() {
             None => Ok(()),
             Some(first_case) => Err(format!(
@@ -68,17 +83,11 @@ impl TypedKind for PoseError {
     }
 
     fn bind(
-        &self,
         params: PoseErrorConfig,
-        inputs: &[BoundInput],
-    ) -> Result<PoseErrorEvaluator, Vec<String>> {
-        let (Some(estimate), Some(truth)) = (inputs.first(), inputs.get(1)) else {
-            return Err(vec![format!(
-                "{} needs both of its inputs bound",
-                Self::NAME
-            )]);
-        };
-        let (estimated, true_frame) = match (estimate.frame(ESTIMATE), truth.frame(TRUTH)) {
+        estimate: &BoundInput,
+        truth: &BoundInput,
+    ) -> Result<Self, Vec<String>> {
+        let (estimated, true_frame) = match (estimate.frame(Self::BASE), truth.frame(Self::OTHER)) {
             (Ok(estimated), Ok(true_frame)) => (estimated, true_frame),
             (estimated, true_frame) => {
                 return Err(estimated
@@ -89,17 +98,36 @@ impl TypedKind for PoseError {
             }
         };
         match (&estimated, &true_frame) {
-            (Some(estimated), Some(true_frame)) if estimated == true_frame => {
-                Ok(PoseErrorEvaluator::new(params.align))
-            }
+            (Some(estimated), Some(true_frame)) if estimated == true_frame => Ok(Self {
+                align: params.align,
+            }),
             (estimated, true_frame) => Err(vec![format!(
-                "the {ESTIMATE} is the pose of '{}' and the {TRUTH} of '{}': {} grades one \
-                 frame, so select the same instance for both",
+                "the {} is the pose of '{}' and the {} of '{}': {} grades one frame, so select \
+                 the same instance for both",
+                Self::BASE,
                 spelled(estimated.as_ref()),
+                Self::OTHER,
                 spelled(true_frame.as_ref()),
                 Self::NAME,
             )]),
         }
+    }
+
+    fn components(&self) -> Vec<Component<PoseDifference>> {
+        components()
+    }
+
+    fn fit(&self, run: &[(&RootedPose, &RootedPose)]) -> Result<Roots, InputRejection> {
+        Roots::fit(self.align, run)
+    }
+
+    fn compute(
+        &self,
+        estimate: &RootedPose,
+        truth: &RootedPose,
+        roots: &Roots,
+    ) -> Result<PoseDifference, InputRejection> {
+        roots.difference(estimate, truth)
     }
 }
 
@@ -113,7 +141,7 @@ fn spelled(frame: Option<&FrameId>) -> String {
 /// on each of the root's axes, and along and across the way the true body
 /// faces; the angle between the two orientations, and the heading error
 /// about up.
-pub(super) fn components() -> Vec<Component<PoseDifference>> {
+fn components() -> Vec<Component<PoseDifference>> {
     vec![
         Component::each("position", SiUnit::Meters, |d: &PoseDifference| {
             Ok(d.position())
@@ -155,7 +183,7 @@ pub(super) fn components() -> Vec<Component<PoseDifference>> {
 mod tests {
     use super::*;
 
-    use crate::evaluation::{derived::Refused, kind::EvaluatorKind, typed::Typed};
+    use crate::evaluation::{derived::Refused, kind::EvaluatorKind, typed::TwoInputsKind};
 
     use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::conventions::{Enu, Flu};
@@ -173,6 +201,10 @@ mod tests {
         }
     }
 
+    fn kind() -> TwoInputsKind<PoseError> {
+        TwoInputsKind::new()
+    }
+
     fn params(text: &str) -> toml::Table {
         text.parse().expect("valid TOML")
     }
@@ -182,11 +214,11 @@ mod tests {
         let base_link = FrameId::base_link(AgentId::new(CAR));
         let wheel = FrameId::agent(AgentId::new(CAR), "wheel");
 
-        let two_frames = Typed(PoseError).build(
+        let two_frames = kind().build(
             &toml::Table::new(),
             &[input(Some(base_link.clone())), input(Some(wheel))],
         );
-        let no_instance = Typed(PoseError)
+        let no_instance = kind()
             .build(&toml::Table::new(), &[input(Some(base_link)), input(None)])
             .err()
             .expect("no truth instance");
@@ -205,7 +237,7 @@ mod tests {
             instance: Some(spelling.to_owned()),
         };
 
-        let problems = Typed(PoseError)
+        let problems = kind()
             .build(
                 &toml::Table::new(),
                 &[ros_frame("base_link"), ros_frame("odom")],
@@ -226,7 +258,7 @@ mod tests {
 
     #[test]
     fn a_frame_policy_not_built_is_refused_naming_its_first_case() {
-        let problem = Typed(PoseError)
+        let problem = kind()
             .check_params(&params("align = \"best_fit\""))
             .expect_err("best_fit is not built");
 
@@ -238,17 +270,15 @@ mod tests {
             problem.contains("the first hardware or SLAM run"),
             "{problem}"
         );
-        assert!(Typed(PoseError)
+        assert!(kind()
             .check_params(&params("align = \"first_pose\""))
             .is_ok());
-        assert!(Typed(PoseError)
-            .check_params(&params("gain = 2.0"))
-            .is_err());
+        assert!(kind().check_params(&params("gain = 2.0")).is_err());
     }
 
     #[test]
     fn the_menu_reads_the_pose_every_way_with_its_units() {
-        let menu: Vec<(&str, SiUnit)> = Typed(PoseError)
+        let menu: Vec<(&str, SiUnit)> = kind()
             .menu()
             .expect("a fixed menu")
             .iter()

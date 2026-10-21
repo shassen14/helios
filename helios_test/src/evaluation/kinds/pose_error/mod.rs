@@ -5,7 +5,7 @@
 //! graded: a body's `base_link`, a sensor's mount.
 
 pub mod config;
-mod evaluator;
 mod kind;
+mod roots;
 
 pub use kind::PoseError;

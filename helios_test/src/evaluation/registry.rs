@@ -3,7 +3,7 @@
 use crate::evaluation::{
     kind::EvaluatorKind,
     kinds::{pose_error::PoseError, twist_tracking::TwistTracking},
-    typed::{TwoInputsKind, Typed},
+    typed::TwoInputsKind,
 };
 
 use std::{collections::BTreeMap, sync::Arc};
@@ -40,7 +40,7 @@ impl EvaluatorRegistry {
 /// The kinds every run can name.
 pub fn standard_evaluators() -> EvaluatorRegistry {
     let mut registry = EvaluatorRegistry::new();
-    registry.register(Typed(PoseError));
+    registry.register(TwoInputsKind::<PoseError>::new());
     registry.register(TwoInputsKind::<TwistTracking>::new());
     registry
 }
