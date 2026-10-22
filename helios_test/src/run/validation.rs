@@ -71,6 +71,12 @@ pub enum ValidationError {
     DerivedInput { name: EntryName, role: String },
     #[error("evaluation '{name}': {problem}")]
     UnusableParams { name: EntryName, problem: String },
+    #[error("evaluation '{name}': its [evaluate.gap] names '{role}', which is not one of its roles ({roles})")]
+    UnknownGapRole {
+        name: EntryName,
+        role: String,
+        roles: String,
+    },
     #[error("'{name}': '{target}' names no [[evaluate]] entry")]
     UnknownEvaluation {
         name: EntryName,
@@ -196,8 +202,8 @@ pub fn validate(run: &Run, evaluators: &EvaluatorRegistry) -> Result<(), Validat
 
 /// Each evaluation's kind, by the evaluation's name, once every evaluation
 /// names a registered kind, a series for each of its roles and no other,
-/// recorded series only, parameters the kind reads and a frame policy that
-/// is built and that the kind applies.
+/// recorded series only, parameters the kind reads, gaps for its roles only,
+/// and a frame policy that is built and that the kind applies.
 fn validate_evaluations<'a, 'r>(
     run: &'a Run,
     evaluators: &'r EvaluatorRegistry,
@@ -245,6 +251,21 @@ fn validate_evaluations<'a, 'r>(
             return Err(ValidationError::UnusableParams {
                 name: name.clone(),
                 problem,
+            });
+        }
+        if let Some(role) = evaluation
+            .gap
+            .keys()
+            .find(|role| !roles.iter().any(|declared| declared.name == *role))
+        {
+            return Err(ValidationError::UnknownGapRole {
+                name: name.clone(),
+                role: role.clone(),
+                roles: roles
+                    .iter()
+                    .map(|role| role.name)
+                    .collect::<Vec<_>>()
+                    .join(", "),
             });
         }
         kinds.insert(name, kind);
@@ -560,6 +581,26 @@ mod tests {
     fn an_evaluation_with_an_assertion_on_its_metric_is_ok() {
         let run = evaluating(|twist| twist, &max_of("a", "eval.inline.twist.surge"));
         assert_eq!(check(&run), Ok(()));
+    }
+
+    #[test]
+    fn a_gap_naming_no_role_of_the_kind_is_refused_listing_its_roles() {
+        let gap = |role: &str| {
+            check(&evaluating(
+                |twist| format!("{twist}[evaluate.gap.{role}]\nseconds = 0.5\n"),
+                "",
+            ))
+        };
+
+        assert_eq!(gap("reference"), Ok(()));
+        assert_eq!(
+            gap("goal"),
+            Err(ValidationError::UnknownGapRole {
+                name: EntryName::parse("twist").unwrap(),
+                role: "goal".to_owned(),
+                roles: "truth, reference".to_owned(),
+            })
+        );
     }
 
     #[test]

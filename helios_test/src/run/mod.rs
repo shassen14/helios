@@ -11,7 +11,7 @@ use termination::Termination;
 
 use crate::{
     assertion::{Assertion, Measure},
-    evaluation::Evaluation,
+    evaluation::{Evaluation, EvaluationDefaults},
 };
 
 use serde::Deserialize;
@@ -44,6 +44,9 @@ pub struct Run {
     measures: Vec<Measure>,
     #[serde(default, rename = "evaluate")]
     evaluations: Vec<Evaluation>,
+    /// `[evaluation]`, what every evaluation shares unless it gives its own.
+    #[serde(default, rename = "evaluation")]
+    evaluation_defaults: Option<EvaluationDefaults>,
     termination: Termination,
 }
 
@@ -72,6 +75,10 @@ impl Run {
 
     pub fn evaluations(&self) -> &[Evaluation] {
         &self.evaluations
+    }
+
+    pub fn evaluation_defaults(&self) -> Option<&EvaluationDefaults> {
+        self.evaluation_defaults.as_ref()
     }
 
     pub fn termination(&self) -> &Termination {

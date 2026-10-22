@@ -48,9 +48,10 @@ impl TwoInputs for TwistTracking {
         Ok(reference_twist(reference))
     }
 
-    /// A reference holds until the next.
+    /// A reference holds until the next, and expires past its cap: guidance
+    /// that stopped is no longer a reference.
     fn other_lining(&self) -> Lining<BodyTwist> {
-        Lining::Hold
+        Lining::HoldWithinCap
     }
 
     fn menu() -> Option<Vec<Component<TwistError>>> {
@@ -171,13 +172,19 @@ fn components() -> Vec<Component<TwistError>> {
 mod tests {
     use super::*;
 
-    use crate::evaluation::{kind::EvaluatorKind, typed::TwoInputsKind};
+    use crate::evaluation::{kind::EvaluatorKind, typed::TwoInputsKind, Gap, GapWidth};
 
     use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::quantities::FreeVector;
 
     const CAR: &str = "car";
     const TOL: f64 = 1e-12;
+
+    /// Each role's gap, the reference's a cap it takes whatever its rate.
+    fn gaps() -> [Option<Gap>; 2] {
+        let seconds = GapWidth::try_from(0.1).expect("positive and finite");
+        [None, Some(Gap::Seconds(seconds))]
+    }
 
     fn input(agent: &str, instance: Option<String>) -> BoundInput {
         BoundInput {
@@ -282,7 +289,7 @@ mod tests {
     fn a_truth_velocity_of_another_frame_is_refused_on_arrival() {
         let truth = input(CAR, Some(base_link(CAR).to_string()));
         let mut evaluation = kind()
-            .build(&toml::Table::new(), &[truth, input(CAR, None)])
+            .build(&toml::Table::new(), &[truth, input(CAR, None)], &gaps())
             .unwrap_or_else(|problems| panic!("{problems:?}"));
         let in_datum = StampedTwist::<Flu> {
             moving: base_link(CAR),

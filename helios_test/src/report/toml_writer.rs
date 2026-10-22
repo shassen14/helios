@@ -46,6 +46,7 @@ mod tests {
     use crate::assertion::{
         AssertionTarget, AssertionValue, Bound, Condition, InstanceSelector, RunInstant, Window,
     };
+    use crate::evaluation::{kind::Cap, GapWidth};
     use crate::report::{
         AssertionReportEntry, EvaluationReportEntry, FailureReason, InputReport,
         MeasureReportEntry, MetricReport, ReportedUnit, SeriesSummary, TerminatedBy, Verdict,
@@ -173,6 +174,7 @@ mod tests {
                     instance: Some("agent.car.base_link".to_string()),
                     writer: "body unit truth".to_string(),
                     provenance: Some("exact"),
+                    cap: None,
                     refused: 0,
                 },
                 InputReport {
@@ -182,6 +184,10 @@ mod tests {
                     instance: None,
                     writer: "node reference_arbiter".to_string(),
                     provenance: None,
+                    cap: Some(Cap::in_periods(
+                        GapWidth::try_from(3.0).expect("positive"),
+                        400.0,
+                    )),
                     refused: 2,
                 },
             ],
@@ -296,6 +302,9 @@ mod tests {
         assert_eq!(inputs[0]["provenance"].as_str(), Some("exact"));
         assert!(inputs[0].get("refused").is_none());
         assert!(inputs[1].get("provenance").is_none());
+        assert!(inputs[0].get("cap").is_none());
+        assert_eq!(inputs[1]["cap"]["seconds"].as_float(), Some(0.0075));
+        assert_eq!(inputs[1]["cap"]["multiple"].as_float(), Some(3.0));
         assert_eq!(inputs[1]["refused"].as_integer(), Some(2));
         let metrics = twist["metrics"].as_array().unwrap();
         assert_eq!(metrics[0]["path"].as_str(), Some("eval.inline.twist.surge"));

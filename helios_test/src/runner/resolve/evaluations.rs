@@ -3,9 +3,9 @@
 //! payload type its role reads, that the collector requests; and the kind
 //! accepts the series bound, comparing their frames and the facts their
 //! writers declared (the frame values are expressed in and its convention,
-//! the rate, the writer). Each evaluation that
-//! can be built is bound in the collector, so its inputs feed it from the
-//! first tick.
+//! the rate, the writer), and gives each capped role a cap. Each evaluation
+//! that can be built is bound in the collector, so its inputs feed it from
+//! the first tick.
 
 use super::{
     locate::{find, spellings, Catalog},
@@ -15,8 +15,8 @@ use crate::{
     assertion::{AssertionTarget, EntryName},
     collector::{instance_of, EvaluationId, ObservationCollector},
     evaluation::{
-        kind::{BoundInput, Metric, Role},
-        Evaluation, EvaluatorRegistry,
+        kind::{BoundInput, Cap, Metric, Role},
+        Evaluation, EvaluationDefaults, EvaluatorRegistry, Gap,
     },
 };
 
@@ -54,7 +54,7 @@ pub struct PlannedEvaluation {
 }
 
 /// _Per-step._ One role's input as setup bound it: the selector the run file
-/// gave, the key it named, and who writes it.
+/// gave, the key it named, who writes it, and the widest gap it spans.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedInput {
     pub role: &'static str,
@@ -62,6 +62,8 @@ pub struct PlannedInput {
     pub key: RecordedKey,
     /// `None` only when no description names the series' writer.
     pub writer: Option<Writer>,
+    /// `None` for the base and a role held however old.
+    pub cap: Option<Cap>,
 }
 
 /// _Pre-step._ An evaluation the run can't build, and every reason why.
@@ -85,12 +87,17 @@ pub enum EvaluationProblem {
     /// The kind can't compare the series bound, in its own words.
     #[error("{0}")]
     Refused(String),
+    /// A gap given to a role the kind lines up with no cap.
+    #[error("its [evaluate.gap.{0}] is unused: the kind gives the {0} no cap, so drop it")]
+    UnusedGap(&'static str),
 }
 
 /// Each of `evaluations` the run can build, bound in `collector`, and each
-/// it can't, both in run-file order.
+/// it can't, both in run-file order. A role its entry gives no gap takes
+/// `defaults`'.
 pub(super) fn resolve_evaluations(
     evaluations: &[Evaluation],
+    defaults: Option<&EvaluationDefaults>,
     registry: &EvaluatorRegistry,
     catalogs: &[Catalog],
     collector: &mut ObservationCollector,
@@ -98,7 +105,7 @@ pub(super) fn resolve_evaluations(
     let mut planned = Vec::new();
     let mut unusable = Vec::new();
     for evaluation in evaluations {
-        match plan(evaluation, registry, catalogs, collector) {
+        match plan(evaluation, defaults, registry, catalogs, collector) {
             Ok(evaluation) => planned.push(evaluation),
             Err(problems) => unusable.push(UnusableEvaluation {
                 name: evaluation.name.clone(),
@@ -110,9 +117,11 @@ pub(super) fn resolve_evaluations(
 }
 
 /// `evaluation` built and bound in `collector`, or every reason it can't
-/// be: each input's problems, or, once every input is bound, the kind's.
+/// be: each input's problems, or, once every input is bound, the kind's,
+/// or each gap it gives a role with no cap.
 fn plan(
     evaluation: &Evaluation,
+    defaults: Option<&EvaluationDefaults>,
     registry: &EvaluatorRegistry,
     catalogs: &[Catalog],
     collector: &mut ObservationCollector,
@@ -151,8 +160,13 @@ fn plan(
     }
 
     let inputs: Vec<BoundInput> = bound.iter().map(|input| input.facts.clone()).collect();
+    let default = defaults.map(|defaults| Gap::Multiple(defaults.gap_multiple));
+    let gaps: Vec<Option<Gap>> = roles
+        .iter()
+        .map(|role| evaluation.gap.get(role.name).copied().or(default))
+        .collect();
     let evaluator = kind
-        .build(&evaluation.params, &inputs)
+        .build(&evaluation.params, &inputs, &gaps)
         .map_err(|refusals| {
             refusals
                 .into_iter()
@@ -160,6 +174,18 @@ fn plan(
                 .collect::<Vec<_>>()
         })?;
     let metrics = evaluator.metrics();
+    let caps = evaluator.caps();
+    // Whether a role is capped is the bound kind's, so an unused gap is
+    // refused here, not at load.
+    let unused: Vec<EvaluationProblem> = roles
+        .iter()
+        .zip(&caps)
+        .filter(|(role, cap)| cap.is_none() && evaluation.gap.contains_key(role.name))
+        .map(|(role, _)| EvaluationProblem::UnusedGap(role.name))
+        .collect();
+    if !unused.is_empty() {
+        return Err(unused);
+    }
     let id = collector.bind_evaluation(
         evaluator,
         bound
@@ -176,7 +202,14 @@ fn plan(
         held: bound.first().is_some_and(|base| base.held),
         nondeterministic: bound.iter().any(|input| input.nondeterministic),
         metrics,
-        inputs: bound.into_iter().map(|input| input.planned).collect(),
+        inputs: bound
+            .into_iter()
+            .zip(caps)
+            .map(|(input, cap)| PlannedInput {
+                cap,
+                ..input.planned
+            })
+            .collect(),
     })
 }
 
@@ -277,6 +310,8 @@ fn locate_input(
                 subject: (*subject).clone(),
             },
             writer,
+            // The kind gives it once bound.
+            cap: None,
         },
     })
 }

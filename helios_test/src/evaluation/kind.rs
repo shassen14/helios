@@ -10,13 +10,17 @@
 //! inputs up in time the same way for every kind; these traits stay open to
 //! one that pairs its values some other way, such as by association.
 
-use crate::evaluation::derived::{Derived, Refused};
+use crate::evaluation::{
+    config::{Gap, GapWidth},
+    derived::{Derived, Refused},
+};
 
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::{AgentId, FrameId, MonotonicTime};
 use helios_core::spatial::transforms::Convention;
 use helios_runtime::port::Writer;
 
+use serde::Serialize;
 use std::{
     any::{Any, TypeId},
     fmt,
@@ -44,14 +48,17 @@ pub trait EvaluatorKind: Send + Sync {
     fn check_params(&self, params: &toml::Table) -> Result<(), String>;
 
     /// The evaluation of one entry, which the collector feeds, from its
-    /// `params` (ones [`check_params`](Self::check_params) accepted) and the
-    /// series each role was bound to (in [`roles`](Self::roles) order), or
-    /// every reason those series can't be compared: inputs whose frames the
-    /// kind can't relate are refused here, before the first tick.
+    /// `params` (ones [`check_params`](Self::check_params) accepted), the
+    /// series each role was bound to and the widest gap each role spans if
+    /// capped (both in [`roles`](Self::roles) order), or every reason those
+    /// series can't be compared: inputs whose frames the kind can't relate,
+    /// and a capped role given no cap, are refused here, before the first
+    /// tick.
     fn build(
         &self,
         params: &toml::Table,
         inputs: &[BoundInput],
+        gaps: &[Option<Gap>],
     ) -> Result<Box<dyn Evaluator>, Vec<String>>;
 }
 
@@ -70,6 +77,10 @@ pub trait Evaluator: Send + Sync {
     /// value the evaluation can compare, such as a velocity expressed in
     /// another frame.
     fn receive(&mut self, role: usize, at: MonotonicTime, payload: &dyn Any);
+
+    /// Each role's cap, in role order: `None` for the base and a role held
+    /// however old.
+    fn caps(&self) -> Vec<Option<Cap>>;
 
     /// Each role's refusals so far, in role order.
     fn refused(&self) -> &[Refused];
@@ -145,6 +156,79 @@ impl BoundInput {
                 })
             })
             .transpose()
+    }
+}
+
+/// How far, as a fraction of a cap, a gap may exceed it by rounding and
+/// still be spanned. A gap of exactly N periods is the difference of two
+/// stamps, which rounds either side of N periods; a millionth of the cap
+/// absorbs that for stamps up to about 10^7 s, and is far below any width
+/// a run means.
+const CAP_ROUNDING: f64 = 1e-6;
+
+/// _Pre-step._ The widest gap a role's values span: a held value older
+/// than it, or two values further apart than it to interpolate between,
+/// leave the base value uncovered. Made only from a [`Gap`], so it is
+/// positive.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Cap {
+    /// The multiple of its input's period it came from, unless given in
+    /// seconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    multiple: Option<f64>,
+    seconds: f64,
+}
+
+impl Cap {
+    /// The cap `gap` gives `role`, reading `input`, or why it gives none:
+    /// no gap given, or a multiple of the period of an input that declares
+    /// no rate.
+    pub fn of(role: &str, input: &BoundInput, gap: Option<Gap>) -> Result<Self, String> {
+        match (gap, input.rate_hz) {
+            (Some(Gap::Seconds(seconds)), _) => Ok(Self::in_seconds(seconds)),
+            (Some(Gap::Multiple(multiple)), Some(rate_hz)) => {
+                Ok(Self::in_periods(multiple, rate_hz))
+            }
+            (Some(Gap::Multiple(_)), None) => Err(format!(
+                "the {role} spans gaps up to a cap, and its series declares no rate to take a \
+                 multiple of: give [evaluate.gap.{role}] seconds, or read a series whose \
+                 writer declares a rate"
+            )),
+            (None, _) => Err(format!(
+                "the {role} spans gaps up to a cap, and the run gives none: give \
+                 [evaluation] gap_multiple, or [evaluate.gap.{role}] multiple or seconds"
+            )),
+        }
+    }
+
+    /// A cap of `seconds`.
+    pub fn in_seconds(seconds: GapWidth) -> Self {
+        Self {
+            multiple: None,
+            seconds: seconds.get(),
+        }
+    }
+
+    /// A cap of `multiple` periods of an input at `rate_hz`.
+    pub fn in_periods(multiple: GapWidth, rate_hz: f64) -> Self {
+        Self {
+            multiple: Some(multiple.get()),
+            seconds: multiple.get() / rate_hz,
+        }
+    }
+
+    pub fn multiple(&self) -> Option<f64> {
+        self.multiple
+    }
+
+    pub fn seconds(&self) -> f64 {
+        self.seconds
+    }
+
+    /// Whether a gap of `seconds` is within it. A gap of exactly the cap
+    /// is, whichever way its stamps rounded.
+    pub fn spans(&self, seconds: f64) -> bool {
+        seconds <= self.seconds * (1.0 + CAP_ROUNDING)
     }
 }
 

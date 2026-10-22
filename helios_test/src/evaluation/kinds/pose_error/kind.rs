@@ -63,9 +63,10 @@ impl TwoInputs for PoseError {
         rooted_pose(edge)
     }
 
-    /// The truth is interpolated to each estimate's stamp.
+    /// The truth is interpolated to each estimate's stamp, never across a
+    /// gap wider than its cap.
     fn other_lining(&self) -> Lining<RootedPose> {
-        Lining::Interpolate(blend_rooted_poses)
+        Lining::InterpolateWithinCap(blend_rooted_poses)
     }
 
     fn menu() -> Option<Vec<Component<PoseDifference>>> {
@@ -239,7 +240,9 @@ fn components() -> Vec<Component<PoseDifference>> {
 mod tests {
     use super::*;
 
-    use crate::evaluation::{derived::Refused, kind::EvaluatorKind, typed::TwoInputsKind};
+    use crate::evaluation::{
+        derived::Refused, kind::EvaluatorKind, typed::TwoInputsKind, Gap, GapWidth,
+    };
 
     use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::conventions::{Enu, Flu};
@@ -249,6 +252,12 @@ mod tests {
     use std::f64::consts::FRAC_PI_2;
 
     const CAR: &str = "car";
+
+    /// Each role's gap, the truth's a cap it takes whatever its rate.
+    fn gaps() -> [Option<Gap>; 2] {
+        let seconds = GapWidth::try_from(0.1).expect("positive and finite");
+        [None, Some(Gap::Seconds(seconds))]
+    }
 
     /// The pose of `instance` in the datum, held in ENU axes.
     fn input(instance: Option<FrameId>) -> BoundInput {
@@ -299,9 +308,14 @@ mod tests {
         let two_frames = kind().build(
             &toml::Table::new(),
             &[input(Some(base_link.clone())), input(Some(wheel))],
+            &gaps(),
         );
         let no_instance = kind()
-            .build(&toml::Table::new(), &[input(Some(base_link)), input(None)])
+            .build(
+                &toml::Table::new(),
+                &[input(Some(base_link)), input(None)],
+                &gaps(),
+            )
             .err()
             .expect("no truth instance");
 
@@ -323,6 +337,7 @@ mod tests {
             .build(
                 &toml::Table::new(),
                 &[ros_frame("base_link"), ros_frame("odom")],
+                &gaps(),
             )
             .err()
             .expect("neither is a frame");
@@ -345,6 +360,7 @@ mod tests {
         let bound = kind().build(
             &params("align = \"first_pose\""),
             &[estimate, input(base_link())],
+            &gaps(),
         );
 
         assert!(bound.is_ok(), "{:?}", bound.err());
@@ -358,6 +374,7 @@ mod tests {
             .build(
                 &params("align = \"first_pose\""),
                 &[estimate, input(base_link())],
+                &gaps(),
             )
             .err()
             .expect("unlike roots");
@@ -376,7 +393,11 @@ mod tests {
         let estimate = rooted(base_link(), odom(), Some(Convention::Enu));
 
         let problems = kind()
-            .build(&toml::Table::new(), &[estimate, input(base_link())])
+            .build(
+                &toml::Table::new(),
+                &[estimate, input(base_link())],
+                &gaps(),
+            )
             .err()
             .expect("declared roots that differ");
 
@@ -397,7 +418,7 @@ mod tests {
         let undeclared = rooted(base_link(), None, None);
 
         let problems = kind()
-            .build(&toml::Table::new(), &[unowned, undeclared])
+            .build(&toml::Table::new(), &[unowned, undeclared], &gaps())
             .err()
             .expect("neither root can be compared");
 

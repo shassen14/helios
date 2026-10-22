@@ -178,6 +178,10 @@ role = "reference"
 target = "agent.ProvingCar.channel.reference"
 writer = "node reference_arbiter"
 
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
 [[evaluations.metrics]]
 path = "eval.inline.twist.surge"
 unit = "m/s"

@@ -151,7 +151,8 @@ fn render(report: &Report) -> String {
 }
 
 /// "[evaluate] <name>: <kind>[ (<param> = <value>, …)] of <role> (<target>,
-/// <writer>[, <provenance>]), … — <samples> samples[, <uncovered> where an
+/// <writer>[, <provenance>][, gaps up to <seconds> s[ = <multiple> periods]]),
+/// … — <samples> samples[, <uncovered> where an
 /// input had no value][, <refused> not computed]", then each metric's path
 /// and unit. The parameters show only when the entry gave some.
 fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
@@ -168,8 +169,18 @@ fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
                 .provenance
                 .map(|provenance| format!(", {provenance}"))
                 .unwrap_or_default();
+            let cap = input
+                .cap
+                .map(|cap| {
+                    let multiple = cap
+                        .multiple()
+                        .map(|multiple| format!(" = {multiple} periods"))
+                        .unwrap_or_default();
+                    format!(", gaps up to {} s{multiple}", cap.seconds())
+                })
+                .unwrap_or_default();
             format!(
-                "{} ({}{instance}, {}{provenance})",
+                "{} ({}{instance}, {}{provenance}{cap})",
                 input.role,
                 input.target.path(),
                 input.writer
@@ -378,6 +389,7 @@ mod tests {
 
     use crate::{
         assertion::{AssertionTarget, Window},
+        evaluation::{kind::Cap, GapWidth},
         report::{AssertionReportEntry, InputReport, MeasureReportEntry, MetricReport},
     };
 
@@ -650,15 +662,31 @@ mod tests {
             uncovered: 1,
             refused: 0,
             params: toml::Table::new(),
-            inputs: vec![InputReport {
-                role: "truth".to_string(),
-                target: AssertionTarget::parse("agent.car.channel.truth.twist")
-                    .expect("valid target"),
-                instance: Some("agent.car.base_link".to_string()),
-                writer: "body unit truth".to_string(),
-                provenance: Some("exact"),
-                refused: 0,
-            }],
+            inputs: vec![
+                InputReport {
+                    role: "truth".to_string(),
+                    target: AssertionTarget::parse("agent.car.channel.truth.twist")
+                        .expect("valid target"),
+                    instance: Some("agent.car.base_link".to_string()),
+                    writer: "body unit truth".to_string(),
+                    provenance: Some("exact"),
+                    cap: None,
+                    refused: 0,
+                },
+                InputReport {
+                    role: "reference".to_string(),
+                    target: AssertionTarget::parse("agent.car.channel.reference")
+                        .expect("valid target"),
+                    instance: None,
+                    writer: "node reference_arbiter".to_string(),
+                    provenance: None,
+                    cap: Some(Cap::in_periods(
+                        GapWidth::try_from(3.0).expect("positive"),
+                        400.0,
+                    )),
+                    refused: 0,
+                },
+            ],
             metrics: vec![
                 MetricReport {
                     path: "eval.inline.twist.surge".to_string(),
@@ -676,8 +704,9 @@ mod tests {
         assert_eq!(
             evaluation_line(&twist),
             "[evaluate] twist: twist_tracking of truth (agent.car.channel.truth.twist\
-             [agent.car.base_link], body unit truth, exact) - 100 samples, 1 where an \
-             input had no value -> eval.inline.twist.surge in m/s; also offers sway"
+             [agent.car.base_link], body unit truth, exact), reference \
+             (agent.car.channel.reference, node reference_arbiter, gaps up to 0.0075 s = 3 \
+             periods) - 100 samples, 1 where an input had no value -> eval.inline.twist.surge in m/s; also offers sway"
         );
     }
 

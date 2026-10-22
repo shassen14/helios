@@ -102,7 +102,7 @@ impl TwoInputs for Lag {
     }
 
     fn other_lining(&self) -> Lining<f64> {
-        Lining::Hold
+        Lining::HoldIndefinitely
     }
 
     /// Known only once bound, as a kind's whose metrics come from what it

@@ -4,14 +4,15 @@
 //! other up at the base's stamps.
 
 use super::{
-    buffer::{Lined, LinedUp, Lining, RoleBuffer},
+    buffer::{GapRule, Lined, LinedUp, Lining, RoleBuffer},
     component::Component,
     derive::derive,
     params,
 };
 use crate::evaluation::{
+    config::Gap,
     derived::{Derived, Refused},
-    kind::{BoundInput, Evaluator, EvaluatorKind, InputRejection, Metric, Role},
+    kind::{BoundInput, Cap, Evaluator, EvaluatorKind, InputRejection, Metric, Role},
 };
 
 use helios_core::prelude::MonotonicTime;
@@ -67,7 +68,8 @@ pub trait TwoInputs: Send + Sync + Sized + 'static {
     /// What is kept of one payload of the other input, or why it is refused.
     fn keep_other(&self, payload: &Self::OtherPayload) -> Result<Self::OtherValue, InputRejection>;
 
-    /// How the other input lines up at each base stamp.
+    /// How the other input lines up at each base stamp, and whether across
+    /// gaps up to a cap, which the run gives.
     fn other_lining(&self) -> Lining<Self::OtherValue>;
 
     /// The metrics every evaluator of this kind offers, when they are fixed,
@@ -150,12 +152,18 @@ impl<K: TwoInputs> EvaluatorKind for TwoInputsKind<K> {
         &self,
         params: &toml::Table,
         inputs: &[BoundInput],
+        gaps: &[Option<Gap>],
     ) -> Result<Box<dyn Evaluator>, Vec<String>> {
         let params = params::read(K::NAME, params, K::check).map_err(|problem| vec![problem])?;
-        let [base, other] = inputs else {
+        let ([base, other], [_, other_gap]) = (inputs, gaps) else {
             return Err(vec![format!("{} needs both of its inputs bound", K::NAME)]);
         };
-        let evaluation = TwoInputsEvaluation::new(K::bind(params, base, other)?);
+        let kind = K::bind(params, base, other)?;
+        let other_rule = kind
+            .other_lining()
+            .with_cap(K::OTHER, other, *other_gap)
+            .map_err(|problem| vec![problem])?;
+        let evaluation = TwoInputsEvaluation::new(kind, other_rule);
         // A fixed menu is the kind's components written a second time, one
         // read before binding and one after, so the types can't make them
         // one list; load checks a run file's names against the first and
@@ -186,10 +194,12 @@ fn listed(metrics: &[Metric]) -> String {
 }
 
 /// _Per-step._ One entry's evaluation by the two-input kind `K`: the
-/// components it offers, and each input's values and refusals.
+/// components it offers, how the other input lines up, and each input's
+/// values and refusals.
 struct TwoInputsEvaluation<K: TwoInputs> {
     kind: K,
     components: Vec<Component<K::Output>>,
+    other_rule: GapRule<K::OtherValue>,
     base: RoleBuffer<K::BaseValue>,
     other: RoleBuffer<K::OtherValue>,
     /// Each input's refusals, the base first.
@@ -197,10 +207,12 @@ struct TwoInputsEvaluation<K: TwoInputs> {
 }
 
 impl<K: TwoInputs> TwoInputsEvaluation<K> {
-    /// An evaluation by `kind`, nothing kept yet.
-    fn new(kind: K) -> Self {
+    /// An evaluation by `kind`, the other input lined up by `other_rule`,
+    /// nothing kept yet.
+    fn new(kind: K, other_rule: GapRule<K::OtherValue>) -> Self {
         Self {
             components: kind.components(),
+            other_rule,
             base: RoleBuffer::default(),
             other: RoleBuffer::default(),
             refused: Default::default(),
@@ -212,7 +224,6 @@ impl<K: TwoInputs> TwoInputsEvaluation<K> {
     /// value lined up at its stamp; a base value the other has none for is
     /// uncovered.
     fn line_up(&self, until: MonotonicTime) -> LinedUp<(&K::BaseValue, Lined<'_, K::OtherValue>)> {
-        let lining = self.kind.other_lining();
         let base = self.base.up_to(until);
         let mut lined = LinedUp {
             base_samples: base.len(),
@@ -220,7 +231,7 @@ impl<K: TwoInputs> TwoInputsEvaluation<K> {
             rows: Vec::new(),
         };
         for (at, base) in base {
-            match self.other.at(*at, until, &lining) {
+            match self.other.at(*at, until, &self.other_rule) {
                 Some(other) => lined.rows.push((*at, (base, other))),
                 None => lined.uncovered += 1,
             }
@@ -248,6 +259,10 @@ impl<K: TwoInputs> Evaluator for TwoInputsEvaluation<K> {
         if let (Err(rejection), Some(refused)) = (kept, self.refused.get_mut(role)) {
             refused.add(rejection);
         }
+    }
+
+    fn caps(&self) -> Vec<Option<Cap>> {
+        vec![None, self.other_rule.cap()]
     }
 
     fn refused(&self) -> &[Refused] {
@@ -283,17 +298,21 @@ mod tests {
     use crate::{
         assertion::AssertionValue,
         collector::{Rejection, Series},
-        evaluation::typed::{
-            projections::{blend_numbers, number},
-            NoParams,
+        evaluation::{
+            typed::{
+                projections::{blend_numbers, number},
+                NoParams,
+            },
+            GapWidth,
         },
     };
 
     use helios_core::kernel::si_unit::SiUnit;
     use helios_core::prelude::AgentId;
 
-    /// Reads finite `f64`s, kept as they are, the other input held or
-    /// interpolated linearly. Fits the sum of every covered base value,
+    /// Reads finite `f64`s, kept as they are, the other input held
+    /// indefinitely, or interpolated linearly within its cap when bound to
+    /// instance [`INTERPOLATED`]. Fits the sum of every covered base value,
     /// refusing a run with a negative one; a base value of zero is one it
     /// can't compute. Offers the base minus the other input, the fit, and
     /// the base's reciprocal (which refuses a base above 100). Bound to a
@@ -305,6 +324,9 @@ mod tests {
 
     /// The base instance [`Difference`] binds to offering less than its menu.
     const DRIFTED: &str = "drifted";
+
+    /// The other instance [`Difference`] binds to interpolating it.
+    const INTERPOLATED: &str = "interpolated";
 
     /// One sample: the base, the other input and the fit.
     #[derive(Clone, Copy)]
@@ -336,9 +358,9 @@ mod tests {
 
         fn other_lining(&self) -> Lining<f64> {
             if self.interpolated {
-                Lining::Interpolate(blend_numbers)
+                Lining::InterpolateWithinCap(blend_numbers)
             } else {
-                Lining::Hold
+                Lining::HoldIndefinitely
             }
         }
 
@@ -355,7 +377,7 @@ mod tests {
                 return Err(vec!["two agents".to_owned()]);
             }
             Ok(Self {
-                interpolated: false,
+                interpolated: other.instance.as_deref() == Some(INTERPOLATED),
                 drifted: base.instance.as_deref() == Some(DRIFTED),
             })
         }
@@ -407,20 +429,30 @@ mod tests {
     const SUM: usize = 1;
     const RECIPROCAL: usize = 2;
 
-    /// The other input held.
+    /// The other input held however old.
     fn held() -> TwoInputsEvaluation<Difference> {
-        TwoInputsEvaluation::new(Difference {
-            interpolated: false,
-            drifted: false,
-        })
+        TwoInputsEvaluation::new(
+            Difference {
+                interpolated: false,
+                drifted: false,
+            },
+            GapRule::Hold(None),
+        )
     }
 
-    /// The other input interpolated linearly.
+    /// The other input interpolated linearly across gaps up to 10 s.
     fn interpolated() -> TwoInputsEvaluation<Difference> {
-        TwoInputsEvaluation::new(Difference {
-            interpolated: true,
-            drifted: false,
-        })
+        TwoInputsEvaluation::new(
+            Difference {
+                interpolated: true,
+                drifted: false,
+            },
+            GapRule::Interpolate(blend_numbers, Cap::in_seconds(width(10.0))),
+        )
+    }
+
+    fn width(value: f64) -> GapWidth {
+        GapWidth::try_from(value).expect("positive and finite")
     }
 
     /// `value` as the other input sends it.
@@ -474,7 +506,11 @@ mod tests {
     fn the_menu_and_a_bound_evaluations_metrics_are_its_components() {
         let kind = TwoInputsKind::<Difference>::new();
         let evaluation = kind
-            .build(&toml::Table::new(), &[input("car"), input("car")])
+            .build(
+                &toml::Table::new(),
+                &[input("car"), input("car")],
+                &[None, None],
+            )
             .unwrap_or_else(|problems| panic!("{problems:?}"));
 
         let names: Vec<&str> = evaluation.metrics().iter().map(|m| m.name).collect();
@@ -492,7 +528,7 @@ mod tests {
         };
 
         let problems = kind
-            .build(&toml::Table::new(), &[drifted, input("car")])
+            .build(&toml::Table::new(), &[drifted, input("car")], &[None, None])
             .err()
             .expect("one metric fewer than its menu");
 
@@ -523,13 +559,101 @@ mod tests {
     fn build_refuses_what_bind_refuses_and_inputs_not_bound() {
         let kind = TwoInputsKind::<Difference>::new();
 
-        let two_agents = kind.build(&toml::Table::new(), &[input("car"), input("truck")]);
-        let one_input = kind.build(&toml::Table::new(), &[input("car")]);
+        let two_agents = kind.build(
+            &toml::Table::new(),
+            &[input("car"), input("truck")],
+            &[None, None],
+        );
+        let one_input = kind.build(&toml::Table::new(), &[input("car")], &[None, None]);
 
         assert_eq!(two_agents.err(), Some(vec!["two agents".to_owned()]));
         assert_eq!(
             one_input.err(),
             Some(vec!["difference needs both of its inputs bound".to_owned()])
+        );
+    }
+
+    /// The other input, interpolated, at `rate_hz`.
+    fn interpolated_input(rate_hz: Option<f64>) -> BoundInput {
+        BoundInput {
+            instance: Some(INTERPOLATED.to_owned()),
+            rate_hz,
+            ..input("car")
+        }
+    }
+
+    #[test]
+    fn a_capped_role_takes_a_multiple_of_its_period_or_the_seconds_given() {
+        let kind = TwoInputsKind::<Difference>::new();
+        let caps = |gap| {
+            kind.build(
+                &toml::Table::new(),
+                &[input("car"), interpolated_input(Some(10.0))],
+                &[None, Some(gap)],
+            )
+            .map(|evaluation| evaluation.caps())
+            .unwrap_or_else(|problems| panic!("{problems:?}"))
+        };
+        let seconds_and_multiple = |caps: Vec<Option<Cap>>| {
+            caps.into_iter()
+                .map(|cap| cap.map(|cap| (cap.seconds(), cap.multiple())))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            seconds_and_multiple(caps(Gap::Multiple(width(3.0)))),
+            vec![None, Some((0.3, Some(3.0)))]
+        );
+        assert_eq!(
+            seconds_and_multiple(caps(Gap::Seconds(width(0.5)))),
+            vec![None, Some((0.5, None))]
+        );
+    }
+
+    #[test]
+    fn a_role_held_indefinitely_needs_no_cap() {
+        let kind = TwoInputsKind::<Difference>::new();
+
+        let evaluation = kind
+            .build(
+                &toml::Table::new(),
+                &[input("car"), input("car")],
+                &[None, None],
+            )
+            .unwrap_or_else(|problems| panic!("{problems:?}"));
+
+        assert_eq!(evaluation.caps(), vec![None, None]);
+    }
+
+    #[test]
+    fn a_capped_role_with_no_cap_to_take_is_refused_naming_the_role_and_the_remedies() {
+        let kind = TwoInputsKind::<Difference>::new();
+        let problems = |rate_hz, gap| {
+            kind.build(
+                &toml::Table::new(),
+                &[input("car"), interpolated_input(rate_hz)],
+                &[None, gap],
+            )
+            .err()
+            .expect("no cap")
+        };
+
+        assert_eq!(
+            problems(None, Some(Gap::Multiple(width(3.0)))),
+            vec![
+                "the other spans gaps up to a cap, and its series declares no rate to take a \
+                 multiple of: give [evaluate.gap.other] seconds, or read a series whose \
+                 writer declares a rate"
+                    .to_owned()
+            ]
+        );
+        assert_eq!(
+            problems(Some(10.0), None),
+            vec![
+                "the other spans gaps up to a cap, and the run gives none: give [evaluation] \
+                 gap_multiple, or [evaluate.gap.other] multiple or seconds"
+                    .to_owned()
+            ]
         );
     }
 

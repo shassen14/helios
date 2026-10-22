@@ -117,6 +117,10 @@ provenance = "exact"
 path = "agent.ProvingCar.channel.truth.tf"
 instance = "agent.ProvingCar.base_link"
 
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
 [[evaluations.metrics]]
 path = "eval.inline.est.position"
 unit = "m"

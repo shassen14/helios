@@ -13,7 +13,7 @@ use super::{
 use crate::{
     assertion::{Assertion, AssertionTarget, EntryName, Measure},
     collector::{ObservationCollector, Rejection, Series, SeriesId},
-    evaluation::{derived::Derived, Evaluation, EvaluatorRegistry},
+    evaluation::{derived::Derived, Evaluation, EvaluationDefaults, EvaluatorRegistry},
     report::ReportedUnit,
     runner::state::AssertionState,
 };
@@ -245,9 +245,11 @@ impl<S: std::ops::Deref<Target = AssertionState>> EntryView<'_, '_, S> {
 /// The plan for evaluating `evaluations`, `assertions` and `measures`, with
 /// each one's series and inputs bound in `collector`, or every one the run
 /// can't evaluate, each list in run-file order. Evaluations are resolved
-/// first, since an entry may read one's metric.
+/// first, since an entry may read one's metric; a role its entry gives no gap takes
+/// `evaluation_defaults`'.
 pub(in crate::runner) fn resolve(
     evaluations: &[Evaluation],
+    evaluation_defaults: Option<&EvaluationDefaults>,
     assertions: &[Assertion],
     measures: &[Measure],
     registry: &EvaluatorRegistry,
@@ -273,7 +275,13 @@ pub(in crate::runner) fn resolve(
         .collect();
 
     let mut unusable = Unusable::default();
-    let (planned, refused) = resolve_evaluations(evaluations, registry, &catalogs, collector);
+    let (planned, refused) = resolve_evaluations(
+        evaluations,
+        evaluation_defaults,
+        registry,
+        &catalogs,
+        collector,
+    );
     unusable.evaluations = refused;
     let refused: HashSet<&EntryName> = unusable
         .evaluations

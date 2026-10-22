@@ -1,7 +1,7 @@
 //! _Post-step._ [`EvaluationReportEntry`]: what one evaluation derived over
 //! a run, and from what.
 
-use crate::{assertion::AssertionTarget, report::ReportedUnit};
+use crate::{assertion::AssertionTarget, evaluation::kind::Cap, report::ReportedUnit};
 
 use helios_runtime::port::{Provenance, Writer};
 
@@ -35,9 +35,9 @@ pub struct EvaluationReportEntry {
 }
 
 /// _Post-step._ One role's input: the selector the run file gave, the
-/// instance it named, and who wrote it. A body's channel says how its
-/// values were produced, so a grade against an exact oracle reads apart
-/// from one against a modeled sensor.
+/// instance it named, who wrote it, and the widest gap it spanned. A body's
+/// channel says how its values were produced, so a grade against an exact
+/// oracle reads apart from one against a modeled sensor.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InputReport {
     pub role: String,
@@ -47,6 +47,9 @@ pub struct InputReport {
     pub writer: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<&'static str>,
+    /// `None` for the base and a role held however old.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cap: Option<Cap>,
     /// Values the evaluation refused. Any one fails the run, under
     /// `[recording]`.
     #[serde(skip_serializing_if = "is_zero")]

@@ -15,5 +15,5 @@ pub mod path;
 pub mod registry;
 pub mod typed;
 
-pub use config::Evaluation;
+pub use config::{Evaluation, EvaluationDefaults, Gap, GapWidth};
 pub use registry::{standard_evaluators, EvaluatorRegistry};

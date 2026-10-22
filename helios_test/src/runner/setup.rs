@@ -29,6 +29,7 @@ impl Runner {
 
         match resolve(
             self.run.evaluations(),
+            self.run.evaluation_defaults(),
             self.run.assertions(),
             self.run.measures(),
             &self.evaluators,
@@ -220,6 +221,24 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn a_gap_given_to_a_role_with_no_cap_is_refused_naming_each_role() {
+        // Lag holds its wanted speed however old, and the base spans no gap.
+        let gaps = format!(
+            "{}\n[evaluate.gap.wanted]\nseconds = 0.5\n[evaluate.gap.actual]\nmultiple = 2.0",
+            lag("slow", CAR)
+        );
+        let unusable = refused(&[&gaps], &[]);
+
+        assert_eq!(
+            unusable.evaluations[0].problems,
+            vec![
+                EvaluationProblem::UnusedGap("actual"),
+                EvaluationProblem::UnusedGap("wanted"),
+            ]
+        );
     }
 
     #[test]

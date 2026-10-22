@@ -12,6 +12,9 @@ scenario = { from = "sim/scenarios/01_proving_ground.toml" }
 observation = { from = "default" }
 termination = { max_simulated_seconds = 60.0 }
 
+[evaluation]
+gap_multiple = 3.0
+
 [[evaluate]]
 name = "est"
 kind = "pose_error"

@@ -255,6 +255,7 @@ pub(super) fn resolve_all(
     let mut collector = ObservationCollector::new(requested, extractors);
     let resolved = resolve(
         &[],
+        None,
         &assertions,
         &measures,
         &standard_evaluators(),

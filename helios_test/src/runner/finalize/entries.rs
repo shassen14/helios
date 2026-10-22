@@ -82,6 +82,7 @@ pub(super) fn report_evaluation(
                 instance: instance(&input.key),
                 writer,
                 provenance,
+                cap: input.cap,
                 refused: refused.get(role).map_or(0, |refused| refused.count),
             }
         })
