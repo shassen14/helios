@@ -1,6 +1,6 @@
-//! [`Roots`]: what `pose_error` fits over a run, how the estimate's root
-//! sits in the truth's, and each estimate's difference from the truth at its
-//! stamp under it.
+//! [`FixedRoots`]: what `pose_error` carries over a run, how the estimate's
+//! root sits in the truth's ([`Roots`]), fixed by the first sample, and each
+//! estimate's difference from the truth at its stamp under it.
 
 use super::config::Align;
 use crate::evaluation::{kind::InputRejection, typed::projections::RootedPose};
@@ -15,8 +15,35 @@ use helios_core::spatial::transforms::{ErasedTransform, PoseDifference, RootAlig
 const UNLIKE_CONVENTIONS: InputRejection =
     InputRejection("an estimate and a truth tagged with different axis conventions");
 
-/// _Per-step._ What `pose_error` fits over a run: how the estimate's root
-/// sits in the truth's.
+/// _Per-step._ What `pose_error` carries from sample to sample: the roots,
+/// fixed by the first sample it computes, or why that sample couldn't fix
+/// them, which refuses every later sample too. Fixed before that sample can
+/// be refused, so a refused first sample never moves the alignment to the
+/// second.
+#[derive(Default)]
+pub struct FixedRoots(Option<Result<Roots, InputRejection>>);
+
+impl FixedRoots {
+    /// `estimate` minus `truth` under the frame policy `align`, the roots
+    /// fixed from this pair when it is the first, or why the two can't be
+    /// compared.
+    pub(super) fn difference(
+        &mut self,
+        align: Align,
+        estimate: &RootedPose,
+        truth: &RootedPose,
+    ) -> Result<PoseDifference, InputRejection> {
+        let roots = self
+            .0
+            .get_or_insert_with(|| Roots::first(align, estimate, truth));
+        roots
+            .as_ref()
+            .map_err(|rejection| *rejection)?
+            .difference(estimate, truth)
+    }
+}
+
+/// _Per-step._ How the estimate's root sits in the truth's.
 pub enum Roots {
     /// The two are one frame: bind checks the declared roots are, and the
     /// bus holds each writer to its declaration.
@@ -31,25 +58,21 @@ pub enum Roots {
 }
 
 impl Roots {
-    /// The roots of every covered sample `run`, in stamp order, under the
-    /// frame policy `align`, or why they can't be fitted.
-    pub(super) fn fit(
+    /// The roots under the frame policy `align`, from the first sample's
+    /// `estimate` and `truth`, or why they can't be fixed.
+    fn first(
         align: Align,
-        run: &[(&RootedPose, &RootedPose)],
+        estimate: &RootedPose,
+        truth: &RootedPose,
     ) -> Result<Self, InputRejection> {
         match align {
             Align::Declared => Ok(Roots::Shared),
-            Align::FirstPose => {
-                let Some((estimate, truth)) = run.first() else {
-                    return Ok(Roots::Shared);
-                };
-                Ok(Roots::Aligned {
-                    estimate: estimate.root.clone(),
-                    truth: truth.root.clone(),
-                    alignment: RootAlignment::from_pair(&estimate.pose, &truth.pose)
-                        .map_err(|_| UNLIKE_CONVENTIONS)?,
-                })
-            }
+            Align::FirstPose => Ok(Roots::Aligned {
+                estimate: estimate.root.clone(),
+                truth: truth.root.clone(),
+                alignment: RootAlignment::from_pair(&estimate.pose, &truth.pose)
+                    .map_err(|_| UNLIKE_CONVENTIONS)?,
+            }),
             Align::BestFit | Align::Relative => {
                 Err(InputRejection("a frame policy pose_error doesn't fit"))
             }
@@ -58,7 +81,7 @@ impl Roots {
 
     /// `estimate` minus `truth`, the estimate placed in the truth's root, or
     /// why the two can't be compared.
-    pub(super) fn difference(
+    fn difference(
         &self,
         estimate: &RootedPose,
         truth: &RootedPose,
@@ -144,16 +167,16 @@ mod tests {
         rooted_pose(&edge).unwrap_or_else(|rejection| panic!("{rejection}"))
     }
 
-    /// Each sample's position, x, y, z and rotation under `align`, the run
-    /// fitted first, as the machinery does.
+    /// Each sample's position, x, y, z and rotation under `align`, in
+    /// stamp order, as the machinery computes them.
     fn grade(
         align: Align,
         run: &[(&RootedPose, &RootedPose)],
     ) -> Result<Vec<[f64; 5]>, InputRejection> {
-        let roots = Roots::fit(align, run)?;
+        let mut roots = FixedRoots::default();
         run.iter()
             .map(|(estimate, truth)| {
-                let difference = roots.difference(estimate, truth)?;
+                let difference = roots.difference(align, estimate, truth)?;
                 let offset = difference.translation();
                 Ok([
                     difference.position(),
@@ -232,14 +255,28 @@ mod tests {
         let truth = kept::<Enu>(datum(), 0.0, 0.0, 0.0);
         let in_map = kept::<Enu>(FrameId::map(AgentId::new(CAR)), 0.0, 0.0, 0.0);
 
-        let roots = Roots::fit(
-            Align::FirstPose,
-            &[(&first_estimate, &truth), (&in_map, &truth)],
-        )
-        .expect("a first sample");
+        let mut roots = FixedRoots::default();
 
-        assert!(roots.difference(&first_estimate, &truth).is_ok());
-        assert!(roots.difference(&in_map, &truth).is_err());
+        assert!(roots
+            .difference(Align::FirstPose, &first_estimate, &truth)
+            .is_ok());
+        assert!(roots.difference(Align::FirstPose, &in_map, &truth).is_err());
+    }
+
+    #[test]
+    fn under_first_pose_a_refused_first_sample_still_fixes_the_roots() {
+        // The first pair can't be aligned; the second could, and is refused
+        // all the same: the alignment is the first sample's, never moved on.
+        let in_flu_root = kept::<Flu>(odom(), 0.0, 0.0, 0.0);
+        let estimate = kept::<Enu>(odom(), 1.0, 0.0, 0.0);
+        let truth = kept::<Enu>(datum(), 0.0, 0.0, 0.0);
+        let mut roots = FixedRoots::default();
+
+        let first = roots.difference(Align::FirstPose, &in_flu_root, &truth);
+        let second = roots.difference(Align::FirstPose, &estimate, &truth);
+
+        assert_eq!(first.err(), Some(UNLIKE_CONVENTIONS));
+        assert_eq!(second.err(), Some(UNLIKE_CONVENTIONS));
     }
 
     #[test]

@@ -10,7 +10,9 @@ use crate::{
     evaluation::{
         kind::{BoundInput, InputRejection},
         standard_evaluators,
-        typed::{projections::number, Component, Lining, NoParams, TwoInputs, TwoInputsKind},
+        typed::{
+            projections::number, Component, Lining, NoParams, RowFacts, TwoInputs, TwoInputsKind,
+        },
         EvaluatorRegistry,
     },
     run::Run,
@@ -91,6 +93,7 @@ impl TwoInputs for Lag {
     type OtherPayload = Wheel;
     type OtherValue = f64;
     type Fit = ();
+    type State = ();
     type Output = f64;
 
     fn keep_base(&self, speed: &f64) -> Result<f64, InputRejection> {
@@ -133,7 +136,14 @@ impl TwoInputs for Lag {
         Ok(())
     }
 
-    fn compute(&self, actual: &f64, wanted: &f64, _: &()) -> Result<f64, InputRejection> {
+    fn compute(
+        &self,
+        actual: &f64,
+        wanted: &f64,
+        _: RowFacts,
+        _: &mut (),
+        _: &(),
+    ) -> Result<f64, InputRejection> {
         Ok(wanted - actual)
     }
 }

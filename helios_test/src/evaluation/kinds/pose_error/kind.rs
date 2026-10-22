@@ -3,13 +3,13 @@
 
 use super::{
     config::{Align, PoseErrorConfig},
-    roots::Roots,
+    roots::FixedRoots,
 };
 use crate::evaluation::{
     kind::{BoundInput, InputRejection},
     typed::{
         projections::{blend_rooted_poses, rooted_pose, RootedPose},
-        Component, Lining, TwoInputs,
+        Component, Lining, RowFacts, TwoInputs,
     },
 };
 
@@ -52,7 +52,8 @@ impl TwoInputs for PoseError {
     type BaseValue = RootedPose;
     type OtherPayload = StampedTransform;
     type OtherValue = RootedPose;
-    type Fit = Roots;
+    type Fit = ();
+    type State = FixedRoots;
     type Output = PoseDifference;
 
     fn keep_base(&self, edge: &StampedTransform) -> Result<RootedPose, InputRejection> {
@@ -121,17 +122,20 @@ impl TwoInputs for PoseError {
         components()
     }
 
-    fn fit(&self, run: &[(&RootedPose, &RootedPose)]) -> Result<Roots, InputRejection> {
-        Roots::fit(self.align, run)
+    fn fit(&self, _run: &[(&RootedPose, &RootedPose)]) -> Result<(), InputRejection> {
+        Ok(())
     }
 
+    /// Under `first_pose`, the first sample fixes how the roots sit.
     fn compute(
         &self,
         estimate: &RootedPose,
         truth: &RootedPose,
-        roots: &Roots,
+        _row: RowFacts,
+        roots: &mut FixedRoots,
+        _fit: &(),
     ) -> Result<PoseDifference, InputRejection> {
-        roots.difference(estimate, truth)
+        roots.difference(self.align, estimate, truth)
     }
 }
 

@@ -13,4 +13,4 @@ mod two_inputs;
 pub use buffer::Lining;
 pub use component::Component;
 pub use params::NoParams;
-pub use two_inputs::{TwoInputs, TwoInputsKind};
+pub use two_inputs::{RowFacts, TwoInputs, TwoInputsKind};

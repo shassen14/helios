@@ -7,7 +7,7 @@ use crate::evaluation::{
     kind::{BoundInput, InputRejection},
     typed::{
         projections::{body_twist, reference_twist},
-        Component, Lining, NoParams, TwoInputs,
+        Component, Lining, NoParams, RowFacts, TwoInputs,
     },
 };
 
@@ -38,6 +38,7 @@ impl TwoInputs for TwistTracking {
     type OtherPayload = BodyTwistRef;
     type OtherValue = BodyTwist;
     type Fit = ();
+    type State = ();
     type Output = TwistError;
 
     fn keep_base(&self, truth: &StampedTwist<Flu>) -> Result<BodyTwist, InputRejection> {
@@ -99,6 +100,8 @@ impl TwoInputs for TwistTracking {
         &self,
         truth: &BodyTwist,
         reference: &BodyTwist,
+        _row: RowFacts,
+        _state: &mut (),
         _fit: &(),
     ) -> Result<TwistError, InputRejection> {
         Ok(TwistError {
@@ -238,8 +241,14 @@ mod tests {
         // moves on every axis, so each other axis reads the truth.
         let evaluator = evaluator();
 
+        let row = RowFacts {
+            at: MonotonicTime(0.0),
+            follows_gap: false,
+            other_fresh: Some(true),
+        };
+
         let error = evaluator
-            .compute(&truth(4.0, 0.25), &reference(5.0, 0.5), &())
+            .compute(&truth(4.0, 0.25), &reference(5.0, 0.5), row, &mut (), &())
             .expect("computed");
 
         let values = read(&error);

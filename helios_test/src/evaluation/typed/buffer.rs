@@ -56,7 +56,7 @@ impl<K> RoleBuffer<K> {
                     };
                     return Err(Unlined::Uncovered(later));
                 }
-                Ok(Lined::Kept(held))
+                Ok(Lined::Held(*held_at, held))
             }
             GapRule::Interpolate(blend, cap) => {
                 let after = values.partition_point(|(stamp, _)| stamp.0 < at.0);
@@ -159,18 +159,29 @@ impl<K> GapRule<K> {
     }
 }
 
-/// _Per-step._ One role's value lined up at a base sample: one it kept, or
-/// one blended from the two it kept around the sample.
+/// _Per-step._ One role's value lined up at a base sample.
 pub enum Lined<'a, K> {
+    /// The value in force, held since its stamp.
+    Held(MonotonicTime, &'a K),
+    /// An interpolated role's value stamped at the sample.
     Kept(&'a K),
+    /// An interpolated role's value blended from the two around the sample.
     Blended(K),
 }
 
 impl<K> Lined<'_, K> {
     pub(super) fn value(&self) -> &K {
         match self {
-            Lined::Kept(value) => value,
+            Lined::Held(_, value) | Lined::Kept(value) => value,
             Lined::Blended(value) => value,
+        }
+    }
+
+    /// The stamp of a held value; `None` for an interpolated one.
+    pub(super) fn held_since(&self) -> Option<MonotonicTime> {
+        match self {
+            Lined::Held(since, _) => Some(*since),
+            Lined::Kept(_) | Lined::Blended(_) => None,
         }
     }
 }

@@ -23,7 +23,7 @@ use std::{any::Any, marker::PhantomData};
 
 /// _Pre-step._ An evaluator kind of two inputs: its name, its parameters,
 /// each input's name, payload and kept value, the metrics it offers, and
-/// what it computes at each sample. The kind is its own evaluator, made by
+/// what it computes at each sample, sample by sample in stamp order. The kind is its own evaluator, made by
 /// [`bind`](Self::bind) for one entry.
 pub trait TwoInputs: Send + Sync + Sized + 'static {
     /// The name a run file's `kind` gives.
@@ -53,9 +53,15 @@ pub trait TwoInputs: Send + Sync + Sized + 'static {
     /// What is kept of each payload of the other input.
     type OtherValue: Send + Sync + 'static;
 
-    /// What it fits over the whole run before any sample is computed: how
-    /// one tree's root sits in another's, say. `()` for none.
+    /// What it fits over the whole run before any sample is computed, for a
+    /// policy that needs every sample: a best fit of one tree's root in
+    /// another's, say. `()` for none.
     type Fit;
+
+    /// What it carries from one sample to the next, starting from its
+    /// default: the first sample's poses, say. `()` for none. Kept by the
+    /// evaluation between ticks, so it is as shareable as the evaluation.
+    type State: Default + Send + Sync;
 
     /// What it computes at one sample: for a comparison, the subject minus
     /// the reference, the subject being what is graded and the reference
@@ -103,14 +109,32 @@ pub trait TwoInputs: Send + Sync + Sized + 'static {
     ) -> Result<Self::Fit, InputRejection>;
 
     /// The output at one sample, from the base value, the other input's
-    /// value lined up there, and what [`fit`](Self::fit) gave, or why the
-    /// two can't be compared.
+    /// value lined up there, the sample's facts, the state the samples
+    /// before it left, and what [`fit`](Self::fit) gave, or why the two
+    /// can't be compared. A refused sample still updates the state.
     fn compute(
         &self,
         base: &Self::BaseValue,
         other: &Self::OtherValue,
+        row: RowFacts,
+        state: &mut Self::State,
         fit: &Self::Fit,
     ) -> Result<Self::Output, InputRejection>;
+}
+
+/// _Per-step._ What [`TwoInputs::compute`] is told of one sample besides
+/// its values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RowFacts {
+    /// The base value's stamp.
+    pub at: MonotonicTime,
+    /// Whether a gap comes before it: in the base, wider than its cap, or a
+    /// base value since the sample before that gave none, because the other
+    /// input was in a gap there or couldn't be blended.
+    pub follows_gap: bool,
+    /// For an other input held, whether its value here is newer than the
+    /// sample before; `None` for one interpolated, blended at every sample.
+    pub other_fresh: Option<bool>,
 }
 
 /// _Pre-step._ The two-input kind `K`, registered as any other.
@@ -316,25 +340,49 @@ impl<K: TwoInputs> Evaluator for TwoInputsEvaluation<K> {
             uncovered: lined.uncovered,
             coverage: lined.coverage,
             unblended: lined.unblended,
-            rows: lined
-                .rows
-                .iter()
-                .map(|row| Row {
-                    at: row.at,
-                    follows_gap: row.follows_gap,
-                    values: (row.values.0, row.values.1.value()),
-                })
-                .collect(),
+            rows: as_computed(&lined.rows),
         };
+        let mut state = K::State::default();
         derive(
             rows,
-            |run| self.kind.fit(run),
-            |(base, other), fit| self.kind.compute(base, other, fit),
+            |run| {
+                let run: Vec<_> = run.iter().map(|(_, base, other)| (*base, *other)).collect();
+                self.kind.fit(&run)
+            },
+            |(row, base, other), fit| self.kind.compute(base, other, row, &mut state, fit),
             &self.components,
             &self.refused,
             wanted,
         )
     }
+}
+
+/// Each lined-up row as [`TwoInputs::compute`] is given it: its facts, the
+/// base value and the other input's. A held value is fresh at the first row
+/// stamped after the row before.
+fn as_computed<'a, B, O>(
+    rows: &'a [Row<(&'a B, Lined<'a, O>)>],
+) -> Vec<Row<(RowFacts, &'a B, &'a O)>> {
+    let mut previous: Option<MonotonicTime> = None;
+    rows.iter()
+        .map(|row| {
+            let (base, other) = &row.values;
+            let other_fresh = other
+                .held_since()
+                .map(|since| previous.is_none_or(|previous| since.0 > previous.0));
+            previous = Some(row.at);
+            let facts = RowFacts {
+                at: row.at,
+                follows_gap: row.follows_gap,
+                other_fresh,
+            };
+            Row {
+                at: row.at,
+                follows_gap: row.follows_gap,
+                values: (facts, *base, other.value()),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -393,6 +441,7 @@ mod tests {
         type OtherPayload = String;
         type OtherValue = f64;
         type Fit = f64;
+        type State = ();
         type Output = Values;
 
         fn keep_base(&self, payload: &f64) -> Result<f64, InputRejection> {
@@ -444,7 +493,14 @@ mod tests {
             Ok(run.iter().map(|(base, _)| **base).sum())
         }
 
-        fn compute(&self, base: &f64, other: &f64, sum: &f64) -> Result<Values, InputRejection> {
+        fn compute(
+            &self,
+            base: &f64,
+            other: &f64,
+            _row: RowFacts,
+            _state: &mut (),
+            sum: &f64,
+        ) -> Result<Values, InputRejection> {
             if *base == 0.0 {
                 return Err(InputRejection("a zero base"));
             }
@@ -861,6 +917,82 @@ mod tests {
             .collect();
 
         assert_eq!(follows, vec![(1.5, false), (3.0, true)]);
+    }
+
+    /// The facts each row of `evaluation` up to 10 s reaches compute with.
+    fn facts(evaluation: &TwoInputsEvaluation<Difference>) -> Vec<RowFacts> {
+        as_computed(&evaluation.line_up(at(10.0)).rows)
+            .iter()
+            .map(|row| row.values.0)
+            .collect()
+    }
+
+    #[test]
+    fn compute_is_told_whether_a_row_follows_a_gap_and_whether_the_held_value_is_new() {
+        // The other input at 1, 3 and 4.5, held 0.5 s: the row at 1.5 holds
+        // the value the row at 1 had; the one at 3 follows the gap at 2.5.
+        let mut evaluation = held_within(0.5);
+        for t in [1.0, 3.0, 4.5] {
+            evaluation.receive(1, at(t), &other(t));
+        }
+        for t in [1.0, 1.5, 2.5, 3.0, 4.5] {
+            evaluation.receive(0, at(t), &100.0);
+        }
+
+        let given: Vec<(f64, bool, Option<bool>)> = facts(&evaluation)
+            .iter()
+            .map(|row| (row.at.0, row.follows_gap, row.other_fresh))
+            .collect();
+
+        assert_eq!(
+            given,
+            vec![
+                (1.0, false, Some(true)),
+                (1.5, false, Some(false)),
+                (3.0, true, Some(true)),
+                (4.5, true, Some(true)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_replaced_held_value_is_fresh_at_its_first_row_only() {
+        // The value at 2.5 replaces the one at 1 between the rows at 2 and 3;
+        // the one at 3 comes at a row's own stamp.
+        let mut evaluation = held();
+        for t in [1.0, 2.5, 3.0] {
+            evaluation.receive(1, at(t), &other(t));
+        }
+        for t in [1.0, 2.0, 3.0, 3.5] {
+            evaluation.receive(0, at(t), &100.0);
+        }
+
+        let fresh: Vec<Option<bool>> = facts(&evaluation)
+            .iter()
+            .map(|row| row.other_fresh)
+            .collect();
+
+        assert_eq!(
+            fresh,
+            vec![Some(true), Some(false), Some(true), Some(false)]
+        );
+    }
+
+    #[test]
+    fn an_interpolated_value_has_no_freshness() {
+        let mut evaluation = interpolated();
+        evaluation.receive(1, at(1.0), &other(10.0));
+        evaluation.receive(1, at(3.0), &other(30.0));
+        for t in [1.0, 2.0, 3.0] {
+            evaluation.receive(0, at(t), &100.0);
+        }
+
+        let fresh: Vec<Option<bool>> = facts(&evaluation)
+            .iter()
+            .map(|row| row.other_fresh)
+            .collect();
+
+        assert_eq!(fresh, vec![None; 3]);
     }
 
     #[test]
