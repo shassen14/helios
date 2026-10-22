@@ -2,6 +2,7 @@
 //! its window and judged or measured, and the report built.
 
 pub mod entries;
+mod reached;
 pub mod report;
 pub mod verdict;
 pub mod windowed;

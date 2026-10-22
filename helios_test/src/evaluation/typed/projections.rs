@@ -61,13 +61,11 @@ pub fn blend_rooted_poses(
 /// another frame's velocity or on another frame's axes.
 pub fn body_twist(value: &StampedTwist<Flu>, body: &FrameId) -> Result<BodyTwist, InputRejection> {
     if value.moving != *body {
-        return Err(InputRejection(
-            "a velocity of another frame than the body's base_link",
-        ));
+        return Err(InputRejection("a velocity of another frame than the body"));
     }
     if value.expressed_in != *body {
         return Err(InputRejection(
-            "a velocity expressed in another frame than the body's base_link",
+            "a velocity expressed in another frame than the body",
         ));
     }
     Ok(BodyTwist::new(value.linear, value.angular))

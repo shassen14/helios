@@ -5,7 +5,7 @@
 //! and phrases entries as the single-run console does.
 
 use super::{AggregateReport, AssertionAggregate, MeasureAggregate};
-use crate::report::console::{entry_name, reducer_phrase, with_unit};
+use crate::report::phrase::{entry_name, reducer_phrase, with_unit};
 
 /// Print a finished aggregate report to stdout. The one sanctioned
 /// `println!` for this surface: it renders an already-decided result for a
