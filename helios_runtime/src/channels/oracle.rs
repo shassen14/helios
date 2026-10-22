@@ -24,12 +24,19 @@ use helios_core::spatial::FrameId;
 const TRUTH_TF: &str = "truth.tf";
 const TRUTH_TWIST: &str = "truth.twist";
 
-/// A velocity belongs to the instance of the frame that moves.
+/// A velocity belongs to the instance of the frame that moves. It is
+/// declared bare: the frames it is measured against and expressed in are
+/// named by each value.
 impl<F: Frame> Keyed for StampedTwist<F> {
     type Instance = FrameId;
+    type Declared = FrameId;
 
     fn instance(&self) -> &FrameId {
         &self.moving
+    }
+
+    fn declared_frame(&self) -> Option<&FrameId> {
+        None
     }
 }
 

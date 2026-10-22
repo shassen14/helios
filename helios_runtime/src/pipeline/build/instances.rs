@@ -1,7 +1,7 @@
 //! Keyed channels: every writer of a keyed channel declares the instances it
-//! writes, and no two writers declare one instance. Several writers may
-//! share a keyed channel, as a localizer and an estimate relay share the
-//! transform tree's, each owning its own edges.
+//! writes, each once, and no two writers declare one instance. Several
+//! writers may share a keyed channel, as a localizer and an estimate relay
+//! share the transform tree's, each owning its own edges.
 
 use crate::{
     port::{ChannelDescription, InstanceKey, Writer},
@@ -11,8 +11,9 @@ use crate::{
 use std::collections::HashMap;
 
 /// Refuses a writer of a keyed channel that declares no instances, once per
-/// writer, and an instance a second writer declares, once per second writer,
-/// naming the first. Writers are judged in description order: the body and
+/// writer; an instance one writer declares twice, once per repeat; and an
+/// instance a second writer declares, once per second writer, naming the
+/// first. Writers are judged in description order: the body and
 /// the outside inputs before the nodes.
 pub(super) fn check_instances(
     descriptions: &[ChannelDescription],
@@ -40,7 +41,13 @@ pub(super) fn check_instances(
                         second: description.writer().clone(),
                     });
                 }
-                Some(_) => {}
+                Some(_) => {
+                    errors.push(PipelineBuildError::InstanceDeclaredTwice {
+                        channel: channel.clone(),
+                        instance: instance.clone(),
+                        writer: description.writer().clone(),
+                    });
+                }
                 None => {
                     writer_of.insert((channel, instance), description.writer());
                 }
@@ -53,7 +60,9 @@ pub(super) fn check_instances(
 mod tests {
     use super::*;
 
-    use crate::port::{ChannelKind, Keyed};
+    use crate::port::{ChannelKind, DeclaredInstances, Keyed};
+
+    use helios_core::spatial::FrameId;
 
     struct Edge {
         child: &'static str,
@@ -61,9 +70,14 @@ mod tests {
 
     impl Keyed for Edge {
         type Instance = &'static str;
+        type Declared = &'static str;
 
         fn instance(&self) -> &&'static str {
             &self.child
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 
@@ -73,7 +87,7 @@ mod tests {
 
     fn written_by(node: &str, children: &[&'static str]) -> ChannelDescription {
         ChannelDescription::node(edges(), node)
-            .with_instances(children.iter().map(InstanceKey::of::<Edge>).collect())
+            .with_instances(DeclaredInstances::of::<Edge>(children.iter().copied()))
     }
 
     fn check(descriptions: &[ChannelDescription]) -> Vec<String> {
@@ -106,12 +120,13 @@ mod tests {
         assert!(errors[0].contains("node \"shadow\""), "{errors:?}");
     }
 
-    /// A node listing one instance twice is still its only writer.
     #[test]
-    fn one_writer_naming_an_instance_twice_passes() {
-        assert_eq!(
-            check(&[written_by("relay", &["base", "base"])]),
-            Vec::<String>::new()
+    fn one_writer_declaring_an_instance_twice_is_refused() {
+        let errors = check(&[written_by("relay", &["base", "base"])]);
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors[0].contains("node \"relay\" declares instance \"base\""),
+            "{errors:?}"
         );
     }
 

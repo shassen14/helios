@@ -31,7 +31,7 @@ use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::quantities::{FluVector, FreeVector};
 use helios_core::spatial::state::{Component, Quantity};
-use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform};
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
@@ -1910,7 +1910,10 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
             measurement_channel::<MagneticField>("mag.primary", MAG_UNIT)
                 .with_mount(FrameId::agent(agent.clone(), "mag.primary")),
             BodyChannel::new(truth_tf(), TRUTH_UNIT, Provenance::Exact)
-                .with_instances::<StampedTransform>([FrameId::base_link(agent.clone())]),
+                .with_instances::<StampedTransform>([FrameEdge {
+                    child: FrameId::base_link(agent.clone()),
+                    parent: FrameId::global("datum"),
+                }]),
             BodyChannel::new(truth_twist(), TRUTH_UNIT, Provenance::Exact)
                 .with_instances::<StampedTwist<Flu>>([FrameId::base_link(agent.clone())]),
         ],

@@ -31,8 +31,8 @@
 //! pipeline can actually hand a reader the start-of-tick value.
 
 use crate::port::{
-    ChannelKey, ChannelKind, Determinism, InstanceKey, Keyed, MountRule, NodeClass, Observable,
-    OutputPort, PortDescriptor,
+    ChannelKey, ChannelKind, DeclaredInstances, Determinism, Keyed, MountRule, NodeClass,
+    Observable, OutputPort, PortDescriptor,
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
@@ -148,7 +148,8 @@ impl PortDescriptorBuilder {
     }
 
     /// Declares the `instances` of keyed channel `channel` this node writes,
-    /// each spelled as `T` spells its instances. The build refuses an
+    /// each as `T` declares one (a transform by its edge) and spelled as `T`
+    /// spells its instances. The build refuses an
     /// instance two writers declare, and the bus refuses a write of one no
     /// writer declared. A keyed channel declared through
     /// [`output`](Self::output) has no instances, which the build refuses.
@@ -159,19 +160,16 @@ impl PortDescriptorBuilder {
     pub fn output_keyed<T: Keyed>(
         mut self,
         channel: ChannelKey,
-        instances: impl IntoIterator<Item = T::Instance>,
+        instances: impl IntoIterator<Item = T::Declared>,
     ) -> Self {
         assert!(
             channel.is_keyed() && channel.type_id() == TypeId::of::<T>(),
             "a keyed output must be a keyed channel of {}, got {channel}",
             std::any::type_name::<T>()
         );
-        let instances = instances
-            .into_iter()
-            .map(|instance| InstanceKey::of::<T>(&instance))
-            .collect();
-        self.outputs
-            .push(OutputPort::undriven(channel).with_instances(instances));
+        self.outputs.push(
+            OutputPort::undriven(channel).with_instances(DeclaredInstances::of::<T>(instances)),
+        );
         self
     }
 
@@ -254,7 +252,7 @@ impl PortDescriptorBuilder {
 mod tests {
     use super::*;
 
-    use crate::port::{InputNeed, InputTiming};
+    use crate::port::{InputNeed, InputTiming, InstanceKey};
 
     use helios_core::control::actuators::{ActuatorId, SetpointKind};
 
@@ -268,9 +266,14 @@ mod tests {
 
     impl Keyed for Edge {
         type Instance = String;
+        type Declared = String;
 
         fn instance(&self) -> &String {
             &self.child
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 

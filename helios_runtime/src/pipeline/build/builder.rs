@@ -285,7 +285,7 @@ impl PipelineBuilder {
             };
             descriptor.output_ports().iter().map(move |port| {
                 ChannelDescription::node(port.channel().clone(), node.name())
-                    .with_instances(port.instances().to_vec())
+                    .with_instances(port.declared_instances().clone())
                     .with_rate(rate_hz)
             })
         });

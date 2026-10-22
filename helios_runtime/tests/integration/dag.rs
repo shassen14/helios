@@ -14,7 +14,7 @@ use nalgebra::Isometry3;
 use helios_core::prelude::{AgentId, MonotonicTime, SensorReading};
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::id::FrameId;
-use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform};
 use helios_runtime::{
     channels::tf::tf,
@@ -1473,7 +1473,10 @@ fn an_unread_keyed_body_channel_has_a_slot_per_declared_instance() {
             publishes: vec![
                 BodyChannel::new(read, BODY_UNIT, Provenance::Exact),
                 BodyChannel::new(truth_tf(), BODY_UNIT, Provenance::Exact)
-                    .with_instances::<StampedTransform>([base_link.clone()]),
+                    .with_instances::<StampedTransform>([tf_edge(
+                        base_link.clone(),
+                        FrameId::global("datum"),
+                    )]),
             ],
             ..Default::default()
         })
@@ -1569,14 +1572,19 @@ impl PipelineNode for DeclaringNode {
     fn execute(&self, _bus: &PortBus, _tf: &dyn helios_core::prelude::TfProvider, _: TickContext) {}
 }
 
-/// A node writing the edges of `children` on the transform tree's channel.
-fn edge_writer(name: &str, children: &[FrameId]) -> Box<dyn PipelineNode> {
+/// A node writing `edges` on the transform tree's channel.
+fn edge_writer(name: &str, edges: &[FrameEdge]) -> Box<dyn PipelineNode> {
     Box::new(DeclaringNode {
         name: name.to_string(),
         descriptor: PortDescriptorBuilder::algorithm()
-            .output_keyed::<StampedTransform>(tf(), children.to_vec())
+            .output_keyed::<StampedTransform>(tf(), edges.to_vec())
             .build(),
     })
+}
+
+/// The transform edge from `parent` to `child`.
+fn tf_edge(child: FrameId, parent: FrameId) -> FrameEdge {
+    FrameEdge { child, parent }
 }
 
 fn bot_frame(leaf: &str) -> FrameId {
@@ -1590,8 +1598,17 @@ fn bot_frame(leaf: &str) -> FrameId {
 fn writers_of_distinct_tf_instances_share_the_channel() {
     let agent = AgentId::new(AGENT);
     PipelineBuilder::new(agent.clone())
-        .add_node(edge_writer("relay", &[FrameId::base_link(agent.clone())]))
-        .add_node(edge_writer("localizer", &[FrameId::odom(agent)]))
+        .add_node(edge_writer(
+            "relay",
+            &[tf_edge(
+                FrameId::base_link(agent.clone()),
+                FrameId::odom(agent.clone()),
+            )],
+        ))
+        .add_node(edge_writer(
+            "localizer",
+            &[tf_edge(FrameId::odom(agent.clone()), FrameId::map(agent))],
+        ))
         .build()
         .expect("each instance has one writer");
 }
@@ -1601,9 +1618,15 @@ fn two_writers_of_one_tf_instance_are_refused() {
     let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(edge_writer(
             "arm",
-            &[bot_frame("wrist"), bot_frame("elbow")],
+            &[
+                tf_edge(bot_frame("wrist"), bot_frame("elbow")),
+                tf_edge(bot_frame("elbow"), bot_frame("shoulder")),
+            ],
         ))
-        .add_node(edge_writer("gripper", &[bot_frame("wrist")]))
+        .add_node(edge_writer(
+            "gripper",
+            &[tf_edge(bot_frame("wrist"), bot_frame("elbow"))],
+        ))
         .build();
     let Err(errors) = result else {
         panic!("wrist has two writers");
@@ -1681,7 +1704,10 @@ fn a_keyed_body_channel_with_instances_builds() {
         .add_node(Box::new(SinkNode::new("mock_oracle", truth_tf())))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![BodyChannel::new(truth_tf(), BODY_UNIT, Provenance::Exact)
-                .with_instances::<StampedTransform>([base_link])],
+                .with_instances::<StampedTransform>([tf_edge(
+                base_link,
+                FrameId::global("datum"),
+            )])],
             ..Default::default()
         })
         .build();
@@ -1716,14 +1742,20 @@ fn a_loop_through_each_writer_of_a_keyed_channel_names_both() {
             "localizer",
             PortDescriptorBuilder::algorithm()
                 .input(b.clone())
-                .output_keyed::<StampedTransform>(tf(), [bot_frame("odom")])
+                .output_keyed::<StampedTransform>(
+                    tf(),
+                    [tf_edge(bot_frame("odom"), bot_frame("map"))],
+                )
                 .build(),
         ))
         .add_node(declaring(
             "relay",
             PortDescriptorBuilder::algorithm()
                 .input(c.clone())
-                .output_keyed::<StampedTransform>(tf(), [bot_frame("base_link")])
+                .output_keyed::<StampedTransform>(
+                    tf(),
+                    [tf_edge(bot_frame("base_link"), bot_frame("odom"))],
+                )
                 .build(),
         ))
         .build();

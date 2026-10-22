@@ -410,7 +410,7 @@ mod tests {
 
     use crate::assertion::{extract::standard_extractors, InstanceSelector};
 
-    use helios_core::prelude::AgentId;
+    use helios_core::prelude::{AgentId, FrameId};
     use helios_runtime::{
         observe::{
             key::Subject,
@@ -436,9 +436,14 @@ mod tests {
 
     impl Keyed for WheelSpeed {
         type Instance = &'static str;
+        type Declared = &'static str;
 
         fn instance(&self) -> &&'static str {
             &self.0
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 

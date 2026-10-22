@@ -453,6 +453,10 @@ mod tests {
         BoundInput {
             agent: AgentId::new(agent),
             instance: None,
+            expressed_in: None,
+            convention: None,
+            rate_hz: None,
+            writer: None,
         }
     }
 

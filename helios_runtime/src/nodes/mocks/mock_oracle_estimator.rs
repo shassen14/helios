@@ -260,6 +260,7 @@ mod tests {
     use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::FreeVector;
+    use helios_core::spatial::transforms::tf::stamped::FrameEdge;
     use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform, Transform};
     use helios_core::spatial::FrameId;
 
@@ -326,7 +327,13 @@ mod tests {
             ]
         };
         PortDescriptorBuilder::mock()
-            .output_keyed::<StampedTransform>(truth_tf(), bodies())
+            .output_keyed::<StampedTransform>(
+                truth_tf(),
+                bodies().map(|child| FrameEdge {
+                    child,
+                    parent: datum(),
+                }),
+            )
             .output_keyed::<StampedTwist<Flu>>(truth_twist(), bodies())
             .build()
     }
@@ -391,7 +398,10 @@ mod tests {
         BodyCapabilities {
             publishes: vec![
                 BodyChannel::new(truth_tf(), "truth", Provenance::Exact)
-                    .with_instances::<StampedTransform>([body.clone()]),
+                    .with_instances::<StampedTransform>([FrameEdge {
+                        child: body.clone(),
+                        parent: datum(),
+                    }]),
                 BodyChannel::new(truth_twist(), "truth", Provenance::Exact)
                     .with_instances::<StampedTwist<Flu>>([body]),
             ],

@@ -71,6 +71,13 @@ pub enum PipelineBuildError {
         first: Writer,
         second: Writer,
     },
+    /// One writer declares an instance of a keyed channel twice, so two
+    /// declarations, as a transform's two parents, could disagree.
+    InstanceDeclaredTwice {
+        channel: ChannelKey,
+        instance: InstanceKey,
+        writer: Writer,
+    },
     /// Two or more nodes share a name. Errors, logs and node order within a
     /// level all identify a node by its name, so names must be unique.
     DuplicateNodeName { name: String },
@@ -276,6 +283,17 @@ impl std::fmt::Display for PipelineBuildError {
                     f,
                     "instance \"{instance}\" of channel {channel} is written by both {first} and \
                      {second} — each instance has exactly one writer"
+                )
+            }
+            PipelineBuildError::InstanceDeclaredTwice {
+                channel,
+                instance,
+                writer,
+            } => {
+                write!(
+                    f,
+                    "{writer} declares instance \"{instance}\" of channel {channel} twice — a \
+                     writer declares each instance once"
                 )
             }
             PipelineBuildError::DuplicateNodeName { name } => {

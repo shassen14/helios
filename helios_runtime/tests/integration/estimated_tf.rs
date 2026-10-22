@@ -25,7 +25,7 @@ use std::sync::{
 
 use helios_runtime::{
     channels::tf::publish_edge,
-    pipeline::PipelineBuilder,
+    pipeline::{FrameConventions, PipelineBuilder},
     port::{PortBus, PortDescriptor, PortDescriptorBuilder},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     tf_service::TfService,
@@ -158,12 +158,12 @@ impl EdgeProducerNode {
     fn new(name: &str, edge: FrameEdge, from_conv: Convention, to_conv: Convention) -> Self {
         Self {
             name: name.to_string(),
-            // Declares the edge's child on `tf` so the pipeline allocates its
-            // instance, which the service drains.
+            // Declares the edge on `tf` so the pipeline allocates its
+            // child's instance, which the service drains.
             descriptor: PortDescriptorBuilder::algorithm()
                 .output_keyed::<StampedTransform>(
                     helios_runtime::channels::tf::tf(),
-                    [edge.child.clone()],
+                    [edge.clone()],
                 )
                 .build(),
             edge,
@@ -243,8 +243,8 @@ fn present_static_extrinsic_aids_the_consumer() {
         )))
         .build()
         .expect("single consumer builds");
-    let mut service =
-        TfService::new(window(), vec![imu_mount()]).expect("the seeds form a valid tree");
+    let mut service = TfService::new(window(), vec![imu_mount()], &FrameConventions::default())
+        .expect("the seeds form a valid tree");
 
     drive(&pipeline, &mut service, 1.0, 0.1);
 
@@ -271,7 +271,8 @@ fn missing_extrinsic_yields_none_never_a_fabricated_transform() {
         )))
         .build()
         .expect("single consumer builds");
-    let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
+    let mut service = TfService::new(window(), vec![], &FrameConventions::default())
+        .expect("the seeds form a valid tree");
 
     for t in 1..=3 {
         drive(&pipeline, &mut service, t as f64, 0.1);
@@ -312,7 +313,8 @@ fn dual_published_edge_reaches_the_consumer_after_the_fold() {
         .expect("producer + consumer build");
     // The service drains every instance of `tf`, so it folds exactly what the
     // estimator dual-publishes — no hand-authored list to drift from the graph.
-    let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
+    let mut service = TfService::new(window(), vec![], &FrameConventions::default())
+        .expect("the seeds form a valid tree");
 
     // `now` is held constant so a single dynamic sample (which answers only at
     // its exact stamp) is queryable across both ticks; the latency here is driven
@@ -366,8 +368,8 @@ fn aiding_chain_composes_static_mount_with_folded_dynamic_edge() {
         )))
         .build()
         .expect("producer + consumer build");
-    let mut service =
-        TfService::new(window(), vec![imu_mount()]).expect("the seeds form a valid tree");
+    let mut service = TfService::new(window(), vec![imu_mount()], &FrameConventions::default())
+        .expect("the seeds form a valid tree");
 
     // Tick 1: the static mount resolves, but base_link → odom has not folded yet,
     // so the chain to odom is broken — the static leg alone cannot reach it.

@@ -14,7 +14,7 @@
 //! `execute` beside the bus. `BodyCapabilities` is the *static* declaration
 //! made once at assembly time.
 
-use crate::port::{ChannelKey, InstanceKey, Keyed, Provenance};
+use crate::port::{ChannelKey, DeclaredInstances, InstanceKey, Keyed, Provenance};
 
 use helios_core::control::actuation_model::ActuationModel;
 use helios_core::spatial::{transforms::Convention, FrameId};
@@ -69,7 +69,7 @@ pub struct BodyCapabilities {
 /// frame), has none.
 ///
 /// A keyed channel also states the instances the unit writes, such as the
-/// frames a truth rig publishes the transforms of. The build refuses a keyed
+/// edges a truth rig publishes the transforms of. The build refuses a keyed
 /// body channel that states none, and an instance another writer also
 /// writes.
 ///
@@ -88,7 +88,7 @@ pub struct BodyChannel {
     unit: String,
     provenance: Provenance,
     mount: Option<FrameId>,
-    instances: Vec<InstanceKey>,
+    instances: DeclaredInstances,
     rate_hz: Option<f64>,
 }
 
@@ -103,7 +103,7 @@ impl BodyChannel {
             unit: unit.into(),
             provenance,
             mount: None,
-            instances: Vec::new(),
+            instances: DeclaredInstances::default(),
             rate_hz: None,
         }
     }
@@ -115,8 +115,9 @@ impl BodyChannel {
         self
     }
 
-    /// States the instances of its keyed channel the unit writes, each
-    /// spelled as `T`'s instances are.
+    /// States the instances of its keyed channel the unit writes, each as
+    /// `T` declares one (a transform by its edge) and spelled as `T`'s
+    /// instances are.
     ///
     /// # Panics
     ///
@@ -124,7 +125,7 @@ impl BodyChannel {
     /// the host describes its body.
     pub fn with_instances<T: Keyed>(
         mut self,
-        instances: impl IntoIterator<Item = T::Instance>,
+        instances: impl IntoIterator<Item = T::Declared>,
     ) -> Self {
         assert!(
             self.key.is_keyed() && self.key.type_id() == TypeId::of::<T>(),
@@ -132,10 +133,7 @@ impl BodyChannel {
             std::any::type_name::<T>(),
             self.key
         );
-        self.instances = instances
-            .into_iter()
-            .map(|instance| InstanceKey::of::<T>(&instance))
-            .collect();
+        self.instances = DeclaredInstances::of::<T>(instances);
         self
     }
 
@@ -175,6 +173,12 @@ impl BodyChannel {
     /// The instances of its keyed channel the unit writes. Empty for a
     /// channel that holds one value.
     pub fn instances(&self) -> &[InstanceKey] {
+        self.instances.keys()
+    }
+
+    /// The instances as stated, each with the frame its values are
+    /// expressed in when the payload names one.
+    pub fn declared_instances(&self) -> &DeclaredInstances {
         &self.instances
     }
 
@@ -197,9 +201,14 @@ mod tests {
 
     impl Keyed for Edge {
         type Instance = &'static str;
+        type Declared = &'static str;
 
         fn instance(&self) -> &&'static str {
             &self.child
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 

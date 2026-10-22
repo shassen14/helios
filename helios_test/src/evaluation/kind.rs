@@ -14,6 +14,8 @@ use crate::evaluation::derived::{Derived, Refused};
 
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::{AgentId, FrameId, MonotonicTime};
+use helios_core::spatial::transforms::Convention;
+use helios_runtime::port::Writer;
 
 use std::{
     any::{Any, TypeId},
@@ -106,12 +108,27 @@ pub struct Metric {
     pub si_unit: SiUnit,
 }
 
-/// _Pre-step._ The series setup bound one role to: whose it is, and which
-/// instance of a keyed channel.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// _Pre-step._ The series setup bound one role to: whose it is, which
+/// instance of a keyed channel, and the facts its writer declared before the
+/// first value: the frame its values are expressed in and that frame's axis
+/// convention, its nominal rate, and who writes it.
+#[derive(Debug, Clone, PartialEq)]
 pub struct BoundInput {
     pub agent: AgentId,
     pub instance: Option<String>,
+    /// The frame the instance's values are expressed in, when its writer
+    /// declared one apart from the instance: a transform edge's parent, the
+    /// root of the tree it belongs to.
+    pub expressed_in: Option<FrameId>,
+    /// `expressed_in`'s axis convention, as the frame's owner gives it in the
+    /// agent's pipeline. `None` when no frame is declared or no owner gives
+    /// it one.
+    pub convention: Option<Convention>,
+    /// How many times a second its writer writes it, nominally, as declared.
+    pub rate_hz: Option<f64>,
+    /// Who writes it, with a body writer's provenance. `None` only when no
+    /// description names the series' writer.
+    pub writer: Option<Writer>,
 }
 
 impl BoundInput {

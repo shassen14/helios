@@ -196,9 +196,14 @@ mod tests {
 
     impl Keyed for FrameSample {
         type Instance = &'static str;
+        type Declared = &'static str;
 
         fn instance(&self) -> &&'static str {
             &self.frame
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 

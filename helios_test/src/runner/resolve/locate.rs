@@ -18,6 +18,7 @@ use helios_runtime::{
         key::{RecordedKey, Subject},
         path::channel_path,
     },
+    pipeline::FrameConventions,
     port::{ChannelDescription, ChannelKey, Determinism, Observable, ObservableValue},
 };
 
@@ -30,6 +31,8 @@ pub(super) struct Catalog<'a> {
     pub(super) node_written: Vec<(&'a str, &'a ChannelKey)>,
     /// Each channel's description, one per writer.
     pub descriptions: &'a [ChannelDescription],
+    /// Each owned frame's axis convention, as its owner gives it.
+    pub frame_conventions: &'a FrameConventions,
 }
 
 impl Catalog<'_> {

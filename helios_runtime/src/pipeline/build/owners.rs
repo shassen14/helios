@@ -25,10 +25,25 @@ pub struct FrameConventions {
 }
 
 impl FrameConventions {
+    /// A table of `conventions`, for a test of a reader that takes one.
+    #[cfg(test)]
+    pub(crate) fn of(conventions: impl IntoIterator<Item = (FrameId, Convention)>) -> Self {
+        Self {
+            conventions: conventions.into_iter().collect(),
+        }
+    }
+
     /// `frame`'s axis convention, or `None` when its owner gives none or it
     /// has no owner.
     pub fn convention_of(&self, frame: &FrameId) -> Option<Convention> {
         self.conventions.get(frame).copied()
+    }
+
+    /// Each owned frame that has a convention, with it, in no fixed order.
+    pub fn iter(&self) -> impl Iterator<Item = (&FrameId, Convention)> + '_ {
+        self.conventions
+            .iter()
+            .map(|(frame, convention)| (frame, *convention))
     }
 }
 

@@ -15,7 +15,7 @@ use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::motion::StampedTwist;
 use helios_core::prelude::{Acceleration, AgentId, AngularRate, PointCloud, TfProvider};
 use helios_core::spatial::conventions::Flu;
-use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::spatial::FrameId;
 
 use serde::{Deserialize, Serialize};
@@ -446,7 +446,10 @@ fn a_mock_oracle_entry_builds_on_a_body_with_truth() {
     let truth = BodyCapabilities {
         publishes: vec![
             BodyChannel::new(truth_tf(), TRUTH_UNIT, Provenance::Exact)
-                .with_instances::<StampedTransform>([body.clone()]),
+                .with_instances::<StampedTransform>([FrameEdge {
+                    child: body.clone(),
+                    parent: FrameId::global("datum"),
+                }]),
             BodyChannel::new(truth_twist(), TRUTH_UNIT, Provenance::Exact)
                 .with_instances::<StampedTwist<Flu>>([body]),
         ],

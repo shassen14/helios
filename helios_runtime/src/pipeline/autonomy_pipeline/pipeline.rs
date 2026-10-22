@@ -80,8 +80,9 @@ impl AutonomyPipeline {
         &self.descriptions
     }
 
-    /// Each frame of the run with its axis convention: the body's frames,
-    /// the host's world frames, and every frame a node holds values in.
+    /// Each owned frame of the run with its axis convention, as its owner
+    /// gives it: the body's frames, the host's world frames, and each frame
+    /// a node defines.
     pub fn frame_conventions(&self) -> &FrameConventions {
         &self.frame_conventions
     }

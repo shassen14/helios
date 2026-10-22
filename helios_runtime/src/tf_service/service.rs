@@ -3,7 +3,7 @@
 
 use crate::{
     channels::tf::tf,
-    pipeline::ReadMount,
+    pipeline::{FrameConventions, ReadMount},
     port::{InstanceKey, PortBus},
 };
 
@@ -41,18 +41,27 @@ pub struct TfService {
 }
 
 impl TfService {
-    /// A service draining the `tf` channel, its tree seeded with the static
-    /// edges.
+    /// A service draining the `tf` channel, its tree holding each frame in
+    /// the axes its owner gives in `conventions`, the pipeline's, and seeded
+    /// with the static edges.
     ///
     /// Fails with every seed the tree rejects (a cycle, a second parent, a
-    /// convention conflict), each judged against the seeds folded before it:
-    /// a wiring error in the host's static feed, which the host reports with
-    /// the pipeline's build errors rather than panic on.
+    /// convention conflict with its owner or an earlier seed), each judged
+    /// against the seeds folded before it: a wiring error in the host's
+    /// static feed, which the host reports with the pipeline's build errors
+    /// rather than panic on. A sample tagged against its frame's owner later
+    /// is rejected on ingest, as any malformed sample is.
     pub fn new(
         window: TfWindow,
         static_seeds: Vec<StampedTransform>,
+        conventions: &FrameConventions,
     ) -> Result<Self, Vec<SeedRejected>> {
-        let mut buffer = TfBuffer::new(window);
+        let mut buffer = TfBuffer::with_conventions(
+            window,
+            conventions
+                .iter()
+                .map(|(frame, convention)| (frame.clone(), convention)),
+        );
         let mut rejected = Vec::new();
         for seed in static_seeds {
             let edge = FrameEdge {
@@ -100,8 +109,8 @@ impl TfService {
     /// yet, and that the tree holds it in every convention a node reads it in.
     /// Below, not merely in the same tree: a mount that meets `base_link` only
     /// through `odom` would move with the estimate. A mount reached only
-    /// through a declared edge has no convention in the tree before its first
-    /// sample, so only its reach is checked.
+    /// through a declared edge, and given no convention by an owner, has none
+    /// in the tree before its first sample, so only its reach is checked.
     ///
     /// Run once the host's static feed is complete, before the first tick: a
     /// mount that does not join, or is read in other axes than the tree holds,
@@ -243,7 +252,7 @@ impl Display for MisreadMount {
 mod tests {
     use super::*;
 
-    use crate::port::PortDescriptorBuilder;
+    use crate::port::{ChannelError, PortDescriptorBuilder};
     use crate::stamped::{Health, Stamped};
 
     use helios_core::prelude::{AgentId, MonotonicDuration};
@@ -319,12 +328,12 @@ mod tests {
         message(odom(), map(), Convention::Enu, Convention::Enu, stamp, x)
     }
 
-    // A bus whose one producer writes the edges of `children` on `tf` — the
-    // minimum a producer needs to publish onto, standing in for the pipeline's
+    // A bus whose one producer writes `edges` on `tf` — the minimum a
+    // producer needs to publish onto, standing in for the pipeline's
     // descriptor-driven allocation.
-    fn edge_bus(children: Vec<FrameId>) -> PortBus {
+    fn edge_bus(edges: Vec<FrameEdge>) -> PortBus {
         let descriptor = PortDescriptorBuilder::algorithm()
-            .output_keyed::<StampedTransform>(tf(), children)
+            .output_keyed::<StampedTransform>(tf(), edges)
             .build();
         PortBus::of_descriptors(&[descriptor])
     }
@@ -346,9 +355,48 @@ mod tests {
     }
 
     #[test]
+    fn an_edge_written_under_another_parent_than_declared_is_refused() {
+        let bus = edge_bus(vec![FrameEdge {
+            child: base_link(),
+            parent: odom(),
+        }]);
+        let reparented = Stamped {
+            value: message(
+                base_link(),
+                map(),
+                Convention::Flu,
+                Convention::Enu,
+                1.0,
+                1.0,
+            ),
+            timestamp: MonotonicTime(1.0),
+            health: Health::Ok,
+            producer: 0,
+        };
+
+        let refused = bus.write_keyed(super::tf(), reparented);
+
+        assert!(
+            matches!(
+                &refused,
+                Err(ChannelError::UndeclaredFrame { declared, written, .. })
+                    if *declared == Some(odom()) && *written == Some(map())
+            ),
+            "{refused:?}"
+        );
+        assert!(bus
+            .read_instances::<StampedTransform>(super::tf())
+            .is_empty());
+    }
+
+    #[test]
     fn folded_edge_is_queryable() {
-        let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![base_link()]);
+        let mut service = TfService::new(window(), vec![], &FrameConventions::default())
+            .expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![FrameEdge {
+            child: base_link(),
+            parent: odom(),
+        }]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
 
         service.fold(&bus);
@@ -362,8 +410,12 @@ mod tests {
 
     #[test]
     fn fold_skips_when_envelope_has_not_advanced() {
-        let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![base_link()]);
+        let mut service = TfService::new(window(), vec![], &FrameConventions::default())
+            .expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![FrameEdge {
+            child: base_link(),
+            parent: odom(),
+        }]);
 
         // A sample stamped (inner) at t=1, envelope 1.
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
@@ -392,9 +444,20 @@ mod tests {
         // A self-edge (child == parent) is a cycle the buffer rejects on ingest.
         // Its child `agent.bot.a` spells before `agent.bot.base_link`, so it is
         // drained first and the error precedes the good edge — the loop must
-        // warn-and-continue, not panic or abort.
-        let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![sensor("a"), base_link()]);
+        // warn-and-continue, not panic or abort. The self-edge is declared as
+        // one, so the bus passes it to the buffer.
+        let mut service = TfService::new(window(), vec![], &FrameConventions::default())
+            .expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![
+            FrameEdge {
+                child: sensor("a"),
+                parent: sensor("a"),
+            },
+            FrameEdge {
+                child: base_link(),
+                parent: odom(),
+            },
+        ]);
 
         publish(
             &bus,
@@ -430,7 +493,8 @@ mod tests {
             0.0,
             0.1,
         );
-        let service = TfService::new(window(), vec![mount]).expect("the seeds form a valid tree");
+        let service = TfService::new(window(), vec![mount], &FrameConventions::default())
+            .expect("the seeds form a valid tree");
 
         // No fold: a static edge answers every time straight from the seed.
         let tf =
@@ -442,8 +506,18 @@ mod tests {
 
     #[test]
     fn fold_composes_a_two_edge_chain() {
-        let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![base_link(), odom()]);
+        let mut service = TfService::new(window(), vec![], &FrameConventions::default())
+            .expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![
+            FrameEdge {
+                child: base_link(),
+                parent: odom(),
+            },
+            FrameEdge {
+                child: odom(),
+                parent: map(),
+            },
+        ]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
         publish(&bus, odom_map(1.0, 3.0), 1.0);
 
@@ -471,9 +545,12 @@ mod tests {
             0.0,
             0.1,
         );
-        let mut service =
-            TfService::new(window(), vec![mount]).expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![base_link()]);
+        let mut service = TfService::new(window(), vec![mount], &FrameConventions::default())
+            .expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![FrameEdge {
+            child: base_link(),
+            parent: odom(),
+        }]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
 
         service.fold(&bus);
@@ -525,7 +602,8 @@ mod tests {
     }
 
     fn seeded(seeds: Vec<StampedTransform>) -> TfService {
-        TfService::new(window(), seeds).expect("the seeds form a valid tree")
+        TfService::new(window(), seeds, &FrameConventions::default())
+            .expect("the seeds form a valid tree")
     }
 
     #[test]
@@ -640,6 +718,55 @@ mod tests {
     }
 
     #[test]
+    fn a_seed_tagging_a_frame_against_its_owner_is_rejected() {
+        // The owner gives the mount ENU axes; the host seeds it FLU.
+        let conventions = FrameConventions::of([(sensor("gps"), Convention::Enu)]);
+
+        let result = TfService::new(window(), vec![seed("gps", base_link())], &conventions);
+
+        let Err(rejected) = result else {
+            panic!("the seed contradicts the mount's owner");
+        };
+        assert!(
+            matches!(
+                rejected.as_slice(),
+                [SeedRejected {
+                    error: TfIngestError::ConventionConflict { frame, established, incoming },
+                    ..
+                }] if *frame == sensor("gps")
+                    && *established == Convention::Enu
+                    && *incoming == Convention::Flu
+            ),
+            "{rejected:?}"
+        );
+    }
+
+    #[test]
+    fn a_mount_given_a_convention_is_checked_before_its_first_sample() {
+        // Reached only through a declared edge, so no sample has touched it,
+        // but its owner gave its axes, so a read in others is refused.
+        let conventions = FrameConventions::of([(sensor("cam"), Convention::Enu)]);
+        let service = TfService::new(window(), vec![], &conventions).expect("no seeds");
+        let declared = [FrameEdge {
+            child: sensor("cam"),
+            parent: base_link(),
+        }];
+
+        let refused = service
+            .check_read_mounts(&[read_as("cam", Convention::Flu)], &base_link(), &declared)
+            .expect_err("read in other axes than its owner's");
+
+        assert_eq!(
+            refused.misread,
+            [MisreadMount {
+                frame: sensor("cam"),
+                read_in: Convention::Flu,
+                held_in: Convention::Enu,
+            }]
+        );
+    }
+
+    #[test]
     fn every_rejected_seed_is_named() {
         // Two mounts each seeded under a second parent; the valid seeds
         // around them do not hide either.
@@ -651,6 +778,7 @@ mod tests {
                 seed("imu", base_link()),
                 seed("imu", sensor("rig")),
             ],
+            &FrameConventions::default(),
         );
 
         let Err(rejected) = result else {

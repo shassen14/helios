@@ -82,26 +82,18 @@ impl TwoInputs for PoseError {
         }
     }
 
+    /// Both inputs must be one frame's pose, and both roots, the frames the
+    /// poses are expressed in, held in one axis convention; under
+    /// `declared`, the roots must be one frame.
     fn bind(
         params: PoseErrorConfig,
         estimate: &BoundInput,
         truth: &BoundInput,
     ) -> Result<Self, Vec<String>> {
-        let (estimated, true_frame) = match (estimate.frame(Self::BASE), truth.frame(Self::OTHER)) {
-            (Ok(estimated), Ok(true_frame)) => (estimated, true_frame),
-            (estimated, true_frame) => {
-                return Err(estimated
-                    .err()
-                    .into_iter()
-                    .chain(true_frame.err())
-                    .collect())
-            }
-        };
-        match (&estimated, &true_frame) {
-            (Some(estimated), Some(true_frame)) if estimated == true_frame => Ok(Self {
-                align: params.align,
-            }),
-            (estimated, true_frame) => Err(vec![format!(
+        let mut problems = Vec::new();
+        match (estimate.frame(Self::BASE), truth.frame(Self::OTHER)) {
+            (Ok(Some(estimated)), Ok(Some(true_frame))) if estimated == true_frame => {}
+            (Ok(estimated), Ok(true_frame)) => problems.push(format!(
                 "the {} is the pose of '{}' and the {} of '{}': {} grades one frame, so select \
                  the same instance for both",
                 Self::BASE,
@@ -109,7 +101,18 @@ impl TwoInputs for PoseError {
                 Self::OTHER,
                 spelled(true_frame.as_ref()),
                 Self::NAME,
-            )]),
+            )),
+            (estimated, true_frame) => {
+                problems.extend(estimated.err().into_iter().chain(true_frame.err()))
+            }
+        }
+        problems.extend(root_problems(params.align, estimate, truth));
+        if problems.is_empty() {
+            Ok(Self {
+                align: params.align,
+            })
+        } else {
+            Err(problems)
         }
     }
 
@@ -134,6 +137,59 @@ impl TwoInputs for PoseError {
 /// A bound input's frame as a refusal names it.
 fn spelled(frame: Option<&FrameId>) -> String {
     frame.map_or_else(|| "no instance".to_owned(), FrameId::to_string)
+}
+
+/// Why the roots of `estimate` and `truth` can't be compared under `align`,
+/// if they can't: a root its writer didn't declare, one no owner gives a
+/// convention, two held in different conventions, or, under `declared`, two
+/// different frames.
+fn root_problems(align: Align, estimate: &BoundInput, truth: &BoundInput) -> Vec<String> {
+    let root_of = |role: &str, input: &BoundInput| match (&input.expressed_in, input.convention) {
+        (Some(root), Some(convention)) => Ok((root.clone(), convention)),
+        (Some(root), None) => Err(format!(
+            "the {role}'s root '{root}' has no axis convention: no owner in the pipeline of \
+             agent '{}' gives one",
+            input.agent
+        )),
+        (None, _) => Err(format!(
+            "the {role}'s series declares no root its poses are expressed in"
+        )),
+    };
+    match (
+        root_of(PoseError::BASE, estimate),
+        root_of(PoseError::OTHER, truth),
+    ) {
+        (Ok((estimate_root, estimate_axes)), Ok((truth_root, truth_axes))) => {
+            let mut problems = Vec::new();
+            if align == Align::Declared && estimate_root != truth_root {
+                problems.push(format!(
+                    "the {}'s root '{estimate_root}' and the {}'s root '{truth_root}' are \
+                     different frames, and align = \"{align}\" grades poses in one; \
+                     align = \"{}\" aligns them on their first sample, for an estimator \
+                     that starts where its body is",
+                    PoseError::BASE,
+                    PoseError::OTHER,
+                    Align::FirstPose,
+                ));
+            }
+            if estimate_axes != truth_axes {
+                problems.push(format!(
+                    "the {}'s root '{estimate_root}' is held in {estimate_axes} axes and the \
+                     {}'s root '{truth_root}' in {truth_axes}: {} compares poses held in one \
+                     axis convention",
+                    PoseError::BASE,
+                    PoseError::OTHER,
+                    PoseError::NAME,
+                ));
+            }
+            problems
+        }
+        (estimate_root, truth_root) => estimate_root
+            .err()
+            .into_iter()
+            .chain(truth_root.err())
+            .collect(),
+    }
 }
 
 /// The estimate minus the truth, read every way a run file may grade it:
@@ -187,18 +243,44 @@ mod tests {
 
     use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::conventions::{Enu, Flu};
-    use helios_core::spatial::transforms::{ErasedTransform, Transform};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform};
 
     use nalgebra::{Isometry3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
 
     const CAR: &str = "car";
 
+    /// The pose of `instance` in the datum, held in ENU axes.
     fn input(instance: Option<FrameId>) -> BoundInput {
+        rooted(
+            instance,
+            Some(FrameId::global("datum")),
+            Some(Convention::Enu),
+        )
+    }
+
+    /// The pose of `instance` in `root`, whose owner gives it `convention`.
+    fn rooted(
+        instance: Option<FrameId>,
+        root: Option<FrameId>,
+        convention: Option<Convention>,
+    ) -> BoundInput {
         BoundInput {
             agent: AgentId::new(CAR),
             instance: instance.map(|frame| frame.to_string()),
+            expressed_in: root,
+            convention,
+            rate_hz: None,
+            writer: None,
         }
+    }
+
+    fn base_link() -> Option<FrameId> {
+        Some(FrameId::base_link(AgentId::new(CAR)))
+    }
+
+    fn odom() -> Option<FrameId> {
+        Some(FrameId::odom(AgentId::new(CAR)))
     }
 
     fn kind() -> TwoInputsKind<PoseError> {
@@ -233,8 +315,8 @@ mod tests {
     #[test]
     fn instances_that_arent_frames_are_refused_each_by_role_and_spelling() {
         let ros_frame = |spelling: &str| BoundInput {
-            agent: AgentId::new(CAR),
             instance: Some(spelling.to_owned()),
+            ..input(None)
         };
 
         let problems = kind()
@@ -253,6 +335,79 @@ mod tests {
         assert!(
             problems[1].contains("the truth's instance 'odom' is not a frame"),
             "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn roots_held_in_one_convention_bind() {
+        let estimate = rooted(base_link(), odom(), Some(Convention::Enu));
+
+        let bound = kind().build(
+            &params("align = \"first_pose\""),
+            &[estimate, input(base_link())],
+        );
+
+        assert!(bound.is_ok(), "{:?}", bound.err());
+    }
+
+    #[test]
+    fn roots_held_in_different_conventions_are_refused_naming_both() {
+        let estimate = rooted(base_link(), odom(), Some(Convention::Flu));
+
+        let problems = kind()
+            .build(
+                &params("align = \"first_pose\""),
+                &[estimate, input(base_link())],
+            )
+            .err()
+            .expect("unlike roots");
+
+        assert_eq!(
+            problems,
+            [
+                "the estimate's root 'agent.car.odom' is held in FLU axes and the truth's root \
+                 'global.datum' in ENU: pose_error compares poses held in one axis convention"
+            ],
+        );
+    }
+
+    #[test]
+    fn different_roots_under_declared_are_refused_naming_both() {
+        let estimate = rooted(base_link(), odom(), Some(Convention::Enu));
+
+        let problems = kind()
+            .build(&toml::Table::new(), &[estimate, input(base_link())])
+            .err()
+            .expect("declared roots that differ");
+
+        assert_eq!(
+            problems,
+            [
+                "the estimate's root 'agent.car.odom' and the truth's root 'global.datum' are \
+                 different frames, and align = \"declared\" grades poses in one; align = \
+                 \"first_pose\" aligns them on their first sample, for an estimator that \
+                 starts where its body is"
+            ],
+        );
+    }
+
+    #[test]
+    fn a_root_without_a_convention_or_undeclared_is_refused_naming_it() {
+        let unowned = rooted(base_link(), odom(), None);
+        let undeclared = rooted(base_link(), None, None);
+
+        let problems = kind()
+            .build(&toml::Table::new(), &[unowned, undeclared])
+            .err()
+            .expect("neither root can be compared");
+
+        assert_eq!(
+            problems,
+            [
+                "the estimate's root 'agent.car.odom' has no axis convention: no owner in the \
+                 pipeline of agent 'car' gives one",
+                "the truth's series declares no root its poses are expressed in",
+            ],
         );
     }
 

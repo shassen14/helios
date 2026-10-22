@@ -9,14 +9,17 @@ use helios_core::prelude::FrameId;
 use helios_core::spatial::transforms::{ErasedTransform, PoseDifference, RootAlignment};
 
 /// Two poses tagged with different axis conventions, which no frame policy
-/// relates.
+/// relates. Bind refuses roots whose owners give them different conventions,
+/// so this is reached only by a writer tagging its poses against its root's
+/// owner.
 const UNLIKE_CONVENTIONS: InputRejection =
     InputRejection("an estimate and a truth tagged with different axis conventions");
 
 /// _Per-step._ What `pose_error` fits over a run: how the estimate's root
 /// sits in the truth's.
 pub enum Roots {
-    /// The two are one frame, which each sample is checked for.
+    /// The two are one frame: bind checks the declared roots are, and the
+    /// bus holds each writer to its declaration.
     Shared,
     /// The estimate's root `estimate`, placed in the truth's root `truth`
     /// by `alignment`.
@@ -64,7 +67,10 @@ impl Roots {
         PoseDifference::between(&estimate, &truth.pose).map_err(|_| UNLIKE_CONVENTIONS)
     }
 
-    /// `estimate`'s pose placed in `truth`'s root, or why it can't be.
+    /// `estimate`'s pose placed in `truth`'s root, or why it can't be. A
+    /// root other than the one fitted is not reached from a run: bind
+    /// compares the declared roots, and the bus refuses a value expressed in
+    /// another frame than its writer declared.
     fn place(
         &self,
         estimate: &RootedPose,

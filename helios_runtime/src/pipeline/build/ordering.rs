@@ -110,15 +110,22 @@ mod tests {
     use crate::pipeline::NodePlan;
     use crate::port::{ChannelKind, Keyed, PortDescriptor, PortDescriptorBuilder};
 
+    use helios_core::spatial::FrameId;
+
     struct Edge {
         child: &'static str,
     }
 
     impl Keyed for Edge {
         type Instance = &'static str;
+        type Declared = &'static str;
 
         fn instance(&self) -> &&'static str {
             &self.child
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 

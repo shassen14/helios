@@ -16,7 +16,7 @@ use crate::{
     run::Run,
 };
 use helios_core::kernel::si_unit::SiUnit;
-use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
+use helios_core::prelude::{AgentId, FrameId, MonotonicTime, TfProvider};
 use helios_runtime::{
     observe::{
         key::{RecordedKey, Subject},
@@ -55,9 +55,14 @@ struct Wheel {
 
 impl Keyed for Wheel {
     type Instance = &'static str;
+    type Declared = &'static str;
 
     fn instance(&self) -> &&'static str {
         &self.wheel
+    }
+
+    fn declared_frame(&self) -> Option<&FrameId> {
+        None
     }
 }
 

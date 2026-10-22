@@ -47,6 +47,10 @@ pub struct TfBuffer {
     /// frame, not an edge, so it is keyed by frame — a frame that is a parent on
     /// one edge and a child on another carries the same convention in both.
     conventions: HashMap<FrameId, Convention>,
+    /// Each frame's axis convention as its owner gives it, before any edge
+    /// touches it. An edge must agree with it; it makes no frame known to a
+    /// lookup.
+    given: HashMap<FrameId, Convention>,
     /// The bounded-history policy, applied uniformly to every dynamic edge and
     /// consulted on each insert to evict samples that have aged out.
     window: TfWindow,
@@ -68,9 +72,21 @@ impl TfBuffer {
     /// the two `insert_*` methods; the window is retained so eviction can consult
     /// it on every dynamic insert.
     pub fn new(window: TfWindow) -> Self {
+        Self::with_conventions(window, [])
+    }
+
+    /// An empty tree whose frames hold the axis conventions `given`, as their
+    /// owners give them: an edge tagged otherwise at either end is refused as
+    /// a [`ConventionConflict`](TfIngestError::ConventionConflict), so the
+    /// tree holds each frame in its owner's axes and no other.
+    pub fn with_conventions(
+        window: TfWindow,
+        given: impl IntoIterator<Item = (FrameId, Convention)>,
+    ) -> Self {
         Self {
             child_to_parent: HashMap::default(),
             conventions: HashMap::default(),
+            given: given.into_iter().collect(),
             window,
         }
     }
@@ -366,10 +382,19 @@ impl TfBuffer {
         false
     }
 
-    /// The axis convention `frame` was established with by the first edge
-    /// that touched it, or `None` for a frame no edge has touched.
+    /// The axis convention `frame` is held in: established by the first edge
+    /// that touched it, which agrees with the one its owner gave, or else the
+    /// one given. `None` for a frame no edge has touched and no owner gave.
     pub fn convention_of(&self, frame: &FrameId) -> Option<Convention> {
-        self.conventions.get(frame).copied()
+        self.expected_convention(frame)
+    }
+
+    /// What an edge touching `frame` must tag it with, if anything yet.
+    fn expected_convention(&self, frame: &FrameId) -> Option<Convention> {
+        self.conventions
+            .get(frame)
+            .or_else(|| self.given.get(frame))
+            .copied()
     }
 
     /// The shared structural validation both inserts run before storing anything —
@@ -379,7 +404,8 @@ impl TfBuffer {
     /// The checks run in a fixed order, each mapping to exactly one error:
     /// 1. a self-edge (`child == parent`) is a degenerate cycle;
     /// 2. each endpoint's convention tag must match what that frame's first sighting
-    ///    established (an unseen frame is *established* on commit, not here);
+    ///    established, or else what its owner gave (an unseen frame is
+    ///    *established* on commit, not here);
     /// 3. a child already bound to a *different* parent violates single-parent —
     ///    the *same* parent is just a new sample of an existing edge, and passes;
     /// 4. an edge whose parent is already a descendant of the child would close a
@@ -402,7 +428,7 @@ impl TfBuffer {
             });
         }
 
-        if let Some(&established) = self.conventions.get(&tf.child) {
+        if let Some(established) = self.expected_convention(&tf.child) {
             if established != tf.transform.from_convention() {
                 return Err(TfIngestError::ConventionConflict {
                     frame: tf.child.clone(),
@@ -412,7 +438,7 @@ impl TfBuffer {
             }
         }
 
-        if let Some(&established) = self.conventions.get(&tf.parent) {
+        if let Some(established) = self.expected_convention(&tf.parent) {
             if established != tf.transform.to_convention() {
                 return Err(TfIngestError::ConventionConflict {
                     frame: tf.parent.clone(),
@@ -1161,6 +1187,37 @@ mod tests {
         assert_eq!(buf.convention_of(&base_link()), Some(Convention::Flu));
         assert_eq!(buf.convention_of(&odom()), Some(Convention::Enu));
         assert_eq!(buf.convention_of(&sensor("gps")), None);
+    }
+
+    #[test]
+    fn an_edge_tagging_a_frame_against_its_given_convention_is_refused() {
+        let mut buf = TfBuffer::with_conventions(window(), [(odom(), Convention::Flu)]);
+
+        let refused = buf.insert_dynamic(bl_odom(1.0, 0.0));
+
+        assert!(
+            matches!(
+                &refused,
+                Err(TfIngestError::ConventionConflict { frame, established, incoming })
+                    if *frame == odom()
+                        && *established == Convention::Flu
+                        && *incoming == Convention::Enu
+            ),
+            "{refused:?}"
+        );
+        assert!(buf.edges().is_empty());
+    }
+
+    #[test]
+    fn a_given_convention_is_reported_but_makes_no_frame_known_to_a_lookup() {
+        let mut buf = TfBuffer::with_conventions(window(), [(sensor("gps"), Convention::Flu)]);
+        mount(&mut buf, "imu", 0.5);
+
+        assert_eq!(buf.convention_of(&sensor("gps")), Some(Convention::Flu));
+        assert!(matches!(
+            buf.lookup(&sensor("gps"), &base_link(), TfQuery::Latest),
+            Err(TfLookupError::UnknownFrame(frame)) if frame == sensor("gps")
+        ));
     }
 
     // --- accumulate ---

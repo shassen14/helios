@@ -1,11 +1,11 @@
 # Negative control: `declared` alignment between roots nothing relates.
 #
-# The estimate is rooted in the agent's odom and the truth in the world,
-# and no edge joins them yet, so every sample is refused and the run fails
-# (exit 1). The report's `recording` names the refusal:
-#   an estimate and a truth in roots nothing relates
-# and every metric reads as rejected, with zero samples. A pass would mean
-# two unrelated frames were compared as if they were one.
+# The estimate is rooted in the agent's odom and the truth in the world.
+# Both writers declare their roots, so setup refuses the evaluation and the
+# run fails (exit 1), naming both:
+#   the estimate's root 'agent.ProvingCar.odom' and the truth's root
+#   'global.proving_ground' are different frames
+# A pass would mean two unrelated frames were compared as if they were one.
 
 schema_version = "2.0"
 scenario = { from = "sim/scenarios/01_proving_ground.toml" }

@@ -8,7 +8,7 @@ use helios_core::interchange::motion::StampedTwist;
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::quantities::FreeVector;
-use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::spatial::transforms::{
     Convention, ConventionOf, ErasedTransform, Transform as CoreTransform,
 };
@@ -85,13 +85,21 @@ pub fn ground_truth_sync_system(
 
 /// The channels [`publish_truth_channels_system`] writes for `agent`, as
 /// the body publishes them: `truth.tf` and `truth.twist`, each with one
-/// instance, the agent's `base_link`, exact because the simulator is ground
-/// truth, and written every tick, at the host's `tick_rate_hz`.
-pub fn truth_body_channels(agent: &AgentId, tick_rate_hz: f64) -> [BodyChannel; 2] {
+/// instance, the agent's `base_link` (its pose expressed in the world's
+/// `datum`), exact because the simulator is ground truth, and written every
+/// tick, at the host's `tick_rate_hz`.
+pub fn truth_body_channels(
+    agent: &AgentId,
+    datum: &FrameId,
+    tick_rate_hz: f64,
+) -> [BodyChannel; 2] {
     let base_link = FrameId::base_link(agent.clone());
     [
         BodyChannel::new(truth_tf(), TRUTH_RIG_UNIT, Provenance::Exact)
-            .with_instances::<StampedTransform>([base_link.clone()])
+            .with_instances::<StampedTransform>([FrameEdge {
+                child: base_link.clone(),
+                parent: datum.clone(),
+            }])
             .with_rate(tick_rate_hz),
         BodyChannel::new(truth_twist(), TRUTH_RIG_UNIT, Provenance::Exact)
             .with_instances::<StampedTwist<Flu>>([base_link])

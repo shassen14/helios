@@ -17,7 +17,8 @@
 //!
 //! A writer of a keyed channel also states the instances it writes: the body
 //! with the channel, a node on its output port. Several writers may share a keyed channel, each
-//! described with its own instances.
+//! described with its own instances. An instance whose values are expressed
+//! in another frame, as a transform is in its parent, is stated with it.
 //!
 //! A description carries the nominal rate its writer writes at: the body
 //! states it with the channel, and the builder gives a node output its
@@ -25,7 +26,7 @@
 
 use crate::body::BodyChannel;
 use crate::port::channel::ChannelKey;
-use crate::port::keyed::InstanceKey;
+use crate::port::keyed::{DeclaredInstances, InstanceKey};
 
 use helios_core::spatial::FrameId;
 
@@ -38,7 +39,7 @@ pub struct ChannelDescription {
     key: ChannelKey,
     writer: Writer,
     mount: Option<FrameId>,
-    instances: Vec<InstanceKey>,
+    instances: DeclaredInstances,
     rate_hz: Option<f64>,
 }
 
@@ -52,7 +53,7 @@ impl ChannelDescription {
                 provenance: channel.provenance(),
             },
             mount: channel.mount().cloned(),
-            instances: channel.instances().to_vec(),
+            instances: channel.declared_instances().clone(),
             rate_hz: channel.rate_hz(),
         }
     }
@@ -64,7 +65,7 @@ impl ChannelDescription {
             key,
             writer: Writer::Outside,
             mount: None,
-            instances: Vec::new(),
+            instances: DeclaredInstances::default(),
             rate_hz: None,
         }
     }
@@ -77,7 +78,7 @@ impl ChannelDescription {
             key,
             writer: Writer::Node { node: node.into() },
             mount: None,
-            instances: Vec::new(),
+            instances: DeclaredInstances::default(),
             rate_hz: None,
         }
     }
@@ -92,7 +93,7 @@ impl ChannelDescription {
     /// The description with `instances` as the instances of its keyed channel
     /// the writer writes, as a node's output port declares them. A body
     /// channel carries its own.
-    pub(crate) fn with_instances(mut self, instances: Vec<InstanceKey>) -> Self {
+    pub(crate) fn with_instances(mut self, instances: DeclaredInstances) -> Self {
         self.instances = instances;
         self
     }
@@ -122,7 +123,13 @@ impl ChannelDescription {
     /// The instances of its keyed channel this writer writes. Empty for a
     /// channel that holds one value.
     pub fn instances(&self) -> &[InstanceKey] {
-        &self.instances
+        self.instances.keys()
+    }
+
+    /// The frame `instance`'s values are expressed in, when its writer
+    /// stated one: a transform edge's parent.
+    pub fn expressed_in(&self, instance: &InstanceKey) -> Option<&FrameId> {
+        self.instances.expressed_in(instance)
     }
 
     /// How many times a second the writer writes the channel, nominally,
@@ -246,20 +253,26 @@ mod tests {
     }
 
     /// A keyed body channel's description carries the instances the host
-    /// stated, so the instance checks judge the body as they judge a node.
+    /// stated, so the instance checks judge the body as they judge a node,
+    /// each with the frame its values are expressed in.
     #[test]
     fn a_body_channel_keeps_its_instances() {
         use crate::channels::truth_tf;
 
-        use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+        use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 
         let base_link = FrameId::base_link(AgentId::new("car"));
+        let datum = FrameId::global("datum");
         let channel = BodyChannel::new(truth_tf(), "truth_rig", Provenance::Exact)
-            .with_instances::<StampedTransform>([base_link.clone()]);
-        assert_eq!(
-            ChannelDescription::body(&channel).instances(),
-            [InstanceKey::of::<StampedTransform>(&base_link)]
-        );
+            .with_instances::<StampedTransform>([FrameEdge {
+                child: base_link.clone(),
+                parent: datum.clone(),
+            }]);
+        let description = ChannelDescription::body(&channel);
+        let instance = InstanceKey::of::<StampedTransform>(&base_link);
+
+        assert_eq!(description.instances(), [instance.clone()]);
+        assert_eq!(description.expressed_in(&instance), Some(&datum));
     }
 
     #[test]

@@ -14,7 +14,11 @@
 
 use crate::{
     observe::observation::ObservedValueKind,
-    port::{channel::ChannelKey, keyed::InstanceKey, kind::NodeClass},
+    port::{
+        channel::ChannelKey,
+        keyed::{DeclaredInstances, InstanceKey},
+        kind::NodeClass,
+    },
 };
 
 use helios_core::control::actuators::ActuatorDrive;
@@ -324,7 +328,7 @@ pub struct OutputPort {
     channel: ChannelKey,
     drives: Vec<ActuatorDrive>,
     mount: MountRule,
-    instances: Vec<InstanceKey>,
+    instances: DeclaredInstances,
 }
 
 impl OutputPort {
@@ -334,7 +338,7 @@ impl OutputPort {
             channel,
             drives,
             mount: MountRule::None,
-            instances: Vec::new(),
+            instances: DeclaredInstances::default(),
         }
     }
 
@@ -356,7 +360,7 @@ impl OutputPort {
     }
 
     /// The output writing `instances` of its keyed channel.
-    pub(crate) fn with_instances(mut self, instances: Vec<InstanceKey>) -> Self {
+    pub(crate) fn with_instances(mut self, instances: DeclaredInstances) -> Self {
         self.instances = instances;
         self
     }
@@ -375,6 +379,12 @@ impl OutputPort {
     /// The instances of its keyed channel this output writes, in declaration
     /// order. Empty for a channel that holds one value.
     pub fn instances(&self) -> &[InstanceKey] {
+        self.instances.keys()
+    }
+
+    /// The instances as declared, each with the frame its values are
+    /// expressed in when the payload names one.
+    pub fn declared_instances(&self) -> &DeclaredInstances {
         &self.instances
     }
 }

@@ -180,7 +180,7 @@ impl PortBus {
                     .map(|key| ChannelDescription::outside(key.clone()));
                 let outputs = descriptor.output_ports().iter().map(|output| {
                     ChannelDescription::node(output.channel().clone(), TEST_WRITER)
-                        .with_instances(output.instances().to_vec())
+                        .with_instances(output.declared_instances().clone())
                 });
                 inputs.chain(outputs).collect::<Vec<_>>()
             })
@@ -215,8 +215,9 @@ impl PortBus {
     }
 
     /// Writes `stamped` to the instance of keyed `channel` its value names.
-    /// Refused for a channel that holds one value, and for an instance no
-    /// writer declared.
+    /// Refused for a channel that holds one value, for an instance no writer
+    /// declared, and for a value expressed in another frame than its
+    /// instance was declared with.
     pub fn write_keyed<T: Keyed>(
         &self,
         channel: ChannelKey,
@@ -418,7 +419,10 @@ impl PortBus {
             .slots
             .get(channel)
             .ok_or(ChannelError::UnknownChannel)?;
-        let Slot::Keyed { instances, .. } = slot else {
+        let Slot::Keyed {
+            instances, frames, ..
+        } = slot
+        else {
             return Err(ChannelError::NotKeyed);
         };
         check_payload_type::<T>(channel)?;
@@ -426,6 +430,15 @@ impl PortBus {
         let Some(entry) = instances.get(&instance) else {
             return Err(ChannelError::UndeclaredInstance { instance });
         };
+        let declared = frames.get(&instance);
+        let written = stamped.value.declared_frame();
+        if declared != written {
+            return Err(ChannelError::UndeclaredFrame {
+                declared: declared.cloned(),
+                written: written.cloned(),
+                instance,
+            });
+        }
         store(entry, stamped);
 
         Ok(())
@@ -444,6 +457,9 @@ enum Slot {
     },
     Keyed {
         instances: BTreeMap<InstanceKey, ArcSwap<SlotEntry>>,
+        /// The frame each instance's values are expressed in, for those
+        /// declared with one.
+        frames: BTreeMap<InstanceKey, FrameId>,
         /// Whether a single-value read of the channel has been warned of.
         misread_warned: AtomicBool,
     },
@@ -456,6 +472,7 @@ impl Slot {
         if key.is_keyed() {
             Slot::Keyed {
                 instances: BTreeMap::new(),
+                frames: BTreeMap::new(),
                 misread_warned: AtomicBool::new(false),
             }
         } else {
@@ -466,15 +483,21 @@ impl Slot {
         }
     }
 
-    /// Adds what `description` declares: its instances to a keyed channel,
-    /// its mount to a single-value one.
+    /// Adds what `description` declares: its instances, each with the frame
+    /// its values are expressed in, to a keyed channel, its mount to a
+    /// single-value one.
     fn declare(&mut self, description: &ChannelDescription) {
         match self {
-            Slot::Keyed { instances, .. } => {
+            Slot::Keyed {
+                instances, frames, ..
+            } => {
                 for instance in description.instances() {
                     instances
                         .entry(instance.clone())
                         .or_insert_with(SlotEntry::empty);
+                    if let Some(frame) = description.expressed_in(instance) {
+                        frames.insert(instance.clone(), frame.clone());
+                    }
                 }
             }
             Slot::Single { mounts, .. } => {
@@ -594,6 +617,7 @@ mod tests {
     use crate::port::channel::ChannelKey;
     use crate::port::descriptor::{PortDescriptor, PortDescriptorBuilder};
     use crate::port::kind::ChannelKind;
+    use crate::port::DeclaredInstances;
     use crate::prelude::Health;
 
     use helios_core::prelude::{AgentId, SensorReading};
@@ -944,9 +968,14 @@ mod tests {
 
     impl Keyed for Edge {
         type Instance = &'static str;
+        type Declared = &'static str;
 
         fn instance(&self) -> &&'static str {
             &self.child
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 
@@ -974,8 +1003,10 @@ mod tests {
     #[test]
     fn writers_of_one_keyed_channel_share_its_slot() {
         let bus = PortBus::new(&[
-            ChannelDescription::node(edges(), "relay").with_instances(vec![instance("base")]),
-            ChannelDescription::node(edges(), "localizer").with_instances(vec![instance("odom")]),
+            ChannelDescription::node(edges(), "relay")
+                .with_instances(DeclaredInstances::of::<Edge>(["base"])),
+            ChannelDescription::node(edges(), "localizer")
+                .with_instances(DeclaredInstances::of::<Edge>(["odom"])),
         ]);
         assert_eq!(bus.slots.len(), 1);
         bus.write_keyed(edges(), edge("base", 1.0)).unwrap();
@@ -1188,7 +1219,8 @@ mod tests {
         let mut descriptions =
             vec![ChannelDescription::node(scans(), "deproject").with_mount(Some(frame("lidar")))];
         descriptions.push(
-            ChannelDescription::node(edges(), "relay").with_instances(vec![instance("base")]),
+            ChannelDescription::node(edges(), "relay")
+                .with_instances(DeclaredInstances::of::<Edge>(["base"])),
         );
         let bus = PortBus::new(&descriptions);
 

@@ -5,20 +5,21 @@
 //! A producer that owns an edge of the estimated tree (the estimate relay
 //! emitting `odom → base_link`, a localizer correcting `map → odom`)
 //! dual-publishes it: alongside its rich output it writes the bare transform
-//! onto [`tf`], declaring the child frames it writes. The runtime `TfService`
+//! onto [`tf`], declaring the edges it writes. The runtime `TfService`
 //! drains the channel's changed instances into its buffer.
 //!
 //! **The child names the edge.** A strict tree gives each frame one parent at
-//! a time, so the child frame identifies an edge, as tf2 keys its buffer; a
-//! re-parented frame stays on one instance. The instance is read off the
-//! message's own `child`, so a producer cannot route a transform onto another
+//! a time, so the child frame identifies an edge, as tf2 keys its buffer.
+//! The parent is declared with it, and the bus refuses a transform written
+//! under another, so no frame is re-parented mid-run. The instance is read
+//! off the message's own `child`, so a producer cannot route a transform onto another
 //! edge's instance, and the pipeline build refuses two producers of one
 //! child. Edges are internal channels (node-produced); a hardware `/tf`
 //! bridge or a Zenoh peer maps each foreign transform onto its child's
 //! instance.
 
 use crate::{
-    port::{ChannelKey, ChannelKind, Keyed, PortBus},
+    port::{ChannelKey, ChannelKind, InstanceDeclaration, Keyed, PortBus},
     Stamped,
 };
 
@@ -29,12 +30,29 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const TF: &str = "tf";
 
-/// A transform belongs to the instance of its child frame.
+/// A transform belongs to the instance of its child frame, and is declared
+/// by its whole edge: its values are poses expressed in the parent.
 impl Keyed for StampedTransform {
     type Instance = FrameId;
+    type Declared = FrameEdge;
 
     fn instance(&self) -> &FrameId {
         &self.child
+    }
+
+    fn declared_frame(&self) -> Option<&FrameId> {
+        Some(&self.parent)
+    }
+}
+
+/// An edge declares its child as the instance, expressed in its parent.
+impl InstanceDeclaration<FrameId> for FrameEdge {
+    fn declares(&self) -> &FrameId {
+        &self.child
+    }
+
+    fn expressed_in(&self) -> Option<&FrameId> {
+        Some(&self.parent)
     }
 }
 
@@ -130,10 +148,10 @@ mod tests {
         }
     }
 
-    /// A bus whose one producer declares the children of `edges`.
+    /// A bus whose one producer declares `edges`.
     fn bus_wired_for(edges: &[FrameEdge]) -> PortBus {
         let descriptor = PortDescriptorBuilder::algorithm()
-            .output_keyed::<StampedTransform>(tf(), edges.iter().map(|edge| edge.child.clone()))
+            .output_keyed::<StampedTransform>(tf(), edges.iter().cloned())
             .build();
         PortBus::of_descriptors(&[descriptor])
     }

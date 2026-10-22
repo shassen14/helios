@@ -17,8 +17,8 @@ pub struct PoseErrorConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Align {
-    /// The two poses must be in one root. Otherwise every sample is
-    /// refused.
+    /// The two poses must be in one root. Otherwise the entry is refused
+    /// at setup.
     #[default]
     Declared,
     /// Place the estimate's root in the truth's by the two poses at the

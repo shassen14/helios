@@ -1,7 +1,9 @@
 //! Checks, once the pipelines exist, that the run can build every
 //! evaluation: each input names one series its agent records, carrying the
 //! payload type its role reads, that the collector requests; and the kind
-//! accepts the series bound, comparing their frames. Each evaluation that
+//! accepts the series bound, comparing their frames and the facts their
+//! writers declared (the frame values are expressed in and its convention,
+//! the rate, the writer). Each evaluation that
 //! can be built is bound in the collector, so its inputs feed it from the
 //! first tick.
 
@@ -148,13 +150,7 @@ fn plan(
         return Err(problems);
     }
 
-    let inputs: Vec<BoundInput> = bound
-        .iter()
-        .map(|input| BoundInput {
-            agent: input.planned.key.agent.clone(),
-            instance: instance_of(&input.planned.key.subject).map(str::to_owned),
-        })
-        .collect();
+    let inputs: Vec<BoundInput> = bound.iter().map(|input| input.facts.clone()).collect();
     let evaluator = kind
         .build(&evaluation.params, &inputs)
         .map_err(|refusals| {
@@ -187,6 +183,8 @@ fn plan(
 /// One role's input, found.
 struct Bound {
     planned: PlannedInput,
+    /// What the kind is told of it.
+    facts: BoundInput,
     /// Whether it is a channel's, whose value holds until the next.
     held: bool,
     nondeterministic: bool,
@@ -226,10 +224,16 @@ fn locate_input(
         return Err(problems);
     }
 
-    let writer = match subject {
-        Subject::Emission { node, .. } => Some(Writer::Node {
-            node: node.to_string(),
-        }),
+    // An emission has no description: its node writes it, at no declared
+    // rate, in no declared frame.
+    let (writer, rate_hz, expressed_in) = match subject {
+        Subject::Emission { node, .. } => (
+            Some(Writer::Node {
+                node: node.to_string(),
+            }),
+            None,
+            None,
+        ),
         Subject::Channel { channel, instance } => catalog
             .descriptions
             .iter()
@@ -240,11 +244,31 @@ fn locate_input(
                             .as_ref()
                             .is_some_and(|instance| description.instances().contains(instance)))
             })
-            .map(|description| description.writer().clone()),
+            .map_or((None, None, None), |description| {
+                (
+                    Some(description.writer().clone()),
+                    description.rate_hz(),
+                    instance
+                        .as_ref()
+                        .and_then(|instance| description.expressed_in(instance))
+                        .cloned(),
+                )
+            }),
     };
+    let convention = expressed_in
+        .as_ref()
+        .and_then(|frame| catalog.frame_conventions.convention_of(frame));
     Ok(Bound {
         held: matches!(subject, Subject::Channel { .. }),
         nondeterministic: observable.determinism() == Determinism::Nondeterministic,
+        facts: BoundInput {
+            agent: catalog.agent.clone(),
+            instance: instance_of(subject).map(str::to_owned),
+            expressed_in,
+            convention,
+            rate_hz,
+            writer: writer.clone(),
+        },
         planned: PlannedInput {
             role: role.name,
             target: target.clone(),

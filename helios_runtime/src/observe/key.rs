@@ -88,15 +88,22 @@ mod tests {
 
     use crate::port::{ChannelKind, Keyed};
 
+    use helios_core::spatial::FrameId;
+
     const CAR: &str = "car";
 
     struct Edge(&'static str);
 
     impl Keyed for Edge {
         type Instance = &'static str;
+        type Declared = &'static str;
 
         fn instance(&self) -> &&'static str {
             &self.0
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 

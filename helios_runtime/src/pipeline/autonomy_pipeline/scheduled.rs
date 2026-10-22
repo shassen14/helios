@@ -178,6 +178,7 @@ mod tests {
     };
 
     use helios_core::prelude::TfProvider;
+    use helios_core::spatial::FrameId;
 
     const AGENT: &str = "car";
     const NIS: &str = "aiding.gps.nis";
@@ -207,9 +208,14 @@ mod tests {
 
     impl Keyed for Edge {
         type Instance = &'static str;
+        type Declared = &'static str;
 
         fn instance(&self) -> &&'static str {
             &self.0
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 

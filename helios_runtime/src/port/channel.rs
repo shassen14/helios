@@ -194,6 +194,15 @@ pub enum ChannelError {
         declared: Vec<FrameId>,
         written: FrameId,
     },
+    /// A value of `instance` is expressed in another frame than its writer
+    /// declared the instance with (`None`: no frame). Stored, a reader
+    /// trusting the declaration, as an evaluation's setup does, and a reader
+    /// trusting the value would see different frames for it.
+    UndeclaredFrame {
+        instance: InstanceKey,
+        declared: Option<FrameId>,
+        written: Option<FrameId>,
+    },
 }
 
 impl std::fmt::Display for ChannelError {
@@ -241,6 +250,24 @@ impl std::fmt::Display for ChannelError {
                 }
                 Ok(())
             }
+            ChannelError::UndeclaredFrame {
+                instance,
+                declared,
+                written,
+            } => {
+                let spelled = |frame: &Option<FrameId>| {
+                    frame
+                        .as_ref()
+                        .map_or_else(|| "no frame".to_owned(), |frame| format!("frame {frame}"))
+                };
+                write!(
+                    f,
+                    "instance \"{instance}\" is declared expressed in {}, but a value is \
+                     expressed in {}",
+                    spelled(declared),
+                    spelled(written),
+                )
+            }
         }
     }
 }
@@ -260,9 +287,14 @@ mod tests {
 
     impl Keyed for Edge {
         type Instance = u32;
+        type Declared = u32;
 
         fn instance(&self) -> &u32 {
             &self.child
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
         }
     }
 

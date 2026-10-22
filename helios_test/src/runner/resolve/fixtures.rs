@@ -16,7 +16,7 @@ use crate::{
 };
 
 use helios_core::kernel::si_unit::SiUnit;
-use helios_core::prelude::{AgentId, TfProvider};
+use helios_core::prelude::{AgentId, FrameId, TfProvider};
 use helios_runtime::{
     observe::{
         key::{RecordedKey, Subject},
@@ -57,9 +57,14 @@ pub(super) struct FrameSample(&'static str);
 
 impl Keyed for FrameSample {
     type Instance = &'static str;
+    type Declared = &'static str;
 
     fn instance(&self) -> &&'static str {
         &self.0
+    }
+
+    fn declared_frame(&self) -> Option<&FrameId> {
+        None
     }
 }
 

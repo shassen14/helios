@@ -31,7 +31,8 @@ use std::collections::{BTreeSet, HashMap};
 /// the [`TrackedFrame`]s of the agent and its descendants, into the body
 /// passed to `build_pipeline()`. Descendants, not children: a sensor entity
 /// may hang under its installation's frame entity, as an IMU's two do. The
-/// host declares its tick rate, the scenario's, and the world's datum.
+/// host declares its tick rate, the scenario's, and the world's datum; with
+/// no datum, every agent is marked [`PipelineBuildFailed`] and none built.
 #[allow(clippy::too_many_arguments)] // one Bevy system, each parameter a query or resource it reads
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
@@ -44,9 +45,28 @@ pub fn spawn_autonomy_pipeline(
     tf_tree: Res<TfTree>,
 ) {
     let _span = tracing::info_span!("sim.scene_build.autonomy").entered();
-    let host = host_declaration(config.common.simulation.frequency_hz, tf_tree.datum());
+    let world = tf_tree
+        .datum()
+        .map(|datum| {
+            let host = host_declaration(config.common.simulation.frequency_hz, datum);
+            (datum, host)
+        })
+        .ok_or(NO_DATUM);
     for (agent_entity, request, agent_id) in &agent_query {
         let agent_config = &request.0;
+        let (datum, host) = match &world {
+            Ok((datum, host)) => (*datum, host),
+            Err(refused) => {
+                error!(
+                    "[spawn_autonomy_pipeline] Agent '{}': {refused}",
+                    agent_config.name()
+                );
+                commands.entity(agent_entity).insert(PipelineBuildFailed {
+                    errors: vec![refused.to_string()],
+                });
+                continue;
+            }
+        };
         let stack = agent_config.autonomy_stack();
         // The canonical scope stamped on the shell at `CreateRequests`; the
         // static seeds name every installation's frame under it, matching what
@@ -71,6 +91,7 @@ pub fn spawn_autonomy_pipeline(
 
         let body = build_host_body_capabilities(
             &agent,
+            datum,
             sensor_channels,
             frames,
             &agent_config.vehicle.actuation,
@@ -137,20 +158,22 @@ pub fn spawn_autonomy_pipeline(
 
 /// The agent's estimated tf service, checked against `pipeline`.
 ///
-/// Seeded with the static sensor mounts and draining the pipeline's `tf`
-/// channel, so its tree is fed only by the graph's own producers, never the
-/// sim's truth. Fails with every rejected seed, or with the mounts the
-/// pipeline reads that are not below `base_link` or that a node reads in other
-/// axes than the tree holds. A producer declares each edge's child but not its
-/// parent, so no edge is declared yet; the one today, `odom → base_link`, lies
-/// above `base_link`, on no mount's way to it.
+/// Holding each frame in the axes its owner gives in the pipeline's frame
+/// conventions, seeded with the static sensor mounts and draining the
+/// pipeline's `tf` channel, so its tree is fed only by the graph's own
+/// producers, never the sim's truth. Fails with every rejected seed (one
+/// tagged against its frame's owner among them), or with the mounts the
+/// pipeline reads that are not below `base_link` or that a node reads in
+/// other axes than the tree holds. No producer's declared edge is passed to
+/// the mount check yet: the one today, `odom → base_link`, lies above
+/// `base_link`, on no mount's way to it.
 fn estimated_tf_service(
     pipeline: &AutonomyPipeline,
     window: TfWindow,
     static_seeds: Vec<StampedTransform>,
     agent: &AgentId,
 ) -> Result<TfService, Vec<String>> {
-    let service = TfService::new(window, static_seeds)
+    let service = TfService::new(window, static_seeds, pipeline.frame_conventions())
         .map_err(|rejected| rejected.iter().map(ToString::to_string).collect::<Vec<_>>())?;
     service
         .check_read_mounts(
@@ -212,16 +235,18 @@ pub fn spawn_actuator_command(
     }
 }
 
+/// Why no agent's pipeline is built when the world layout set no datum.
+const NO_DATUM: &str = "the world has no datum, the frame its truth is published in, so the \
+                        host can't declare its world frames; the world layout sets it before \
+                        any pipeline is built";
+
 /// The sim host's [`HostDeclaration`]: it ticks at the scenario's
-/// `tick_rate_hz`, and names one world frame, the datum truth is published
-/// in, once the world layout has set it.
-fn host_declaration(tick_rate_hz: f64, datum: Option<&FrameId>) -> HostDeclaration {
+/// `tick_rate_hz`, and names one world frame, `datum`, the frame truth is
+/// published in.
+fn host_declaration(tick_rate_hz: f64, datum: &FrameId) -> HostDeclaration {
     HostDeclaration {
         tick_rate_hz,
-        world_frames: datum
-            .map(|datum| (datum.clone(), DATUM_CONVENTION))
-            .into_iter()
-            .collect(),
+        world_frames: HashMap::from([(datum.clone(), DATUM_CONVENTION)]),
     }
 }
 
@@ -230,7 +255,8 @@ fn host_declaration(tick_rate_hz: f64, datum: Option<&FrameId>) -> HostDeclarati
 /// itself declares.
 ///
 /// - `publishes`: the truth rig's two channels for `agent`
-///   ([`truth_body_channels`]), written every tick at `tick_rate_hz`, then
+///   ([`truth_body_channels`]), its pose in `datum`, written every tick at
+///   `tick_rate_hz`, then
 ///   `sensor_channels`, each sensor's channel as its spawner described it.
 ///   Every installed sensor is listed, read by the stack or not. Health
 ///   channels are intentionally omitted: no sim publisher exists for them
@@ -243,13 +269,14 @@ fn host_declaration(tick_rate_hz: f64, datum: Option<&FrameId>) -> HostDeclarati
 ///   fails the build.
 fn build_host_body_capabilities(
     agent: &AgentId,
+    datum: &FrameId,
     sensor_channels: Vec<BodyChannel>,
     frames: HashMap<FrameId, Convention>,
     actuation: &ActuationModel,
     tick_rate_hz: f64,
 ) -> BodyCapabilities {
     BodyCapabilities {
-        publishes: truth_body_channels(agent, tick_rate_hz)
+        publishes: truth_body_channels(agent, datum, tick_rate_hz)
             .into_iter()
             .chain(sensor_channels)
             .collect(),
@@ -298,6 +325,10 @@ mod tests {
     const TICK_RATE_HZ: f64 = 400.0;
     const GPS_RATE_HZ: f64 = 10.0;
     const MAG_RATE_HZ: f64 = 50.0;
+
+    fn datum() -> FrameId {
+        FrameId::global("datum")
+    }
 
     /// A goal input keyed the way a planner declares it: a `PlannerGoal` on the
     /// named channel.
@@ -378,6 +409,7 @@ mod tests {
 
         let caps = build_host_body_capabilities(
             &AgentId::new("car"),
+            &datum(),
             vec![],
             HashMap::new(),
             &actuation,
@@ -398,6 +430,7 @@ mod tests {
 
         let caps = build_host_body_capabilities(
             &agent,
+            &datum(),
             vec![],
             frames.clone(),
             &ActuationModel::default(),
@@ -413,6 +446,7 @@ mod tests {
     fn the_truth_rig_writes_at_the_tick_rate() {
         let caps = build_host_body_capabilities(
             &AgentId::new("car"),
+            &datum(),
             vec![],
             HashMap::new(),
             &ActuationModel::default(),
@@ -425,20 +459,15 @@ mod tests {
             .all(|channel| channel.rate_hz() == Some(TICK_RATE_HZ)));
     }
 
-    /// The host ticks at the scenario's rate and names the datum once the
-    /// world layout has set it, and no world frame before.
+    /// The host ticks at the scenario's rate and names the datum.
     #[test]
     fn the_host_declares_its_tick_and_the_datum() {
-        let datum = FrameId::global("datum");
-
-        let host = host_declaration(TICK_RATE_HZ, Some(&datum));
+        let host = host_declaration(TICK_RATE_HZ, &datum());
         assert_eq!(host.tick_rate_hz, TICK_RATE_HZ);
         assert_eq!(
             host.world_frames,
-            HashMap::from([(datum, DATUM_CONVENTION)])
+            HashMap::from([(datum(), DATUM_CONVENTION)])
         );
-
-        assert!(host_declaration(TICK_RATE_HZ, None).world_frames.is_empty());
     }
 
     /// The body publishes the truth rig's channels and every sensor's, each
@@ -462,13 +491,14 @@ mod tests {
 
         let caps = build_host_body_capabilities(
             &agent,
+            &datum(),
             sensors.clone(),
             HashMap::new(),
             &ActuationModel::default(),
             TICK_RATE_HZ,
         );
 
-        let expected: Vec<BodyChannel> = truth_body_channels(&agent, TICK_RATE_HZ)
+        let expected: Vec<BodyChannel> = truth_body_channels(&agent, &datum(), TICK_RATE_HZ)
             .into_iter()
             .chain(sensors)
             .collect();
