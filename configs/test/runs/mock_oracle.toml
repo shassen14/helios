@@ -6,9 +6,7 @@
 # instance, and the mock reading them as its estimate. A refused truth write
 # or a truth the mock cannot use warns, so the run must finish with no
 # warnings. It carries no assertions; `pose_error_mock_oracle` grades this
-# scenario's estimate against its truth. The summarizer's final_pos_e /
-# final_pos_n should match the proving ground's, since both stacks see the
-# same world and differ only in estimation error.
+# scenario's estimate against its truth.
 
 schema_version = "2.0"
 

@@ -1,6 +1,6 @@
 use super::{ActiveRunner, RunOutcome, RunVerdict, WallClockStart};
 use crate::run::termination::TerminationReason;
-use crate::sim::{ReportOutputPath, RunMetadata};
+use crate::sim::{ReportOutputPath, ReportSlot, RunSeed};
 use crate::{HostFacts, ObservationCollector, ReportStatus, Runner, TickAction};
 
 use helios_core::prelude::{AgentId, MonotonicTime};
@@ -155,7 +155,8 @@ fn tick_system(
 /// `Report` (reduced assertions and measures evaluated now; every-sample ones
 /// already folded across ticks into their latches, every agent's refused
 /// writes read from its pipeline's bus), writes it to disk and the console,
-/// records the verdict, and ends the Bevy loop. Takes the runner as `Res` because
+/// records the verdict, hands the report to the bin through its slot, and
+/// ends the Bevy loop. Takes the runner as `Res` because
 /// `finalize` only reads.
 // Bevy systems declare their dependencies as parameters, so the count exceeds
 // clippy's default threshold; that's idiomatic here, not a smell.
@@ -171,7 +172,8 @@ fn finalize_system(
     runner: Res<ActiveRunner>,
     outcome: Res<RunOutcome>,
     out_path: Res<ReportOutputPath>,
-    metadata: Res<RunMetadata>,
+    seed: Res<RunSeed>,
+    slot: Res<ReportSlot>,
     pipelines: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
     mut verdict: ResMut<RunVerdict>,
     mut exit: MessageWriter<AppExit>,
@@ -211,7 +213,7 @@ fn finalize_system(
         wall_duration_secs: wall_secs,
         run_name,
         terminated_by_reason: reason,
-        master_seed: metadata.seed,
+        master_seed: seed.0,
         refused_writes,
     };
     let report = runner.0.finalize(host, &collector.0);
@@ -224,6 +226,8 @@ fn finalize_system(
     crate::report::console::print(&report);
 
     verdict.set(report.status().clone());
+    // Last, since storing moves it: a batch aggregates it after `run()`.
+    slot.store(report);
 
     // Carry the verdict out as the app's exit code. `app.run()` empties the App
     // (Bevy 0.16), so the bin cannot read RunVerdict from the world afterward —

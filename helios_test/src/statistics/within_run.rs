@@ -1,15 +1,16 @@
 //! Within-run reducers: one series' samples over a window, reduced to the one
 //! value an assertion judges or a measure reports.
 //!
-//! Distinct from the cross-run [`StatisticTable`](super::StatisticTable),
-//! which reduces a bag of finished runs' numbers: these take timed samples
-//! and the window they fall in, since `final`, `time_above` and `max_gap`
-//! need the stamps, and each keeps the kind its value has (`count` is an
-//! int; `min`, `max` and `final` keep the series' kind). They also differ on
-//! NaN: here a NaN sample reaches the reduced value, so `max` of a series
-//! holding a NaN fails a bound just as judging each sample would, where the
-//! cross-run `min` and `max` skip it.
+//! Distinct from the cross-run [`CrossRun`](super::across_runs::CrossRun)
+//! statistics, which reduce a bag of finished runs' numbers: these take
+//! timed samples and the window they fall in, since `final`, `time_above`
+//! and `max_gap` need the stamps, and each keeps the kind its value has
+//! (`count` is an int; `min`, `max` and `final` keep the series' kind). The
+//! math both share is [`numbers`](super::numbers), so a NaN sample reaches
+//! the reduced value here as it does across runs: `max` of a series holding
+//! a NaN fails a bound just as judging each sample would.
 
+use super::numbers::{max, mean, min, rms, std};
 use crate::{
     assertion::{AssertionValue, ValueKind},
     collector::Sample,
@@ -38,8 +39,8 @@ pub enum Reducer {
     Max,
     /// The mean per sample, not weighted by time.
     Mean,
-    /// The population standard deviation (divided by N, as the cross-run
-    /// table's), so one sample gives `0.0`.
+    /// The population standard deviation (divided by N, as across runs),
+    /// so one sample gives `0.0`.
     Std,
     /// The root mean square.
     Rms,
@@ -175,13 +176,10 @@ impl Reducer {
             };
             return Ok(found.map(AssertionValue::Int));
         }
-        if numbers.iter().any(|x| x.is_nan()) {
-            return Ok(Some(AssertionValue::Float(f64::NAN)));
-        }
-        let found = numbers.into_iter().reduce(|a, b| match extreme {
-            Extreme::Min => a.min(b),
-            Extreme::Max => a.max(b),
-        });
+        let found = match extreme {
+            Extreme::Min => min(&numbers),
+            Extreme::Max => max(&numbers),
+        };
         Ok(found.map(AssertionValue::Float))
     }
 }
@@ -239,24 +237,6 @@ pub fn max_gap(samples: &[Sample], start: MonotonicTime, end: MonotonicTime) -> 
 
 fn count(samples: &[Sample]) -> i64 {
     i64::try_from(samples.len()).unwrap_or(i64::MAX)
-}
-
-fn mean(numbers: &[f64]) -> Option<f64> {
-    if numbers.is_empty() {
-        return None;
-    }
-    Some(numbers.iter().sum::<f64>() / numbers.len() as f64)
-}
-
-fn std(numbers: &[f64]) -> Option<f64> {
-    let m = mean(numbers)?;
-    let variance = numbers.iter().map(|x| (x - m).powi(2)).sum::<f64>() / numbers.len() as f64;
-    Some(variance.sqrt())
-}
-
-fn rms(numbers: &[f64]) -> Option<f64> {
-    let squares: Vec<f64> = numbers.iter().map(|x| x * x).collect();
-    mean(&squares).map(f64::sqrt)
 }
 
 /// Seconds in the window `samples` spend above `threshold`, each held from

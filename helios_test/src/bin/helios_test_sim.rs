@@ -16,12 +16,11 @@
 use helios_sim::prelude::*;
 use helios_test::{
     monte_carlo::seed_for_run,
-    report::aggregate::{console::print, toml_writer::write},
+    report::aggregate::{console::print, toml_writer::write, BatchRun},
     sim::{
-        MetricsCollector, MetricsPlugin, ReportOutputPath, RunMetadata, RunOutcome, RunVerdict,
-        TestRunAppExt, WallClockStart,
+        ReportOutputPath, ReportSlot, RunOutcome, RunSeed, RunVerdict, TestRunAppExt,
+        WallClockStart,
     },
-    statistics::{standard_statistics, StatId},
     AggregateReport, Runner,
 };
 
@@ -133,14 +132,14 @@ fn main() {
         ));
 
         // Created out here so the bin keeps its own clone: the world's clone (below)
-        // is dropped when `run()` drains the App, but this one keeps the collected
-        // metrics alive to be read afterward.
-        let collector = MetricsCollector::new();
+        // is dropped when `run()` drains the App, but this one keeps the finished
+        // report alive to be read afterward.
+        let report_slot = ReportSlot::new();
 
         // The test layer wraps the host: the run's resources, and the runner
         // with the systems that pump it.
-        app.insert_resource(collector.clone()); // the world's clone of the collector
-        app.insert_resource(RunMetadata::new(i as u32, seed));
+        app.insert_resource(report_slot.clone()); // the world's clone of the slot
+        app.insert_resource(RunSeed::new(seed));
 
         // Fresh runner per run: `Runner::new` re-validates and allocates fresh
         // per-run state (awaiting its pipelines, pending latches). Pre-flight already
@@ -162,7 +161,6 @@ fn main() {
                                            // each run gets a `.run{i}` suffix so the N single-run reports don't
                                            // clobber each other (and `--out` stays free for the aggregate below).
         app.insert_resource(ReportOutputPath::new(per_run_report_path(&args.out, i, n)));
-        app.add_plugins(MetricsPlugin);
 
         // `run()` returns the AppExit that `finalize` wrote (it carries the verdict
         // as its exit code). We can't read RunVerdict from the world here because
@@ -170,22 +168,20 @@ fn main() {
         let exit = app.run();
         all_passed &= exit.is_success();
 
-        // The world is drained now, but the bin's clone still points at the metrics
-        // the summarizer stored before flush. `take` empties the slot; `None` means
-        // the summarizer never ran (e.g. the run aborted before reaching flush).
-        if let Some(m) = collector.take() {
-            runs.push(m);
+        // The world is drained now, but the bin's clone still points at the report
+        // finalize stored. `None` means the run never finalized; the aggregate
+        // counts it, with its seed, as a run that passed nothing.
+        let report = report_slot.take();
+        if report.is_none() {
+            eprintln!("run {i} produced no report");
         }
+        runs.push(BatchRun { seed, report });
     }
 
     // Only a batch produces an aggregate; a single run's artifact is its own
-    // report, already written by `finalize`. Build the reducer set lazily so a
-    // single run does no aggregation work.
+    // report, already written by `finalize`.
     if n > 1 {
-        let stat_table = standard_statistics();
-        let stat_ids = ["mean", "std", "max", "min"].map(StatId::new);
-
-        let aggregate_report = AggregateReport::from_runs(&runs, &stat_table, &stat_ids);
+        let aggregate_report = AggregateReport::from_runs(&runs);
 
         // A failed write is an I/O problem, not a test failure: log it and carry
         // on, exactly as the single-run report path does. It must not flip the

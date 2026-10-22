@@ -7,6 +7,7 @@ use super::{
     buffer::{GapRule, Lined, LinedUp, Lining, RoleBuffer, Row, Unlined},
     component::Component,
     derive::derive,
+    menu::{metrics_of, offers_its_menu},
     params,
 };
 use crate::evaluation::{
@@ -165,7 +166,7 @@ impl<K: TwoInputs> EvaluatorKind for TwoInputsKind<K> {
     }
 
     fn menu(&self) -> Option<Vec<Metric>> {
-        K::menu().map(|components| components.iter().map(Component::metric).collect())
+        K::menu().map(|components| metrics_of(&components))
     }
 
     fn check_params(&self, params: &toml::Table) -> Result<(), String> {
@@ -192,33 +193,9 @@ impl<K: TwoInputs> EvaluatorKind for TwoInputsKind<K> {
             }
         };
         let evaluation = TwoInputsEvaluation::new(kind, base_cap, other_rule);
-        // A fixed menu is the kind's components written a second time, one
-        // read before binding and one after, so the types can't make them
-        // one list; load checks a run file's names against the first and
-        // setup against the second.
-        if let Some(menu) = self.menu() {
-            let offered = evaluation.metrics();
-            if offered != menu {
-                return Err(vec![format!(
-                    "{} offers {} once bound, but its menu is {}: a kind with a fixed menu \
-                     offers exactly its menu",
-                    K::NAME,
-                    listed(&offered),
-                    listed(&menu)
-                )]);
-            }
-        }
+        offers_its_menu(K::NAME, self.menu(), &evaluation.metrics())?;
         Ok(Box::new(evaluation))
     }
-}
-
-/// `metrics` as a run file names them, each with its unit.
-fn listed(metrics: &[Metric]) -> String {
-    let each: Vec<String> = metrics
-        .iter()
-        .map(|metric| format!("{} ({})", metric.name, metric.si_unit))
-        .collect();
-    format!("[{}]", each.join(", "))
 }
 
 /// _Per-step._ One entry's evaluation by the two-input kind `K`: the
@@ -306,7 +283,7 @@ impl<K: TwoInputs> TwoInputsEvaluation<K> {
 
 impl<K: TwoInputs> Evaluator for TwoInputsEvaluation<K> {
     fn metrics(&self) -> Vec<Metric> {
-        self.components.iter().map(Component::metric).collect()
+        metrics_of(&self.components)
     }
 
     fn receive(&mut self, role: usize, at: MonotonicTime, payload: &dyn Any) {

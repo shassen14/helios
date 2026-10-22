@@ -29,7 +29,6 @@
 pub mod assertion;
 pub mod collector;
 pub mod evaluation;
-pub mod metrics;
 pub mod monte_carlo;
 pub mod report;
 pub mod run;
@@ -45,8 +44,7 @@ pub use assertion::extract::{standard_extractors, ExtractorTable};
 pub use assertion::{Assertion, AssertionResult, AssertionTarget, AssertionValue};
 pub use collector::ObservationCollector;
 pub use evaluation::{standard_evaluators, EvaluatorRegistry};
-pub use metrics::{MetricId, RunMetrics};
-pub use report::aggregate::AggregateReport;
+pub use report::aggregate::{AggregateReport, BatchRun};
 pub use report::{Report, ReportStatus};
 pub use run::{Run, RunLoadError};
 pub use runner::{HostFacts, Runner, TickAction};

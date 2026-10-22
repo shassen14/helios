@@ -270,7 +270,7 @@ fn termination_line(report: &Report) -> String {
 
 /// An entry's name, with the instance it judged where it judged one:
 /// `edges[instance=base_link]`.
-fn entry_name(name: &str, instance: Option<&str>) -> String {
+pub(super) fn entry_name(name: &str, instance: Option<&str>) -> String {
     match instance {
         Some(instance) => format!("{name}[instance={instance}]"),
         None => name.to_string(),
@@ -328,7 +328,7 @@ fn condition_phrase(condition: &Condition, unit: Option<ReportedUnit>) -> String
 /// `text` followed by the unit it is read in. A dimensionless number, an
 /// undeclared unit and a bool or string print bare: the series bracket
 /// says when a unit is undeclared.
-fn with_unit(text: String, unit: Option<ReportedUnit>) -> String {
+pub(super) fn with_unit(text: String, unit: Option<ReportedUnit>) -> String {
     match unit {
         Some(ReportedUnit::Declared(si_unit)) if si_unit != SiUnit::Dimensionless => {
             format!("{text} {si_unit}")
@@ -347,7 +347,7 @@ fn reduced_of(reduce: Option<&Reducer>) -> String {
 
 /// A reducer as the run file names it, with its parameter: `mean`,
 /// `time_above(1.5)`.
-fn reducer_phrase(reducer: &Reducer) -> String {
+pub(super) fn reducer_phrase(reducer: &Reducer) -> String {
     match reducer {
         Reducer::TimeAbove(threshold) => format!("{}({threshold})", reducer.name()),
         other => other.name().to_string(),

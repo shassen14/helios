@@ -14,10 +14,7 @@ use std::fs;
 use std::path::Path;
 
 /// Serialize `aggregate_report` to pretty TOML and write it to `path`,
-/// overwriting any existing file. Correctness of the serialize step depends on
-/// the report's field order keeping scalars (`run_count`, `seeds`, `stat_ids`)
-/// ahead of the `metrics` table, and `present` ahead of `stats` within each row —
-/// TOML rejects a scalar emitted after a sub-table.
+/// overwriting any existing file.
 pub fn write(aggregate_report: &AggregateReport, path: &Path) -> Result<(), ReportWriteError> {
     let text = toml::to_string_pretty(aggregate_report)?;
 
@@ -30,30 +27,34 @@ pub fn write(aggregate_report: &AggregateReport, path: &Path) -> Result<(), Repo
 mod tests {
     use super::*;
 
-    use crate::statistics::{standard_statistics, StatId};
-    use crate::{MetricId, RunMetrics};
+    use crate::assertion::AssertionValue;
+    use crate::report::aggregate::tests::{assertion, batch, measure};
+    use crate::report::{FailureReason, Verdict};
 
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn run_with(run_index: u32, seed: u64, recorded: &[(&str, f64)]) -> RunMetrics {
-        let mut run = RunMetrics::new(run_index, Some(seed));
-        for (id, value) in recorded {
-            run.insert(MetricId::new(*id), *value);
-        }
-        run
-    }
-
-    // A representative batch: two runs, one metric every run recorded and one
-    // recorded by only the first run, reduced over `mean / min / max`. Exercises
-    // the scalars, the `metrics` table, and a row's `stats` sub-table.
+    // Two runs: a measure both gave a number and an assertion one passed.
+    // Exercises the scalars, both arrays of tables and a row's `statistics`
+    // table.
     fn sample_report() -> AggregateReport {
-        let runs = vec![
-            run_with(0, 10, &[("cte.mean", 5.0), ("rise_time", 1.0)]),
-            run_with(1, 20, &[("cte.mean", 5.0)]),
-        ];
-        let table = standard_statistics();
-        let stat_ids = ["mean", "min", "max"].map(StatId::new);
-        AggregateReport::from_runs(&runs, &table, &stat_ids)
+        let failed = Verdict::Failed {
+            actual: Some(AssertionValue::Float(9.0)),
+            reason: FailureReason::ConditionFailed,
+            failed_at_secs: None,
+        };
+        let passed = Verdict::Passed {
+            actual: AssertionValue::Float(1.0),
+        };
+        batch(&[
+            (
+                vec![measure("final_x", Some(1.0), 10, true)],
+                vec![assertion("nis_final", passed)],
+            ),
+            (
+                vec![measure("final_x", Some(3.0), 10, true)],
+                vec![assertion("nis_final", failed)],
+            ),
+        ])
     }
 
     // Write `report` to a unique temp file, returning the path. The process id
@@ -79,25 +80,27 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         let _ = std::fs::remove_file(&path);
 
-        // Re-parse as a generic TOML document and spot-check the scalars, the
-        // dotted metric key, a value inside its `stats` sub-table, and the
-        // present count for the partially-recorded metric.
         let value: toml::Value = toml::from_str(&text).unwrap();
         assert_eq!(value["run_count"].as_integer(), Some(2));
-        assert_eq!(value["seeds"].as_array().unwrap().len(), 2);
+        assert_eq!(value["seeds"].as_array().map(Vec::len), Some(2));
+        assert_eq!(value["statistics"][0].as_str(), Some("mean"));
 
-        let cte = &value["metrics"]["cte.mean"];
-        assert_eq!(cte["present"].as_integer(), Some(2));
-        assert_eq!(cte["stats"]["mean"].as_float(), Some(5.0));
+        let measure = &value["measures"][0];
+        assert_eq!(measure["name"].as_str(), Some("final_x"));
+        assert_eq!(measure["unit"].as_str(), Some("m"));
+        assert_eq!(measure["runs"].as_integer(), Some(2));
+        assert_eq!(measure["samples"].as_integer(), Some(20));
+        assert_eq!(measure["statistics"]["mean"].as_float(), Some(2.0));
+        assert!(measure["statistics"]["std"].as_float().is_some());
+        // Zero counts are left out, never written as 0.
+        assert!(measure.get("not_covered").is_none());
+        assert!(measure.get("no_report").is_none());
+        assert!(value.get("no_report").is_none());
 
-        // `rise_time` was recorded by only the first run.
-        assert_eq!(
-            value["metrics"]["rise_time"]["present"].as_integer(),
-            Some(1)
-        );
-
-        // A statistic that wasn't requested is absent, not nulled.
-        assert!(cte["stats"].get("std").is_none());
+        let assertion = &value["assertions"][0];
+        assert_eq!(assertion["passed"].as_integer(), Some(1));
+        assert_eq!(assertion["failed"].as_integer(), Some(1));
+        assert_eq!(assertion["pass_rate"].as_float(), Some(0.5));
     }
 
     #[test]
