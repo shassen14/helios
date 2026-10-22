@@ -168,10 +168,15 @@ role = "truth"
 instance = "agent.ProvingCar.base_link"
 writer = "body unit truth_rig"
 provenance = "exact"
+gaps = 0
 
 [evaluations.inputs.target]
 path = "agent.ProvingCar.channel.truth.twist"
 instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
 
 [[evaluations.inputs]]
 role = "reference"
@@ -181,6 +186,11 @@ writer = "node reference_arbiter"
 [evaluations.inputs.cap]
 multiple = 3.0
 seconds = 0.0075
+
+[evaluations.inputs.uncovered]
+before_first = 79
+in_gap = 0
+after_last = 0
 
 [[evaluations.metrics]]
 path = "eval.inline.twist.surge"

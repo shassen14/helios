@@ -224,20 +224,33 @@ mod tests {
     }
 
     #[test]
-    fn a_gap_given_to_a_role_with_no_cap_is_refused_naming_each_role() {
-        // Lag holds its wanted speed however old, and the base spans no gap.
-        let gaps = format!(
-            "{}\n[evaluate.gap.wanted]\nseconds = 0.5\n[evaluate.gap.actual]\nmultiple = 2.0",
-            lag("slow", CAR)
-        );
+    fn a_gap_given_to_a_role_with_no_cap_is_refused_naming_the_role() {
+        // Lag holds its wanted speed however old; the base's gap is used,
+        // to find where the speeds dropped out.
+        let gaps = format!("{}\n[evaluate.gap.wanted]\nseconds = 0.5", lag("slow", CAR));
         let unusable = refused(&[&gaps], &[]);
 
         assert_eq!(
             unusable.evaluations[0].problems,
-            vec![
-                EvaluationProblem::UnusedGap("actual"),
-                EvaluationProblem::UnusedGap("wanted"),
-            ]
+            vec![EvaluationProblem::UnusedGap("wanted")]
+        );
+    }
+
+    #[test]
+    fn a_base_with_no_cap_to_find_its_gaps_by_is_refused_naming_the_remedies() {
+        // The speed declares no rate, and the run gives no gap.
+        let speed = format!("\"{}\"", speed_target(CAR));
+        let front = format!("{{ path = {WHEELS}, instance = \"front\" }}");
+        let unusable = refused(&[&lag_with("slow", &speed, &front)], &[]);
+
+        assert_eq!(
+            unusable.evaluations[0].problems,
+            vec![EvaluationProblem::Refused(
+                "the actual is the base, whose gaps are found against a cap, and the run gives \
+                 none: give [evaluation] gap_multiple, or [evaluate.gap.actual] multiple or \
+                 seconds"
+                    .to_owned()
+            )]
         );
     }
 

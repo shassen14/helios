@@ -4,7 +4,8 @@
 
 use crate::evaluation::{
     config::Gap,
-    kind::{BoundInput, Cap, InputRejection},
+    derived::{Coverage, Refused, Uncovered},
+    kind::{BoundInput, Cap, CapUse, InputRejection},
 };
 
 use helios_core::prelude::MonotonicTime;
@@ -30,37 +31,52 @@ impl<K> RoleBuffer<K> {
     }
 
     /// Its value at the base stamp `at` as `rule` says, from its values up
-    /// to `until`, or `None` where it has none: before its first value,
-    /// past its cap, or, interpolated, after its last or between two it
-    /// can't blend. Never extrapolated.
+    /// to `until`, or why it has none there: where `at` fell among its
+    /// values, or, interpolated, the kind refusing to blend the two around
+    /// it. Never extrapolated.
     pub(super) fn at(
         &self,
         at: MonotonicTime,
         until: MonotonicTime,
         rule: &GapRule<K>,
-    ) -> Option<Lined<'_, K>> {
+    ) -> Result<Lined<'_, K>, Unlined> {
         let values = self.up_to(until);
         match rule {
             GapRule::Hold(cap) => {
                 let after = values.partition_point(|(stamp, _)| stamp.0 <= at.0);
-                let (held_at, held) = values.get(after.checked_sub(1)?)?;
+                let Some((held_at, held)) = after.checked_sub(1).and_then(|last| values.get(last))
+                else {
+                    return Err(Unlined::Uncovered(Uncovered::BeforeFirst));
+                };
                 if cap.is_some_and(|cap| !cap.spans(at.0 - held_at.0)) {
-                    return None;
+                    let later = if after < values.len() {
+                        Uncovered::InGap
+                    } else {
+                        Uncovered::AfterLast
+                    };
+                    return Err(Unlined::Uncovered(later));
                 }
-                Some(Lined::Kept(held))
+                Ok(Lined::Kept(held))
             }
             GapRule::Interpolate(blend, cap) => {
                 let after = values.partition_point(|(stamp, _)| stamp.0 < at.0);
-                let (after_at, after_value) = values.get(after)?;
-                if after_at.0 == at.0 {
-                    return Some(Lined::Kept(after_value));
+                let before = after.checked_sub(1).and_then(|last| values.get(last));
+                match (before, values.get(after)) {
+                    (_, Some((after_at, after_value))) if after_at.0 == at.0 => {
+                        Ok(Lined::Kept(after_value))
+                    }
+                    (None, _) => Err(Unlined::Uncovered(Uncovered::BeforeFirst)),
+                    (Some(_), None) => Err(Unlined::Uncovered(Uncovered::AfterLast)),
+                    (Some((before_at, before_value)), Some((after_at, after_value))) => {
+                        if !cap.spans(after_at.0 - before_at.0) {
+                            return Err(Unlined::Uncovered(Uncovered::InGap));
+                        }
+                        let fraction = (at.0 - before_at.0) / (after_at.0 - before_at.0);
+                        blend(before_value, after_value, fraction)
+                            .map(Lined::Blended)
+                            .map_err(Unlined::Refused)
+                    }
                 }
-                let (before_at, before_value) = values.get(after.checked_sub(1)?)?;
-                if !cap.spans(after_at.0 - before_at.0) {
-                    return None;
-                }
-                let fraction = (at.0 - before_at.0) / (after_at.0 - before_at.0);
-                blend(before_value, after_value, fraction).map(Lined::Blended)
             }
         }
     }
@@ -97,9 +113,9 @@ pub enum Lining<K> {
     HoldWithinCap,
     /// Blended from the two values around the stamp by the function given,
     /// when they are no further apart than the role's cap: the value
-    /// `fraction` of the way from the first to the second, `None` when the
-    /// two can't be blended.
-    InterpolateWithinCap(fn(&K, &K, f64) -> Option<K>),
+    /// `fraction` of the way from the first to the second, or why the two
+    /// can't be blended, which refuses the base value.
+    InterpolateWithinCap(Blend<K>),
 }
 
 impl<K> Lining<K> {
@@ -113,9 +129,9 @@ impl<K> Lining<K> {
     ) -> Result<GapRule<K>, String> {
         Ok(match self {
             Lining::HoldIndefinitely => GapRule::Hold(None),
-            Lining::HoldWithinCap => GapRule::Hold(Some(Cap::of(role, input, gap)?)),
+            Lining::HoldWithinCap => GapRule::Hold(Some(Cap::of(role, input, gap, CapUse::Spans)?)),
             Lining::InterpolateWithinCap(blend) => {
-                GapRule::Interpolate(blend, Cap::of(role, input, gap)?)
+                GapRule::Interpolate(blend, Cap::of(role, input, gap, CapUse::Spans)?)
             }
         })
     }
@@ -127,8 +143,12 @@ pub(super) enum GapRule<K> {
     /// Held, up to the cap when there is one.
     Hold(Option<Cap>),
     /// Interpolated across gaps up to the cap.
-    Interpolate(fn(&K, &K, f64) -> Option<K>, Cap),
+    Interpolate(Blend<K>, Cap),
 }
+
+/// A kept value `fraction` of the way from one to another, or why the two
+/// can't be blended.
+pub type Blend<K> = fn(&K, &K, f64) -> Result<K, InputRejection>;
 
 impl<K> GapRule<K> {
     pub(super) fn cap(&self) -> Option<Cap> {
@@ -155,6 +175,14 @@ impl<K> Lined<'_, K> {
     }
 }
 
+/// _Per-step._ Why a role has no value at a base stamp.
+pub(super) enum Unlined {
+    /// None it can give there.
+    Uncovered(Uncovered),
+    /// The two values around it, which the kind refused to blend.
+    Refused(InputRejection),
+}
+
 /// _Per-step._ Every base value within a run, and each covered one's
 /// values, lined up in role order.
 pub struct LinedUp<L> {
@@ -162,8 +190,23 @@ pub struct LinedUp<L> {
     pub base_samples: usize,
     /// Base values some role had no value for.
     pub uncovered: usize,
-    /// Each covered base value's stamp and its row, in stamp order.
-    pub rows: Vec<(MonotonicTime, L)>,
+    /// How each role covered the base, in role order.
+    pub coverage: Vec<Coverage>,
+    /// Base values between two values of a role the kind refused to blend.
+    pub unblended: Refused,
+    /// Each covered base value's row, in stamp order.
+    pub rows: Vec<Row<L>>,
+}
+
+/// _Per-step._ One covered base value's stamp and its values in role
+/// order, and whether it follows a gap: in the base, wider than its cap, or
+/// a base value since the row before that gave no row, because another role
+/// was in a gap there or couldn't be blended.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Row<L> {
+    pub at: MonotonicTime,
+    pub follows_gap: bool,
+    pub values: L,
 }
 
 #[cfg(test)]
@@ -176,9 +219,11 @@ mod tests {
         MonotonicTime(t)
     }
 
-    fn blend(before: &f64, after: &f64, fraction: f64) -> Option<f64> {
-        Some(before + (after - before) * fraction)
+    fn blend(before: &f64, after: &f64, fraction: f64) -> Result<f64, InputRejection> {
+        Ok(before + (after - before) * fraction)
     }
+
+    const UNBLENDABLE: InputRejection = InputRejection("two values it can't blend");
 
     /// A buffer of `values` kept as they are, in the order given.
     fn buffer(values: &[(f64, f64)]) -> RoleBuffer<f64> {
@@ -191,8 +236,17 @@ mod tests {
         buffer
     }
 
-    fn lined(lined: Option<Lined<'_, f64>>) -> Option<f64> {
-        lined.map(|lined| *lined.value())
+    fn lined(lined: Result<Lined<'_, f64>, Unlined>) -> Option<f64> {
+        lined.ok().map(|lined| *lined.value())
+    }
+
+    /// Where `at` fell, when the role had no value there; `None` when it
+    /// had one or refused to blend.
+    fn uncovered(lined: Result<Lined<'_, f64>, Unlined>) -> Option<Uncovered> {
+        match lined {
+            Err(Unlined::Uncovered(uncovered)) => Some(uncovered),
+            _ => None,
+        }
     }
 
     fn width(value: f64) -> GapWidth {
@@ -242,7 +296,7 @@ mod tests {
     #[test]
     fn an_interpolated_value_is_blended_between_its_neighbors_and_never_extrapolated() {
         let buffer = buffer(&[(1.0, 10.0), (3.0, 30.0)]);
-        let unblendable = GapRule::Interpolate(|_, _, _| None, cap(10.0));
+        let unblendable = GapRule::Interpolate(|_, _, _| Err(UNBLENDABLE), cap(10.0));
 
         let at_stamps: Vec<_> = [0.5, 1.0, 2.5, 3.0, 4.0]
             .map(|t| lined(buffer.at(at(t), at(10.0), &GapRule::Interpolate(blend, cap(10.0)))))
@@ -252,7 +306,10 @@ mod tests {
             at_stamps,
             vec![None, Some(10.0), Some(25.0), Some(30.0), None]
         );
-        assert_eq!(lined(buffer.at(at(2.0), at(10.0), &unblendable)), None);
+        assert!(matches!(
+            buffer.at(at(2.0), at(10.0), &unblendable),
+            Err(Unlined::Refused(UNBLENDABLE))
+        ));
         assert_eq!(
             lined(buffer.at(at(3.0), at(10.0), &unblendable)),
             Some(30.0)
@@ -312,5 +369,64 @@ mod tests {
                 "blended at tick {tick}"
             );
         }
+    }
+
+    #[test]
+    fn a_role_held_however_old_has_no_value_only_before_its_first() {
+        let buffer = buffer(&[(1.0, 10.0), (3.0, 30.0)]);
+        let held = GapRule::Hold(None);
+
+        let at_stamps: Vec<_> = [0.5, 2.0, 9.0]
+            .map(|t| uncovered(buffer.at(at(t), at(10.0), &held)))
+            .into();
+
+        assert_eq!(at_stamps, vec![Some(Uncovered::BeforeFirst), None, None]);
+    }
+
+    #[test]
+    fn an_expired_held_value_is_in_a_gap_when_a_later_one_comes_and_after_the_last_when_none_does()
+    {
+        let buffer = buffer(&[(1.0, 10.0), (3.0, 30.0)]);
+        let capped = GapRule::Hold(Some(cap(0.5)));
+
+        let at_stamps: Vec<_> = [0.5, 2.0, 4.0]
+            .map(|t| uncovered(buffer.at(at(t), at(10.0), &capped)))
+            .into();
+        // Up to 2.5, the value at 3.0 hasn't come: the gap is the end.
+        let before_it_came = uncovered(buffer.at(at(2.0), at(2.5), &capped));
+
+        assert_eq!(
+            at_stamps,
+            vec![
+                Some(Uncovered::BeforeFirst),
+                Some(Uncovered::InGap),
+                Some(Uncovered::AfterLast)
+            ]
+        );
+        assert_eq!(before_it_came, Some(Uncovered::AfterLast));
+    }
+
+    #[test]
+    fn an_interpolated_role_is_before_its_first_in_a_gap_wider_than_its_cap_or_after_its_last() {
+        let buffer = buffer(&[(1.0, 10.0), (2.0, 20.0), (4.0, 40.0)]);
+        let capped = GapRule::Interpolate(blend, cap(1.0));
+        let empty = RoleBuffer::<f64>::default();
+
+        let at_stamps: Vec<_> = [0.5, 3.0, 5.0]
+            .map(|t| uncovered(buffer.at(at(t), at(10.0), &capped)))
+            .into();
+
+        assert_eq!(
+            at_stamps,
+            vec![
+                Some(Uncovered::BeforeFirst),
+                Some(Uncovered::InGap),
+                Some(Uncovered::AfterLast)
+            ]
+        );
+        assert_eq!(
+            uncovered(empty.at(at(1.0), at(10.0), &capped)),
+            Some(Uncovered::BeforeFirst)
+        );
     }
 }

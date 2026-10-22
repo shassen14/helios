@@ -84,6 +84,7 @@ pub(super) fn report_evaluation(
                 provenance,
                 cap: input.cap,
                 refused: refused.get(role).map_or(0, |refused| refused.count),
+                coverage: derived.coverage.get(role).copied(),
             }
         })
         .collect();
@@ -138,6 +139,7 @@ pub(super) fn unread() -> SeriesSummary {
 mod tests {
     use crate::{
         assertion::AssertionValue,
+        evaluation::derived::{Coverage, UncoveredCounts},
         report::{AssertionStatus, FailureReason, ReportStatus, ReportedUnit, Verdict},
         runner::{
             finalize::fixtures::{
@@ -277,6 +279,16 @@ mod tests {
             panic!("one evaluation: {report:?}");
         };
         assert_eq!((slow.samples, slow.uncovered), (3, 1));
+        assert_eq!(
+            slow.inputs[1].coverage,
+            Some(Coverage::Lined {
+                uncovered: UncoveredCounts {
+                    before_first: 1,
+                    in_gap: 0,
+                    after_last: 0,
+                },
+            })
+        );
         assert_eq!(slow.metrics[0].path, "eval.inline.slow.shortfall");
         assert_eq!(slow.metrics[0].samples, Some(2));
         assert_eq!(slow.inputs[1].instance.as_deref(), Some("front"));

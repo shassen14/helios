@@ -1,7 +1,11 @@
 //! _Post-step._ [`EvaluationReportEntry`]: what one evaluation derived over
 //! a run, and from what.
 
-use crate::{assertion::AssertionTarget, evaluation::kind::Cap, report::ReportedUnit};
+use crate::{
+    assertion::AssertionTarget,
+    evaluation::{derived::Coverage, kind::Cap},
+    report::ReportedUnit,
+};
 
 use helios_runtime::port::{Provenance, Writer};
 
@@ -18,24 +22,29 @@ pub struct EvaluationReportEntry {
     /// Base values stamped within the run, one sample of every metric each
     /// unless uncovered.
     pub samples: usize,
-    /// Base values some input had no value for: before the first command
-    /// or goal held, or outside the values an interpolated input has.
-    /// Reported, never failed.
-    pub uncovered: usize,
     /// Base values the evaluation couldn't compute, such as poses in roots
-    /// nothing relates. Any one fails the run, under `[recording]`.
+    /// nothing relates, or between two truth poses it can't blend. Any one
+    /// fails the run, under `[recording]`.
     #[serde(skip_serializing_if = "is_zero")]
     pub refused: u64,
+    /// Base values some input had no value for, each input's by where they
+    /// fell under [`InputReport`]. Reported, never failed.
+    pub uncovered: usize,
     /// The entry's `[evaluate.params]`, as the run file gave them: what
     /// shaped the numbers, such as a frame policy.
     #[serde(skip_serializing_if = "toml::Table::is_empty")]
     pub params: toml::Table,
+    /// In role order, the base first.
     pub inputs: Vec<InputReport>,
     pub metrics: Vec<MetricReport>,
 }
 
 /// _Post-step._ One role's input: the selector the run file gave, the
-/// instance it named, who wrote it, and the widest gap it spanned. A body's
+/// instance it named, who wrote it, its cap and how it covered the base:
+/// another role's cap is the widest gap it spanned, and the base values it
+/// had none for are counted by where they fell (before its first value, in
+/// a gap wider than its cap, after its last); the base's cap is the gap its
+/// own values were found to drop out at, and its gaps are counted. A body's
 /// channel says how its values were produced, so a grade against an exact
 /// oracle reads apart from one against a modeled sensor.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -47,13 +56,16 @@ pub struct InputReport {
     pub writer: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<&'static str>,
-    /// `None` for the base and a role held however old.
+    /// `None` for a role held however old.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cap: Option<Cap>,
     /// Values the evaluation refused. Any one fails the run, under
     /// `[recording]`.
     #[serde(skip_serializing_if = "is_zero")]
     pub refused: u64,
+    /// `None` when the evaluation derived nothing for its roles.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<Coverage>,
 }
 
 impl InputReport {

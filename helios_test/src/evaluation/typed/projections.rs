@@ -30,19 +30,30 @@ pub fn rooted_pose(edge: &StampedTransform) -> Result<RootedPose, InputRejection
 }
 
 /// The pose `fraction` of the way from `before` to `after`, both in one
-/// root. `None` for a frame re-parented or re-tagged between the two, which
-/// has no pose between them.
+/// root, or refused for a frame re-parented or re-tagged between the two,
+/// which has no pose between them.
 pub fn blend_rooted_poses(
     before: &RootedPose,
     after: &RootedPose,
     fraction: f64,
-) -> Option<RootedPose> {
+) -> Result<RootedPose, InputRejection> {
     if before.root != after.root {
-        return None;
+        return Err(InputRejection(
+            "two poses of a frame in different roots, which have no pose between them",
+        ));
     }
-    Some(RootedPose {
+    let pose = before
+        .pose
+        .interpolate(&after.pose, fraction)
+        .map_err(|_| {
+            InputRejection(
+                "two poses of a frame on different axis conventions, which have no pose \
+                 between them",
+            )
+        })?;
+    Ok(RootedPose {
         root: before.root.clone(),
-        pose: before.pose.interpolate(&after.pose, fraction).ok()?,
+        pose,
     })
 }
 
@@ -78,8 +89,8 @@ pub fn number(value: &f64) -> Result<f64, InputRejection> {
 }
 
 /// The number `fraction` of the way from `before` to `after`.
-pub fn blend_numbers(before: &f64, after: &f64, fraction: f64) -> Option<f64> {
-    Some(before + (after - before) * fraction)
+pub fn blend_numbers(before: &f64, after: &f64, fraction: f64) -> Result<f64, InputRejection> {
+    Ok(before + (after - before) * fraction)
 }
 
 #[cfg(test)]
@@ -111,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pose_is_blended_in_its_root_and_never_across_two() {
+    fn a_pose_is_blended_in_its_root_and_refused_across_two_roots_or_conventions() {
         let datum = FrameId::global("datum");
         let before = kept(&edge::<Enu>(datum.clone(), 0.0));
         let after = kept(&edge::<Enu>(datum.clone(), 4.0));
@@ -121,8 +132,11 @@ mod tests {
         let between = blend_rooted_poses(&before, &after, 0.25).expect("one root");
 
         assert!((between.pose.isometry().translation.vector.x - 1.0).abs() < 1e-12);
-        assert!(blend_rooted_poses(&before, &reparented, 0.5).is_none());
-        assert!(blend_rooted_poses(&before, &retagged, 0.5).is_none());
+        let reparented = blend_rooted_poses(&before, &reparented, 0.5).err();
+        let retagged = blend_rooted_poses(&before, &retagged, 0.5).err();
+
+        assert!(reparented.is_some_and(|why| why.0.contains("different roots")));
+        assert!(retagged.is_some_and(|why| why.0.contains("different axis conventions")));
     }
 
     #[test]

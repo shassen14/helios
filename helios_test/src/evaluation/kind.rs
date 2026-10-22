@@ -49,11 +49,11 @@ pub trait EvaluatorKind: Send + Sync {
 
     /// The evaluation of one entry, which the collector feeds, from its
     /// `params` (ones [`check_params`](Self::check_params) accepted), the
-    /// series each role was bound to and the widest gap each role spans if
-    /// capped (both in [`roles`](Self::roles) order), or every reason those
+    /// series each role was bound to and the gap each role's cap is made
+    /// from (both in [`roles`](Self::roles) order), or every reason those
     /// series can't be compared: inputs whose frames the kind can't relate,
-    /// and a capped role given no cap, are refused here, before the first
-    /// tick.
+    /// and a role that needs a cap given none, are refused here, before the
+    /// first tick.
     fn build(
         &self,
         params: &toml::Table,
@@ -78,8 +78,9 @@ pub trait Evaluator: Send + Sync {
     /// another frame.
     fn receive(&mut self, role: usize, at: MonotonicTime, payload: &dyn Any);
 
-    /// Each role's cap, in role order: `None` for the base and a role held
-    /// however old.
+    /// Each role's cap, in role order: the base's finds its gaps, another
+    /// role's is the widest gap it spans; `None` for a role held however
+    /// old.
     fn caps(&self) -> Vec<Option<Cap>>;
 
     /// Each role's refusals so far, in role order.
@@ -168,8 +169,9 @@ const CAP_ROUNDING: f64 = 1e-6;
 
 /// _Pre-step._ The widest gap a role's values span: a held value older
 /// than it, or two values further apart than it to interpolate between,
-/// leave the base value uncovered. Made only from a [`Gap`], so it is
-/// positive.
+/// leave the base value uncovered. The base's finds where its own values
+/// dropped out, and never leaves one uncovered. Made only from a [`Gap`],
+/// so it is positive.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct Cap {
     /// The multiple of its input's period it came from, unless given in
@@ -180,22 +182,28 @@ pub struct Cap {
 }
 
 impl Cap {
-    /// The cap `gap` gives `role`, reading `input`, or why it gives none:
-    /// no gap given, or a multiple of the period of an input that declares
-    /// no rate.
-    pub fn of(role: &str, input: &BoundInput, gap: Option<Gap>) -> Result<Self, String> {
+    /// The cap `gap` gives `role`, reading `input`, for `used`, or why it
+    /// gives none: no gap given, or a multiple of the period of an input
+    /// that declares no rate.
+    pub fn of(
+        role: &str,
+        input: &BoundInput,
+        gap: Option<Gap>,
+        used: CapUse,
+    ) -> Result<Self, String> {
+        let used = used.phrase();
         match (gap, input.rate_hz) {
             (Some(Gap::Seconds(seconds)), _) => Ok(Self::in_seconds(seconds)),
             (Some(Gap::Multiple(multiple)), Some(rate_hz)) => {
                 Ok(Self::in_periods(multiple, rate_hz))
             }
             (Some(Gap::Multiple(_)), None) => Err(format!(
-                "the {role} spans gaps up to a cap, and its series declares no rate to take a \
+                "the {role} {used}, and its series declares no rate to take a \
                  multiple of: give [evaluate.gap.{role}] seconds, or read a series whose \
                  writer declares a rate"
             )),
             (None, _) => Err(format!(
-                "the {role} spans gaps up to a cap, and the run gives none: give \
+                "the {role} {used}, and the run gives none: give \
                  [evaluation] gap_multiple, or [evaluate.gap.{role}] multiple or seconds"
             )),
         }
@@ -229,6 +237,25 @@ impl Cap {
     /// is, whichever way its stamps rounded.
     pub fn spans(&self, seconds: f64) -> bool {
         seconds <= self.seconds * (1.0 + CAP_ROUNDING)
+    }
+}
+
+/// _Pre-step._ What a role's [`Cap`] is for, which a refusal to make one
+/// names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapUse {
+    /// A role other than the base spans gaps up to it.
+    Spans,
+    /// The base's gaps are found against it.
+    FindsGaps,
+}
+
+impl CapUse {
+    fn phrase(self) -> &'static str {
+        match self {
+            CapUse::Spans => "spans gaps up to a cap",
+            CapUse::FindsGaps => "is the base, whose gaps are found against a cap",
+        }
     }
 }
 

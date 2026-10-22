@@ -10,7 +10,8 @@ use crate::evaluation::{
 use helios_core::prelude::MonotonicTime;
 
 /// What every shape derives from its lined-up `rows`: every covered sample
-/// is fitted over once, then each is computed, refusing what can't be;
+/// is fitted over once, then each is computed, refusing what can't be, as
+/// the base values between two values the kind couldn't blend are;
 /// each wanted component is read off what was computed. `inputs` is each
 /// role's refusals, in role order.
 pub(super) fn derive<R: Copy, F, O>(
@@ -21,17 +22,17 @@ pub(super) fn derive<R: Copy, F, O>(
     inputs: &[Refused],
     wanted: &[usize],
 ) -> Derived {
-    let run: Vec<R> = rows.rows.iter().map(|(_, row)| *row).collect();
+    let run: Vec<R> = rows.rows.iter().map(|row| row.values).collect();
 
-    let mut not_computed = Refused::default();
+    let mut not_computed = rows.unblended;
     let mut values_refused = vec![Refused::default(); components.len()];
     let metrics = match fit(&run) {
         Ok(fit) => {
             let outputs: Vec<(MonotonicTime, O)> = rows
                 .rows
                 .iter()
-                .filter_map(|(at, row)| match compute(*row, &fit) {
-                    Ok(output) => Some((*at, output)),
+                .filter_map(|row| match compute(row.values, &fit) {
+                    Ok(output) => Some((row.at, output)),
                     Err(rejection) => {
                         not_computed.add(rejection);
                         None
@@ -61,6 +62,7 @@ pub(super) fn derive<R: Copy, F, O>(
     Derived::new(
         rows.base_samples,
         rows.uncovered,
+        rows.coverage,
         inputs,
         not_computed,
         metrics,

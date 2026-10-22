@@ -18,6 +18,7 @@ use super::{
 
 use crate::{
     assertion::{AssertionValue, Condition},
+    evaluation::derived::Coverage,
     statistics::within_run::Reducer,
 };
 
@@ -151,15 +152,18 @@ fn render(report: &Report) -> String {
 }
 
 /// "[evaluate] <name>: <kind>[ (<param> = <value>, …)] of <role> (<target>,
-/// <writer>[, <provenance>][, gaps up to <seconds> s[ = <multiple> periods]]),
-/// … — <samples> samples[, <uncovered> where an
-/// input had no value][, <refused> not computed]", then each metric's path
-/// and unit. The parameters show only when the entry gave some.
+/// <writer>[, <provenance>][, gaps up to <seconds> s[ = <multiple> periods]]
+/// [, <n> before its first value][, <n> in its gaps][, <n> after its last
+/// value]), … (the base's cap reads "<n> gaps past <seconds> s")
+/// … — <samples> samples[, <n> uncovered][, <refused> not computed]", then
+/// each metric's path and unit. The parameters and each count but the
+/// base's gaps show only when nonzero.
 fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
     let inputs: Vec<String> = evaluation
         .inputs
         .iter()
-        .map(|input| {
+        .enumerate()
+        .map(|(role, input)| {
             let instance = input
                 .instance
                 .as_ref()
@@ -176,11 +180,30 @@ fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
                         .multiple()
                         .map(|multiple| format!(" = {multiple} periods"))
                         .unwrap_or_default();
-                    format!(", gaps up to {} s{multiple}", cap.seconds())
+                    let reads = match input.coverage {
+                        Some(Coverage::Base { gaps: 1 }) => "1 gap past".to_owned(),
+                        Some(Coverage::Base { gaps: 0 }) => "no gaps past".to_owned(),
+                        Some(Coverage::Base { gaps }) => format!("{gaps} gaps past"),
+                        _ if role == 0 => "its gaps found past".to_owned(),
+                        _ => "gaps up to".to_owned(),
+                    };
+                    format!(", {reads} {} s{multiple}", cap.seconds())
                 })
                 .unwrap_or_default();
+            let mut uncovered = String::new();
+            if let Some(Coverage::Lined { uncovered: counts }) = input.coverage {
+                for (count, place) in [
+                    (counts.before_first, "before its first value"),
+                    (counts.in_gap, "in its gaps"),
+                    (counts.after_last, "after its last value"),
+                ] {
+                    if count > 0 {
+                        uncovered.push_str(&format!(", {count} {place}"));
+                    }
+                }
+            }
             format!(
-                "{} ({}{instance}, {}{provenance}{cap})",
+                "{} ({}{instance}, {}{provenance}{cap}{uncovered})",
                 input.role,
                 input.target.path(),
                 input.writer
@@ -217,10 +240,7 @@ fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
         evaluation.samples,
     );
     if evaluation.uncovered > 0 {
-        line.push_str(&format!(
-            ", {} where an input had no value",
-            evaluation.uncovered
-        ));
+        line.push_str(&format!(", {} uncovered", evaluation.uncovered));
     }
     if evaluation.refused > 0 {
         line.push_str(&format!(", {} not computed", evaluation.refused));
@@ -389,7 +409,11 @@ mod tests {
 
     use crate::{
         assertion::{AssertionTarget, Window},
-        evaluation::{kind::Cap, GapWidth},
+        evaluation::{
+            derived::{Coverage, UncoveredCounts},
+            kind::Cap,
+            GapWidth,
+        },
         report::{AssertionReportEntry, InputReport, MeasureReportEntry, MetricReport},
     };
 
@@ -659,7 +683,7 @@ mod tests {
             name: "twist".to_string(),
             kind: "twist_tracking".to_string(),
             samples: 100,
-            uncovered: 1,
+            uncovered: 3,
             refused: 0,
             params: toml::Table::new(),
             inputs: vec![
@@ -670,8 +694,9 @@ mod tests {
                     instance: Some("agent.car.base_link".to_string()),
                     writer: "body unit truth".to_string(),
                     provenance: Some("exact"),
-                    cap: None,
+                    cap: Some(Cap::in_seconds(GapWidth::try_from(0.5).expect("positive"))),
                     refused: 0,
+                    coverage: Some(Coverage::Base { gaps: 2 }),
                 },
                 InputReport {
                     role: "reference".to_string(),
@@ -685,6 +710,13 @@ mod tests {
                         400.0,
                     )),
                     refused: 0,
+                    coverage: Some(Coverage::Lined {
+                        uncovered: UncoveredCounts {
+                            before_first: 1,
+                            in_gap: 0,
+                            after_last: 2,
+                        },
+                    }),
                 },
             ],
             metrics: vec![
@@ -704,9 +736,10 @@ mod tests {
         assert_eq!(
             evaluation_line(&twist),
             "[evaluate] twist: twist_tracking of truth (agent.car.channel.truth.twist\
-             [agent.car.base_link], body unit truth, exact), reference \
-             (agent.car.channel.reference, node reference_arbiter, gaps up to 0.0075 s = 3 \
-             periods) - 100 samples, 1 where an input had no value -> eval.inline.twist.surge in m/s; also offers sway"
+             [agent.car.base_link], body unit truth, exact, 2 gaps past 0.5 s), \
+             reference (agent.car.channel.reference, node reference_arbiter, gaps up to \
+             0.0075 s = 3 periods, 1 before its first value, 2 after its last value) - 100 \
+             samples, 3 uncovered -> eval.inline.twist.surge in m/s; also offers sway"
         );
     }
 

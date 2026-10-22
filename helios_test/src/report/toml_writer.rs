@@ -46,7 +46,11 @@ mod tests {
     use crate::assertion::{
         AssertionTarget, AssertionValue, Bound, Condition, InstanceSelector, RunInstant, Window,
     };
-    use crate::evaluation::{kind::Cap, GapWidth};
+    use crate::evaluation::{
+        derived::{Coverage, UncoveredCounts},
+        kind::Cap,
+        GapWidth,
+    };
     use crate::report::{
         AssertionReportEntry, EvaluationReportEntry, FailureReason, InputReport,
         MeasureReportEntry, MetricReport, ReportedUnit, SeriesSummary, TerminatedBy, Verdict,
@@ -174,8 +178,9 @@ mod tests {
                     instance: Some("agent.car.base_link".to_string()),
                     writer: "body unit truth".to_string(),
                     provenance: Some("exact"),
-                    cap: None,
+                    cap: Some(Cap::in_seconds(GapWidth::try_from(0.5).expect("positive"))),
                     refused: 0,
+                    coverage: Some(Coverage::Base { gaps: 0 }),
                 },
                 InputReport {
                     role: "reference".to_string(),
@@ -189,6 +194,13 @@ mod tests {
                         400.0,
                     )),
                     refused: 2,
+                    coverage: Some(Coverage::Lined {
+                        uncovered: UncoveredCounts {
+                            before_first: 0,
+                            in_gap: 1,
+                            after_last: 0,
+                        },
+                    }),
                 },
             ],
             metrics: vec![
@@ -297,12 +309,20 @@ mod tests {
         assert_eq!(twist["samples"].as_integer(), Some(100));
         assert_eq!(twist["uncovered"].as_integer(), Some(1));
         let inputs = twist["inputs"].as_array().unwrap();
+        // The base counts its own gaps; the other where it left the base
+        // uncovered.
+        assert_eq!(inputs[0]["gaps"].as_integer(), Some(0));
+        assert!(inputs[0].get("uncovered").is_none());
+        assert_eq!(inputs[1]["uncovered"]["before_first"].as_integer(), Some(0));
+        assert_eq!(inputs[1]["uncovered"]["in_gap"].as_integer(), Some(1));
+        assert_eq!(inputs[1]["uncovered"]["after_last"].as_integer(), Some(0));
         assert_eq!(inputs[0]["role"].as_str(), Some("truth"));
         assert_eq!(inputs[0]["instance"].as_str(), Some("agent.car.base_link"));
         assert_eq!(inputs[0]["provenance"].as_str(), Some("exact"));
         assert!(inputs[0].get("refused").is_none());
         assert!(inputs[1].get("provenance").is_none());
-        assert!(inputs[0].get("cap").is_none());
+        assert_eq!(inputs[0]["cap"]["seconds"].as_float(), Some(0.5));
+        assert!(inputs[0]["cap"].get("multiple").is_none());
         assert_eq!(inputs[1]["cap"]["seconds"].as_float(), Some(0.0075));
         assert_eq!(inputs[1]["cap"]["multiple"].as_float(), Some(3.0));
         assert_eq!(inputs[1]["refused"].as_integer(), Some(2));

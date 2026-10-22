@@ -62,7 +62,7 @@ pub struct PlannedInput {
     pub key: RecordedKey,
     /// `None` only when no description names the series' writer.
     pub writer: Option<Writer>,
-    /// `None` for the base and a role held however old.
+    /// `None` for a role held however old.
     pub cap: Option<Cap>,
 }
 

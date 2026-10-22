@@ -256,7 +256,7 @@ mod tests {
     /// Each role's gap, the truth's a cap it takes whatever its rate.
     fn gaps() -> [Option<Gap>; 2] {
         let seconds = GapWidth::try_from(0.1).expect("positive and finite");
-        [None, Some(Gap::Seconds(seconds))]
+        [Some(Gap::Seconds(seconds)); 2]
     }
 
     /// The pose of `instance` in the datum, held in ENU axes.

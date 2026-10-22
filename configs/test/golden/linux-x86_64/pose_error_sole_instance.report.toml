@@ -22,6 +22,11 @@ role = "estimate"
 target = "agent.ProvingCar.channel.tf"
 instance = "agent.ProvingCar.base_link"
 writer = "node estimate_relay"
+gaps = 0
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
 
 [[evaluations.inputs]]
 role = "truth"
@@ -36,6 +41,11 @@ instance = "agent.ProvingCar.base_link"
 [evaluations.inputs.cap]
 multiple = 3.0
 seconds = 0.0075
+
+[evaluations.inputs.uncovered]
+before_first = 0
+in_gap = 0
+after_last = 0
 
 [[evaluations.metrics]]
 path = "eval.inline.est.position"

@@ -146,14 +146,17 @@ pub(super) fn evaluators() -> EvaluatorRegistry {
 }
 
 /// A `lag` evaluation named `name` of `agent`'s speed against its front
-/// wheel's, as an `[[evaluate]]` block.
+/// wheel's, as an `[[evaluate]]` block. [`SPEED`] declares no rate, so the
+/// block gives its base's gap in seconds.
 pub(super) fn lag(name: &str, agent: &str) -> String {
     format!(
         "name = \"{name}\"\n\
          kind = \"{LAG}\"\n\
          [evaluate.inputs]\n\
          actual = \"{}\"\n\
-         wanted = {{ path = \"{}\", instance = \"front\" }}",
+         wanted = {{ path = \"{}\", instance = \"front\" }}\n\
+         [evaluate.gap.actual]\n\
+         seconds = 1.0",
         speed_target(agent),
         channel_path(agent, &wheels())
     )

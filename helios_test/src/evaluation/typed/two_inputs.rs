@@ -4,15 +4,15 @@
 //! other up at the base's stamps.
 
 use super::{
-    buffer::{GapRule, Lined, LinedUp, Lining, RoleBuffer},
+    buffer::{GapRule, Lined, LinedUp, Lining, RoleBuffer, Row, Unlined},
     component::Component,
     derive::derive,
     params,
 };
 use crate::evaluation::{
     config::Gap,
-    derived::{Derived, Refused},
-    kind::{BoundInput, Cap, Evaluator, EvaluatorKind, InputRejection, Metric, Role},
+    derived::{Coverage, Derived, Refused, Uncovered, UncoveredCounts},
+    kind::{BoundInput, Cap, CapUse, Evaluator, EvaluatorKind, InputRejection, Metric, Role},
 };
 
 use helios_core::prelude::MonotonicTime;
@@ -155,15 +155,19 @@ impl<K: TwoInputs> EvaluatorKind for TwoInputsKind<K> {
         gaps: &[Option<Gap>],
     ) -> Result<Box<dyn Evaluator>, Vec<String>> {
         let params = params::read(K::NAME, params, K::check).map_err(|problem| vec![problem])?;
-        let ([base, other], [_, other_gap]) = (inputs, gaps) else {
+        let ([base, other], [base_gap, other_gap]) = (inputs, gaps) else {
             return Err(vec![format!("{} needs both of its inputs bound", K::NAME)]);
         };
         let kind = K::bind(params, base, other)?;
-        let other_rule = kind
-            .other_lining()
-            .with_cap(K::OTHER, other, *other_gap)
-            .map_err(|problem| vec![problem])?;
-        let evaluation = TwoInputsEvaluation::new(kind, other_rule);
+        let base_cap = Cap::of(K::BASE, base, *base_gap, CapUse::FindsGaps);
+        let other_rule = kind.other_lining().with_cap(K::OTHER, other, *other_gap);
+        let (base_cap, other_rule) = match (base_cap, other_rule) {
+            (Ok(base_cap), Ok(other_rule)) => (base_cap, other_rule),
+            (base_cap, other_rule) => {
+                return Err(base_cap.err().into_iter().chain(other_rule.err()).collect())
+            }
+        };
+        let evaluation = TwoInputsEvaluation::new(kind, base_cap, other_rule);
         // A fixed menu is the kind's components written a second time, one
         // read before binding and one after, so the types can't make them
         // one list; load checks a run file's names against the first and
@@ -194,11 +198,12 @@ fn listed(metrics: &[Metric]) -> String {
 }
 
 /// _Per-step._ One entry's evaluation by the two-input kind `K`: the
-/// components it offers, how the other input lines up, and each input's
-/// values and refusals.
+/// components it offers, the cap the base's gaps are found against, how the
+/// other input lines up, and each input's values and refusals.
 struct TwoInputsEvaluation<K: TwoInputs> {
     kind: K,
     components: Vec<Component<K::Output>>,
+    base_cap: Cap,
     other_rule: GapRule<K::OtherValue>,
     base: RoleBuffer<K::BaseValue>,
     other: RoleBuffer<K::OtherValue>,
@@ -207,11 +212,12 @@ struct TwoInputsEvaluation<K: TwoInputs> {
 }
 
 impl<K: TwoInputs> TwoInputsEvaluation<K> {
-    /// An evaluation by `kind`, the other input lined up by `other_rule`,
-    /// nothing kept yet.
-    fn new(kind: K, other_rule: GapRule<K::OtherValue>) -> Self {
+    /// An evaluation by `kind`, the base's gaps found against `base_cap`,
+    /// the other input lined up by `other_rule`, nothing kept yet.
+    fn new(kind: K, base_cap: Cap, other_rule: GapRule<K::OtherValue>) -> Self {
         Self {
             components: kind.components(),
+            base_cap,
             other_rule,
             base: RoleBuffer::default(),
             other: RoleBuffer::default(),
@@ -222,21 +228,55 @@ impl<K: TwoInputs> TwoInputsEvaluation<K> {
 
     /// Each base value stamped at or before `until`, and the other input's
     /// value lined up at its stamp; a base value the other has none for is
-    /// uncovered.
+    /// uncovered, and one between two values it can't blend is refused. A
+    /// row follows a gap when the base value before it is further back than
+    /// the base's cap, or a base value since the row before gave no row
+    /// because the other input was in a gap or couldn't be blended there.
     fn line_up(&self, until: MonotonicTime) -> LinedUp<(&K::BaseValue, Lined<'_, K::OtherValue>)> {
         let base = self.base.up_to(until);
-        let mut lined = LinedUp {
-            base_samples: base.len(),
-            uncovered: 0,
-            rows: Vec::new(),
-        };
+        let mut base_gaps = 0;
+        let mut other_uncovered = UncoveredCounts::default();
+        let mut unblended = Refused::default();
+        let mut rows = Vec::new();
+        let mut previous: Option<MonotonicTime> = None;
+        let mut gap_since_last_row = false;
         for (at, base) in base {
+            if previous.is_some_and(|previous| !self.base_cap.spans(at.0 - previous.0)) {
+                base_gaps += 1;
+                gap_since_last_row = true;
+            }
+            previous = Some(*at);
             match self.other.at(*at, until, &self.other_rule) {
-                Some(other) => lined.rows.push((*at, (base, other))),
-                None => lined.uncovered += 1,
+                Ok(other) => {
+                    rows.push(Row {
+                        at: *at,
+                        follows_gap: gap_since_last_row,
+                        values: (base, other),
+                    });
+                    gap_since_last_row = false;
+                }
+                Err(Unlined::Uncovered(uncovered)) => {
+                    gap_since_last_row |= uncovered == Uncovered::InGap;
+                    other_uncovered.add(uncovered);
+                }
+                Err(Unlined::Refused(rejection)) => {
+                    gap_since_last_row = true;
+                    unblended.add(rejection);
+                }
             }
         }
-        lined
+        LinedUp {
+            base_samples: base.len(),
+            uncovered: other_uncovered.total(),
+            coverage: vec![
+                Coverage::Base { gaps: base_gaps },
+                Coverage::Lined {
+                    uncovered: other_uncovered,
+                },
+            ],
+            unblended,
+            rows,
+        }
     }
 }
 
@@ -262,7 +302,7 @@ impl<K: TwoInputs> Evaluator for TwoInputsEvaluation<K> {
     }
 
     fn caps(&self) -> Vec<Option<Cap>> {
-        vec![None, self.other_rule.cap()]
+        vec![Some(self.base_cap), self.other_rule.cap()]
     }
 
     fn refused(&self) -> &[Refused] {
@@ -274,10 +314,16 @@ impl<K: TwoInputs> Evaluator for TwoInputsEvaluation<K> {
         let rows = LinedUp {
             base_samples: lined.base_samples,
             uncovered: lined.uncovered,
+            coverage: lined.coverage,
+            unblended: lined.unblended,
             rows: lined
                 .rows
                 .iter()
-                .map(|(at, (base, other))| (*at, (*base, other.value())))
+                .map(|row| Row {
+                    at: row.at,
+                    follows_gap: row.follows_gap,
+                    values: (row.values.0, row.values.1.value()),
+                })
                 .collect(),
         };
         derive(
@@ -299,6 +345,7 @@ mod tests {
         assertion::AssertionValue,
         collector::{Rejection, Series},
         evaluation::{
+            derived::UncoveredCounts,
             typed::{
                 projections::{blend_numbers, number},
                 NoParams,
@@ -429,30 +476,46 @@ mod tests {
     const SUM: usize = 1;
     const RECIPROCAL: usize = 2;
 
-    /// The other input held however old.
+    /// The other input held however old, the base's gaps found past 10 s.
     fn held() -> TwoInputsEvaluation<Difference> {
         TwoInputsEvaluation::new(
             Difference {
                 interpolated: false,
                 drifted: false,
             },
+            Cap::in_seconds(width(10.0)),
             GapRule::Hold(None),
         )
     }
 
-    /// The other input interpolated linearly across gaps up to 10 s.
+    /// The other input interpolated linearly across gaps up to 10 s, the
+    /// base's gaps found past 10 s.
     fn interpolated() -> TwoInputsEvaluation<Difference> {
         TwoInputsEvaluation::new(
             Difference {
                 interpolated: true,
                 drifted: false,
             },
+            Cap::in_seconds(width(10.0)),
             GapRule::Interpolate(blend_numbers, Cap::in_seconds(width(10.0))),
         )
     }
 
     fn width(value: f64) -> GapWidth {
         GapWidth::try_from(value).expect("positive and finite")
+    }
+
+    /// The base's gaps found past 1 s.
+    fn base_gap() -> Option<Gap> {
+        Some(Gap::Seconds(width(1.0)))
+    }
+
+    /// Where the base values the other input had none for fell.
+    fn other_uncovered(derived: &Derived) -> UncoveredCounts {
+        match derived.coverage[..] {
+            [_, Coverage::Lined { uncovered }] => uncovered,
+            _ => panic!("the base's then the other's: {:?}", derived.coverage),
+        }
     }
 
     /// `value` as the other input sends it.
@@ -479,6 +542,13 @@ mod tests {
 
     fn series(derived: &Derived, metric: usize) -> &Series {
         derived.metrics[metric].as_ref().expect("derived")
+    }
+
+    fn before_first(count: usize) -> UncoveredCounts {
+        UncoveredCounts {
+            before_first: count,
+            ..UncoveredCounts::default()
+        }
     }
 
     fn input(agent: &str) -> BoundInput {
@@ -509,7 +579,7 @@ mod tests {
             .build(
                 &toml::Table::new(),
                 &[input("car"), input("car")],
-                &[None, None],
+                &[base_gap(), None],
             )
             .unwrap_or_else(|problems| panic!("{problems:?}"));
 
@@ -528,7 +598,11 @@ mod tests {
         };
 
         let problems = kind
-            .build(&toml::Table::new(), &[drifted, input("car")], &[None, None])
+            .build(
+                &toml::Table::new(),
+                &[drifted, input("car")],
+                &[base_gap(), None],
+            )
             .err()
             .expect("one metric fewer than its menu");
 
@@ -562,9 +636,9 @@ mod tests {
         let two_agents = kind.build(
             &toml::Table::new(),
             &[input("car"), input("truck")],
-            &[None, None],
+            &[base_gap(), None],
         );
-        let one_input = kind.build(&toml::Table::new(), &[input("car")], &[None, None]);
+        let one_input = kind.build(&toml::Table::new(), &[input("car")], &[base_gap(), None]);
 
         assert_eq!(two_agents.err(), Some(vec!["two agents".to_owned()]));
         assert_eq!(
@@ -589,7 +663,7 @@ mod tests {
             kind.build(
                 &toml::Table::new(),
                 &[input("car"), interpolated_input(Some(10.0))],
-                &[None, Some(gap)],
+                &[base_gap(), Some(gap)],
             )
             .map(|evaluation| evaluation.caps())
             .unwrap_or_else(|problems| panic!("{problems:?}"))
@@ -602,11 +676,11 @@ mod tests {
 
         assert_eq!(
             seconds_and_multiple(caps(Gap::Multiple(width(3.0)))),
-            vec![None, Some((0.3, Some(3.0)))]
+            vec![Some((1.0, None)), Some((0.3, Some(3.0)))]
         );
         assert_eq!(
             seconds_and_multiple(caps(Gap::Seconds(width(0.5)))),
-            vec![None, Some((0.5, None))]
+            vec![Some((1.0, None)), Some((0.5, None))]
         );
     }
 
@@ -618,11 +692,14 @@ mod tests {
             .build(
                 &toml::Table::new(),
                 &[input("car"), input("car")],
-                &[None, None],
+                &[base_gap(), None],
             )
             .unwrap_or_else(|problems| panic!("{problems:?}"));
 
-        assert_eq!(evaluation.caps(), vec![None, None]);
+        assert_eq!(
+            evaluation.caps(),
+            vec![Some(Cap::in_seconds(width(1.0))), None]
+        );
     }
 
     #[test]
@@ -632,7 +709,7 @@ mod tests {
             kind.build(
                 &toml::Table::new(),
                 &[input("car"), interpolated_input(rate_hz)],
-                &[None, gap],
+                &[base_gap(), gap],
             )
             .err()
             .expect("no cap")
@@ -658,6 +735,172 @@ mod tests {
     }
 
     #[test]
+    fn a_base_with_no_cap_is_refused_beside_the_other_naming_each() {
+        let kind = TwoInputsKind::<Difference>::new();
+
+        let problems = kind
+            .build(
+                &toml::Table::new(),
+                &[input("car"), interpolated_input(None)],
+                &[None, Some(Gap::Multiple(width(3.0)))],
+            )
+            .err()
+            .expect("neither has a cap");
+
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(
+            problems[0].starts_with("the base is the base, whose gaps are found against a cap"),
+            "{problems:?}"
+        );
+        assert!(
+            problems[1].starts_with("the other spans gaps"),
+            "{problems:?}"
+        );
+    }
+
+    /// The other input held while no older than `cap` s, the base's gaps
+    /// found past 1 s.
+    fn held_within(cap: f64) -> TwoInputsEvaluation<Difference> {
+        TwoInputsEvaluation::new(
+            Difference {
+                interpolated: false,
+                drifted: false,
+            },
+            Cap::in_seconds(width(1.0)),
+            GapRule::Hold(Some(Cap::in_seconds(width(cap)))),
+        )
+    }
+
+    #[test]
+    fn an_uncovered_base_value_is_counted_before_the_first_in_a_gap_or_after_the_last() {
+        // The other input at 1 and 3, each held 0.5 s: the base at 0.5 is
+        // before the first, at 2 in a gap, at 4 after the last.
+        let mut evaluation = held_within(0.5);
+        evaluation.receive(1, at(1.0), &other(10.0));
+        evaluation.receive(1, at(3.0), &other(30.0));
+        for t in [0.5, 1.0, 2.0, 3.0, 4.0] {
+            evaluation.receive(0, at(t), &100.0);
+        }
+
+        let derived = derive_all(&evaluation, 10.0);
+
+        assert_eq!(
+            other_uncovered(&derived),
+            UncoveredCounts {
+                before_first: 1,
+                in_gap: 1,
+                after_last: 1,
+            }
+        );
+        assert_eq!((derived.base_samples, derived.uncovered), (5, 3));
+        assert_eq!(series(&derived, DIFFERENCE).samples().len(), 2);
+    }
+
+    #[test]
+    fn a_row_follows_a_gap_in_the_other_input_or_in_the_base_wider_than_its_cap() {
+        // Rows at 1, 1.5 (the base 0.5 s on), 3 (after the other input's
+        // gap at 2.5) and 4.5 (the base 1.5 s on, past its 1 s cap).
+        let mut evaluation = held_within(0.5);
+        for t in [1.0, 3.0, 4.5] {
+            evaluation.receive(1, at(t), &other(t));
+        }
+        for t in [1.0, 1.5, 2.5, 3.0, 4.5] {
+            evaluation.receive(0, at(t), &100.0);
+        }
+
+        let follows: Vec<(f64, bool)> = evaluation
+            .line_up(at(10.0))
+            .rows
+            .iter()
+            .map(|row| (row.at.0, row.follows_gap))
+            .collect();
+
+        assert_eq!(
+            follows,
+            vec![(1.0, false), (1.5, false), (3.0, true), (4.5, true)]
+        );
+        assert_eq!(
+            derive_all(&evaluation, 10.0).coverage[0],
+            Coverage::Base { gaps: 1 }
+        );
+    }
+
+    #[test]
+    fn a_row_follows_base_values_the_kind_couldnt_blend_the_other_at() {
+        // The other input at 1, 2 and 3; the pair from 2 can't be blended,
+        // so the base at 2.5 gives no row and the one at 3 follows it.
+        let mut evaluation = TwoInputsEvaluation::new(
+            Difference {
+                interpolated: true,
+                drifted: false,
+            },
+            Cap::in_seconds(width(10.0)),
+            GapRule::Interpolate(
+                |before, after, fraction| {
+                    if *before == 20.0 {
+                        Err(InputRejection("two values it can't blend"))
+                    } else {
+                        blend_numbers(before, after, fraction)
+                    }
+                },
+                Cap::in_seconds(width(10.0)),
+            ),
+        );
+        for t in [1.0, 2.0, 3.0] {
+            evaluation.receive(1, at(t), &other(10.0 * t));
+        }
+        for t in [1.5, 2.5, 3.0] {
+            evaluation.receive(0, at(t), &100.0);
+        }
+
+        let follows: Vec<(f64, bool)> = evaluation
+            .line_up(at(10.0))
+            .rows
+            .iter()
+            .map(|row| (row.at.0, row.follows_gap))
+            .collect();
+
+        assert_eq!(follows, vec![(1.5, false), (3.0, true)]);
+    }
+
+    #[test]
+    fn a_base_value_between_two_values_the_kind_cant_blend_is_refused_not_uncovered() {
+        const UNBLENDABLE: InputRejection = InputRejection("two values it can't blend");
+        let mut evaluation = TwoInputsEvaluation::new(
+            Difference {
+                interpolated: true,
+                drifted: false,
+            },
+            Cap::in_seconds(width(10.0)),
+            GapRule::Interpolate(|_, _, _| Err(UNBLENDABLE), Cap::in_seconds(width(10.0))),
+        );
+        evaluation.receive(1, at(1.0), &other(10.0));
+        evaluation.receive(1, at(3.0), &other(30.0));
+        for t in [1.0, 2.0, 2.5, 3.0] {
+            evaluation.receive(0, at(t), &100.0);
+        }
+
+        let derived = derive_all(&evaluation, 10.0);
+
+        assert_eq!(
+            (derived.uncovered, other_uncovered(&derived)),
+            (0, UncoveredCounts::default())
+        );
+        assert_eq!(
+            derived.not_computed,
+            Refused {
+                count: 2,
+                first: Some(UNBLENDABLE),
+            }
+        );
+        assert_eq!(series(&derived, DIFFERENCE).samples().len(), 2);
+        assert_eq!(
+            series(&derived, DIFFERENCE).rejection(),
+            Some(Rejection::Evaluation(UNBLENDABLE))
+        );
+    }
+
+    #[test]
     fn each_base_value_is_judged_against_the_held_value_in_force() {
         let mut evaluation = held();
         evaluation.receive(1, at(1.0), &other(10.0));
@@ -676,7 +919,10 @@ mod tests {
                 (3.0, AssertionValue::Float(3.0)),
             ]
         );
-        assert_eq!((derived.base_samples, derived.uncovered), (3, 0));
+        assert_eq!(
+            (derived.base_samples, other_uncovered(&derived)),
+            (3, UncoveredCounts::default())
+        );
     }
 
     #[test]
@@ -705,7 +951,10 @@ mod tests {
         let derived = derive_all(&evaluation, 10.0);
 
         assert_eq!(series(&derived, DIFFERENCE).samples().len(), 1);
-        assert_eq!((derived.base_samples, derived.uncovered), (2, 1));
+        assert_eq!(
+            (derived.base_samples, other_uncovered(&derived)),
+            (2, before_first(1))
+        );
     }
 
     #[test]
@@ -776,7 +1025,17 @@ mod tests {
                 (3.0, AssertionValue::Float(70.0)),
             ]
         );
-        assert_eq!((derived.base_samples, derived.uncovered), (5, 2));
+        assert_eq!(
+            (derived.base_samples, other_uncovered(&derived)),
+            (
+                5,
+                UncoveredCounts {
+                    before_first: 1,
+                    in_gap: 0,
+                    after_last: 1,
+                }
+            )
+        );
     }
 
     #[test]
@@ -815,7 +1074,10 @@ mod tests {
                 first: Some(InputRejection("a negative base")),
             }
         );
-        assert_eq!((derived.base_samples, derived.uncovered), (3, 1));
+        assert_eq!(
+            (derived.base_samples, other_uncovered(&derived)),
+            (3, before_first(1))
+        );
         assert!(series(&derived, DIFFERENCE).samples().is_empty());
         assert_eq!(
             series(&derived, DIFFERENCE).rejection(),
