@@ -33,7 +33,7 @@ pub use goal_input::{dispatch_configured_goals, forward_goal_events};
 pub use host_input_publisher::HostInputPublisher;
 pub use observation_output::{drain_observations, ObservationBatch};
 pub use observation_sinks::{
-    watch_requested_observables, HostWatchRequest, ObservationSinkAppExt, RegisteredSink,
+    watch_requested_observables, ObservationSinkAppExt, RegisteredSink, SinkAskers,
 };
 pub use sensor_publisher::SensorPublisher;
 pub use spawn::{spawn_actuator_command, spawn_autonomy_pipeline};
@@ -52,9 +52,9 @@ pub struct BrainBridgePlugin;
 
 impl Plugin for BrainBridgePlugin {
     fn build(&self, app: &mut App) {
-        // The sinks' joined request. It exists from the start, so with no sink
-        // registered the pipelines watch nothing.
-        app.init_resource::<HostWatchRequest>();
+        // How to ask each sink for its request. It exists from the start, so
+        // with no sink registered the pipelines watch nothing.
+        app.init_resource::<SinkAskers>();
 
         // Scene-build spawns. `SpawnPipeline` runs first (assembly reads the
         // sensors' channels), then the actuator command binds to the fresh

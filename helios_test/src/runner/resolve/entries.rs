@@ -161,9 +161,8 @@ mod tests {
 
     #[test]
     fn a_measure_is_checked_as_an_assertion_is() {
-        // Unknown leaf, nondeterministic without permission, and a target
-        // the collector doesn't record: each refused, named after the
-        // assertion before it.
+        // Unknown leaf and nondeterministic without permission: each
+        // refused, named after the assertion before it.
         let missing = estimator("missing");
         let duration = estimator(TICK_DURATION_LEAF);
         let (_, resolved) = resolve_all(
@@ -171,9 +170,7 @@ mod tests {
             &[
                 measure(missing.clone(), Reducer::Final),
                 measure(duration.clone(), Reducer::Max),
-                measure(channel(SPEED), Reducer::Final),
             ],
-            &[estimator(NIS), missing.clone(), duration.clone()],
         );
 
         assert_eq!(
@@ -181,7 +178,6 @@ mod tests {
             Err(vec![
                 unusable(2, missing, vec![TargetProblem::Unreported]),
                 unusable(3, duration, vec![TargetProblem::Nondeterministic]),
-                unusable(4, channel(SPEED), vec![TargetProblem::Unrequested]),
             ])
         );
     }
@@ -197,7 +193,6 @@ mod tests {
                 reduced(speed.clone(), above),
             ],
             &[measure(nis.clone(), Reducer::TimeAbove(1.0))],
-            &[nis.clone(), speed],
         );
 
         assert_eq!(
@@ -234,7 +229,6 @@ mod tests {
                 measure(base.clone(), Reducer::Mean),
                 measure(base.clone(), Reducer::Final),
             ],
-            &[base.clone(), nis.clone()],
         );
 
         let kind = |problem| vec![TargetProblem::Condition(problem)];
@@ -290,13 +284,10 @@ mod tests {
         let speed = channel(SPEED);
         let each = instance(EDGES, InstanceSelector::Each);
         let wheel = instance(EDGES, one("wheel"));
-        let (_, resolved) = resolve_with(
-            &[
-                anchored(speed.clone(), &wheel),
-                anchored(speed.clone(), &each),
-            ],
-            &[speed.clone(), wheel, each.clone()],
-        );
+        let (_, resolved) = resolve_with(&[
+            anchored(speed.clone(), &wheel),
+            anchored(speed.clone(), &each),
+        ]);
 
         assert_eq!(
             resolved,
@@ -316,19 +307,15 @@ mod tests {
 
     #[test]
     fn an_anchor_is_checked_as_a_target_is() {
-        // Unreported, nondeterministic without the entry's permission, and
-        // not requested: each named as the window's anchor.
+        // Unreported, and nondeterministic without the entry's permission:
+        // each named as the window's anchor.
         let speed = channel(SPEED);
         let missing = estimator("missing");
         let duration = estimator(TICK_DURATION_LEAF);
-        let (_, resolved) = resolve_with(
-            &[
-                anchored(speed.clone(), &missing),
-                anchored(speed.clone(), &duration),
-                anchored(speed.clone(), &estimator(NIS)),
-            ],
-            &[speed.clone(), missing.clone(), duration.clone()],
-        );
+        let (_, resolved) = resolve_with(&[
+            anchored(speed.clone(), &missing),
+            anchored(speed.clone(), &duration),
+        ]);
 
         let anchor = |anchor: &AssertionTarget, problem| TargetProblem::Anchor {
             anchor: anchor.clone(),
@@ -344,13 +331,8 @@ mod tests {
                 ),
                 unusable(
                     2,
-                    speed.clone(),
-                    vec![anchor(&duration, TargetProblem::Nondeterministic)]
-                ),
-                unusable(
-                    3,
                     speed,
-                    vec![anchor(&estimator(NIS), TargetProblem::Unrequested)]
+                    vec![anchor(&duration, TargetProblem::Nondeterministic)]
                 ),
             ])
         );

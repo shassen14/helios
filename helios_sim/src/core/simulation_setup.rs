@@ -95,6 +95,7 @@ fn configure_scene_build_sets(app: &mut App) {
             SceneBuildSet::ProcessVehicle,
             SceneBuildSet::ProcessSensors,
             SceneBuildSet::SpawnPipeline,
+            SceneBuildSet::SetUpSinks,
             SceneBuildSet::BindPipeline,
             SceneBuildSet::Physics,
             SceneBuildSet::Finalize,
@@ -607,6 +608,8 @@ mod tests {
                     .in_set(SceneBuildSet::ProcessSensors),
                 (|mut o: ResMut<SetOrder>| o.0.push("SpawnPipeline"))
                     .in_set(SceneBuildSet::SpawnPipeline),
+                (|mut o: ResMut<SetOrder>| o.0.push("SetUpSinks"))
+                    .in_set(SceneBuildSet::SetUpSinks),
                 (|mut o: ResMut<SetOrder>| o.0.push("BindPipeline"))
                     .in_set(SceneBuildSet::BindPipeline),
                 (|mut o: ResMut<SetOrder>| o.0.push("Physics")).in_set(SceneBuildSet::Physics),
@@ -628,6 +631,7 @@ mod tests {
                 "ProcessVehicle",
                 "ProcessSensors",
                 "SpawnPipeline",
+                "SetUpSinks",
                 "BindPipeline",
                 "Physics",
                 "Finalize",

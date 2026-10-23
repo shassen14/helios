@@ -2,10 +2,11 @@
 //! tells each agent's pipeline what the sinks asked to have recorded.
 //!
 //! A sink is registered once, while the app is built, with
-//! [`add_observation_sink`](ObservationSinkAppExt::add_observation_sink). Its
-//! request joins one request for the whole host, which is resolved against
-//! every agent at scene build. After every drain, each sink receives the
-//! batch.
+//! [`add_observation_sink`](ObservationSinkAppExt::add_observation_sink).
+//! At scene build, once every sink has set itself up against the pipelines
+//! (`SceneBuildSet::SetUpSinks`), each is asked for its request, and the
+//! joined request is resolved against every agent. After every drain, each
+//! sink receives the batch.
 
 use crate::{
     brain_bridge::ObservationBatch,
@@ -19,12 +20,14 @@ use helios_runtime::observe::{
 
 use bevy::prelude::*;
 
-/// Every registered sink's request, joined into one.
+/// How to ask each registered sink for its request, one function per sink
+/// type. The requests stay the sinks': the host asks only when it resolves
+/// what to watch, after every sink is set up.
 ///
-/// Exists from the start, so with no sink registered it asks for nothing and
+/// Exists from the start, so with no sink registered nothing is asked and
 /// nothing is watched.
-#[derive(Debug, Default, Resource)]
-pub struct HostWatchRequest(WatchRequest);
+#[derive(Default, Resource)]
+pub struct SinkAskers(Vec<fn(&World) -> WatchRequest>);
 
 /// A sink the host feeds every tick, one per sink type.
 ///
@@ -40,8 +43,9 @@ where
 /// A method on `App` rather than a plugin: a plugin's `build` only borrows
 /// the plugin, so it couldn't move an owned sink into the world.
 pub trait ObservationSinkAppExt {
-    /// Adds `sink`'s request to the host's, stores the sink, and feeds it
-    /// every tick's batch. Call it from a plugin's `build`.
+    /// Stores `sink`, asks it for its request when the host resolves what
+    /// to watch, and feeds it every tick's batch. Call it from a plugin's
+    /// `build`.
     ///
     /// # Panics
     ///
@@ -64,16 +68,13 @@ impl ObservationSinkAppExt for App {
             );
         }
 
-        // Asked before the sink moves into the world, and never again.
-        let request = sink.request();
-
         // `init_resource` only inserts when missing, so this and
         // `BrainBridgePlugin` may run in either order.
-        self.init_resource::<HostWatchRequest>();
+        self.init_resource::<SinkAskers>();
         self.world_mut()
-            .resource_mut::<HostWatchRequest>()
+            .resource_mut::<SinkAskers>()
             .0
-            .add(request);
+            .push(ask_sink::<S>);
 
         self.insert_resource(RegisteredSink(sink));
 
@@ -90,6 +91,16 @@ impl ObservationSinkAppExt for App {
     }
 }
 
+/// The request of the sink of type `S`: nothing when none is registered.
+fn ask_sink<S>(world: &World) -> WatchRequest
+where
+    S: ObservationSink + Send + Sync + 'static,
+{
+    world
+        .get_resource::<RegisteredSink<S>>()
+        .map_or_else(WatchRequest::default, |sink| sink.0.request())
+}
+
 /// Hands the tick's batch to the sink of type `S`.
 fn feed_sink<S>(batch: Res<ObservationBatch>, mut sink: ResMut<RegisteredSink<S>>)
 where
@@ -98,24 +109,34 @@ where
     sink.0.receive(batch.observations());
 }
 
-/// Tells every agent's pipeline to record what the sinks requested.
+/// Asks every sink what to record, and tells every agent's pipeline to
+/// record it.
 ///
-/// Runs once at scene build, after the pipelines are spawned.
-pub fn watch_requested_observables(
-    request: Res<HostWatchRequest>,
-    mut pipelines: Query<&mut AutonomyPipelineComponent>,
-) {
-    watch_requested(&request.0, &mut pipelines);
+/// Runs once at scene build, after the pipelines are spawned and every sink
+/// is set up against them. Exclusive, since each sink is a resource of its
+/// own type, reached only through the world.
+pub fn watch_requested_observables(world: &mut World) {
+    let mut request = WatchRequest::default();
+    if let Some(askers) = world.get_resource::<SinkAskers>() {
+        for ask in &askers.0 {
+            request.add(ask(world));
+        }
+    }
+    let mut pipelines = world.query::<&mut AutonomyPipelineComponent>();
+    watch_requested(&request, pipelines.iter_mut(world));
 }
 
 /// Resolves `request` against every agent and sets each pipeline's watch set.
 ///
 /// Separate from the system so that a system run mid-run can watch a new
 /// request the same way.
-fn watch_requested(request: &WatchRequest, pipelines: &mut Query<&mut AutonomyPipelineComponent>) {
+fn watch_requested<'w>(
+    request: &WatchRequest,
+    pipelines: impl Iterator<Item = Mut<'w, AutonomyPipelineComponent>>,
+) {
     let mut resolver = WatchResolver::new(request.clone());
 
-    for mut pipeline in pipelines.iter_mut() {
+    for mut pipeline in pipelines {
         let pipeline = &mut pipeline.0;
         // The set is owned, so the borrow `observables` takes ends here,
         // before `watch` needs the pipeline mutably.
@@ -235,7 +256,7 @@ mod tests {
     /// agent whose estimator declares NIS and the drop count.
     fn app_with_car() -> App {
         let mut app = App::new();
-        app.init_resource::<HostWatchRequest>()
+        app.init_resource::<SinkAskers>()
             .init_resource::<ObservationBatch>();
 
         let descriptor = PortDescriptorBuilder::mock()
@@ -272,6 +293,28 @@ mod tests {
     fn a_requested_path_reaches_the_sink_keyed_by_its_agent() {
         let mut app = app_with_car();
         app.add_observation_sink(Recording::asking_for(&[node_path(CAR, ESTIMATOR, NIS)]));
+
+        let world = app.world_mut();
+        watch_tick_and_drain(world);
+        world
+            .run_system_once(feed_sink::<Recording>)
+            .expect("feed_sink runs");
+
+        let received = &world.resource::<RegisteredSink<Recording>>().0.received;
+        let paths: Vec<String> = received.iter().map(|o| o.key.path()).collect();
+        assert_eq!(paths, [node_path(CAR, ESTIMATOR, NIS)]);
+    }
+
+    #[test]
+    fn a_sink_is_asked_when_watches_resolve_not_when_registered() {
+        // A sink set up against the pipelines after registration, as a test
+        // run is in `SetUpSinks`: what it asks for then is what is watched.
+        let mut app = app_with_car();
+        app.add_observation_sink(Recording::asking_for(&[]));
+        app.world_mut()
+            .resource_mut::<RegisteredSink<Recording>>()
+            .0
+            .request = WatchRequest::Paths([node_path(CAR, ESTIMATOR, NIS)].into());
 
         let world = app.world_mut();
         watch_tick_and_drain(world);

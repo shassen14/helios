@@ -75,14 +75,16 @@ pub(super) fn key(agent: &str, subject: Subject) -> RecordedKey {
     }
 }
 
-pub(super) fn collector(targets: &[AssertionTarget]) -> ObservationCollector {
-    ObservationCollector::new(targets, standard_extractors())
+pub(super) fn collector() -> ObservationCollector {
+    ObservationCollector::new(standard_extractors())
 }
 
-/// A collector bound to `key` alone, with the series it binds.
+/// A collector bound to `key` alone, with the series it binds, from the
+/// selector spelling `key`'s path.
 pub(super) fn bound(key: &RecordedKey) -> (ObservationCollector, SeriesId) {
-    let mut collector = collector(&[]);
-    let id = collector.bind(key.clone());
+    let mut collector = collector();
+    let selector = AssertionTarget::parse(key.path()).expect("a key spells a valid path");
+    let id = collector.bind(&selector, key.clone());
     (collector, id)
 }
 

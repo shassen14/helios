@@ -16,8 +16,11 @@ impl Runner {
     /// every tick. The run is then ready, or, if any can't be, aborted with
     /// the reasons.
     ///
-    /// Called once. A second call, or one after setup failed, is refused and
-    /// changes nothing.
+    /// Called once, before the host asks `collector` what to record: the
+    /// request is what setup binds. A second call, or one after setup
+    /// failed, is refused and changes nothing. A collector the host has
+    /// already asked would record nothing setup binds, so the run is
+    /// aborted.
     pub fn on_pipeline_built(
         &mut self,
         pipelines: &[(AgentId, &AutonomyPipeline)],
@@ -25,6 +28,10 @@ impl Runner {
     ) -> Result<(), SetupError> {
         if self.phase != Phase::AwaitingPipelines {
             return Err(SetupError::AlreadySetUp);
+        }
+        if collector.was_asked() {
+            self.phase = Phase::Aborted;
+            return Err(SetupError::AskedBeforeSetup);
         }
 
         match resolve(
@@ -57,6 +64,13 @@ pub enum SetupError {
     /// `on_pipeline_built` was called after the run's setup was decided.
     #[error("the run's setup is already decided")]
     AlreadySetUp,
+    /// The host asked the collector what to record before setup bound
+    /// anything, so it would record nothing the run reads.
+    #[error(
+        "the host asked the collector what to record before setup; set the runner up once the \
+         pipelines exist, then ask its sinks"
+    )]
+    AskedBeforeSetup,
 }
 
 #[cfg(test)]
@@ -67,15 +81,18 @@ mod tests {
         assertion::{AssertionTarget, EntryName},
         runner::{
             fixtures::{
-                lag, lag_target, pipeline, ready, run, run_evaluating, set_up, speed_target, term,
-                CAR, TRUCK,
+                lag, lag_target, pipeline, ready, run, run_evaluating, set_up, speed_target,
+                speed_term, term, CAR, TRUCK,
             },
             resolve::evaluations::EvaluationProblem,
             resolve::{TargetProblem, UnusableEntry},
         },
     };
 
-    use helios_runtime::PipelineBuilder;
+    use helios_runtime::{
+        observe::sink::{ObservationSink, WatchRequest},
+        PipelineBuilder,
+    };
 
     // A node-less pipeline: its agent reports nothing, so every target on it
     // is unreported. What resolves is tested beside `resolve`.
@@ -149,6 +166,34 @@ mod tests {
             Err(SetupError::AlreadySetUp)
         );
         assert!(matches!(r.phase, Phase::Ready(_)));
+    }
+
+    #[test]
+    fn a_collector_asked_before_setup_aborts_the_run() {
+        let pipeline = pipeline();
+        let mut r = Runner::new(run("max_simulated_seconds = 5.0", &[&term("a", CAR, 5.0)]))
+            .expect("valid run");
+        let mut collector = r.collector();
+        collector.request();
+
+        assert_eq!(
+            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector),
+            Err(SetupError::AskedBeforeSetup)
+        );
+        assert_eq!(r.phase, Phase::Aborted);
+    }
+
+    #[test]
+    fn the_request_asked_after_setup_is_what_setup_bound() {
+        let (_, collector) = ready(
+            run("max_simulated_seconds = 5.0", &[&speed_term("a", CAR, 5.0)]),
+            &[CAR],
+        );
+
+        assert_eq!(
+            collector.request(),
+            WatchRequest::Paths([speed_target(CAR)].into())
+        );
     }
 
     /// A `lag` evaluation named `name` with its inputs as written.

@@ -61,21 +61,27 @@ pub enum SceneBuildSet {
     /// the body.
     SpawnPipeline,
 
-    /// Pass 6: Bind host-side ECS state to the freshly-spawned pipeline — the
+    /// Pass 6: A sink whose request depends on what the pipelines declare
+    /// sets itself up against them, such as a test run binding the series
+    /// it reads. Runs after `SpawnPipeline`, so every pipeline exists, and
+    /// before `BindPipeline`, where each sink is asked what to record.
+    SetUpSinks,
+
+    /// Pass 7: Bind host-side ECS state to the freshly-spawned pipeline — the
     /// `ActuatorCommandComponent` the vehicle plugin drains, and the watch set
     /// the observation sinks asked for. Both only require
     /// `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
     /// independent of each other, so they share this one pass.
     BindPipeline,
 
-    /// Pass 7: Attach all physical bodies (RigidBody, Collider).
+    /// Pass 8: Attach all physical bodies (RigidBody, Collider).
     Physics,
 
-    /// Pass 8: Snapshot the static TF tree now that the full entity hierarchy
+    /// Pass 9: Snapshot the static TF tree now that the full entity hierarchy
     /// exists, so pose lookups have a complete frame graph before `Running`.
     Finalize,
 
-    /// Pass 9: Remove all temporary request components, then transition to `Running`.
+    /// Pass 10: Remove all temporary request components, then transition to `Running`.
     Cleanup,
 }
 

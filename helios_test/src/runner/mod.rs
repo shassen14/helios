@@ -13,7 +13,7 @@ pub use finalize::HostFacts;
 pub use tick::TickAction;
 
 use crate::{
-    assertion::extract::{standard_extractors, ExtractorTable},
+    assertion::extract::standard_extractors,
     collector::ObservationCollector,
     evaluation::{standard_evaluators, EvaluatorRegistry},
     run::{
@@ -24,8 +24,6 @@ use crate::{
 };
 
 use helios_core::prelude::MonotonicTime;
-
-use std::iter;
 
 /// Why a run aborts when the host ticks or finishes it without having set
 /// it up.
@@ -80,39 +78,20 @@ impl Runner {
         })
     }
 
-    /// The collector this run reads: one requesting every recorded series
-    /// its assertions and measures name, every series a window is anchored
-    /// `after`, and every input of its evaluations. A derived series is
-    /// never requested: the host doesn't record it. A host builds it here,
-    /// beside the runner, so the two always describe the same run.
+    /// The collector this run reads. It requests nothing until setup binds
+    /// what the run's entries and evaluations read, so a host asks it what
+    /// to record only after [`on_pipeline_built`](Self::on_pipeline_built).
+    /// A host builds it here, beside the runner, so the two always describe
+    /// the same run.
     pub fn collector(&self) -> ObservationCollector {
-        self.collector_reading(standard_extractors())
+        ObservationCollector::new(standard_extractors())
     }
 
-    /// As [`collector`](Self::collector), reading channel values through
-    /// `extractors`.
-    fn collector_reading(&self, extractors: ExtractorTable) -> ObservationCollector {
-        let assertions = self
-            .run
-            .assertions()
-            .iter()
-            .map(|assertion| (&assertion.target, &assertion.window));
-        let measures = self
-            .run
-            .measures()
-            .iter()
-            .map(|measure| (&measure.target, &measure.window));
-        let inputs = self
-            .run
-            .evaluations()
-            .iter()
-            .flat_map(|evaluation| evaluation.inputs.values());
-        let requested = assertions
-            .chain(measures)
-            .flat_map(|(target, window)| iter::once(target).chain(window.anchors()))
-            .chain(inputs)
-            .filter(|target| target.is_recorded());
-        ObservationCollector::new(requested, extractors)
+    /// Whether the run was aborted before its first tick: setup refused it,
+    /// or the host recorded a failure no assertion can observe. An aborted
+    /// run judges nothing, so a host stops it and finalizes.
+    pub fn is_aborted(&self) -> bool {
+        self.phase == Phase::Aborted
     }
 
     /// Record that the run is unfit to produce a meaningful result, and why.

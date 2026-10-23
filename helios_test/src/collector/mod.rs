@@ -2,9 +2,9 @@
 //! a run-file target, kept as a series per target.
 //!
 //! The runner never reads a pipeline's bus. It asks the host, through the
-//! sink's request, to record each target, and judges what arrives here. So
-//! the same runner works wherever observations can be delivered: a sim, a
-//! robot, a recording.
+//! sink's request, to record each key setup bound, and judges what arrives
+//! here. So the same runner works wherever observations can be delivered: a
+//! sim, a robot, a recording.
 
 mod evaluations;
 mod series;
@@ -32,7 +32,7 @@ use helios_runtime::observe::{
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 /// The id the next collector built takes. Counts up for the life of the
@@ -43,12 +43,14 @@ static NEXT_COLLECTOR: AtomicU64 = AtomicU64::new(0);
 /// under it, turned into an [`AssertionValue`](crate::assertion::AssertionValue)
 /// on arrival.
 ///
-/// Built requesting the targets' paths; each series is bound to one exact
-/// key at setup, from what the pipelines declare, so an arrival is matched
-/// on its whole key (agent, channel, payload type and instance). Every
-/// instance of a keyed channel has a series of its own.
+/// Built empty. Setup binds each series to one exact key, from what the
+/// pipelines declare, with the selector it resolved the key from, so an
+/// arrival is matched on its whole key (agent, channel, payload type and
+/// instance). Every instance of a keyed channel has a series of its own.
+/// The host is asked for the bound keys' paths, so it records exactly what
+/// setup bound, and only once setup has bound it.
 ///
-/// An arrival a requested selector covers but no bound key matches is
+/// An arrival a bound selector covers but no bound key matches is
 /// dropped and counted. Setup binds every key a judged assertion names, so
 /// in a run that can judge, one means the pipeline recorded under a key its
 /// catalog never declared, or delivered before setup bound it; the run fails
@@ -67,15 +69,15 @@ pub struct ObservationCollector {
     /// Stamped into every [`SeriesId`] this collector hands out, so an id is
     /// never read against another run's collector.
     id: CollectorId,
-    /// The selectors it was built for. The host is asked for their paths.
-    requested: HashSet<AssertionTarget>,
+    /// The selectors setup resolved its bound keys from.
+    covered: HashSet<AssertionTarget>,
     /// Each bound key's index into `series`.
     by_key: HashMap<RecordedKey, usize>,
     series: Vec<Series>,
     /// How many values arrived under each key no series is bound to that a
-    /// requested selector covers.
+    /// bound selector covers.
     unbound: HashMap<RecordedKey, u64>,
-    /// Keys no requested selector covers: what another sink asked for,
+    /// Keys no bound selector covers: what another sink asked for,
     /// which every sink is handed, or a sibling of a selected instance.
     /// Held so each key's path is spelled once, not on every arrival.
     unrequested: HashSet<RecordedKey>,
@@ -83,18 +85,19 @@ pub struct ObservationCollector {
     evaluations: Vec<Box<dyn Evaluator>>,
     /// Each input key's evaluations, by index, with the role it fills.
     inputs: HashMap<RecordedKey, Vec<(usize, usize)>>,
+    /// Whether the host has asked for its request. Setup refuses a
+    /// collector already asked, which would record nothing it binds.
+    /// Atomic, since the host asks through `&self` and a sink is `Sync`.
+    asked: AtomicBool,
 }
 
 impl ObservationCollector {
-    /// A collector requesting each of `targets`, with no series until keys
-    /// are bound. A target named twice is requested once.
-    pub fn new<'a>(
-        targets: impl IntoIterator<Item = &'a AssertionTarget>,
-        extractors: ExtractorTable,
-    ) -> Self {
+    /// A collector reading channel values through `extractors`, requesting
+    /// nothing until setup binds keys.
+    pub fn new(extractors: ExtractorTable) -> Self {
         Self {
             id: CollectorId(NEXT_COLLECTOR.fetch_add(1, Ordering::Relaxed)),
-            requested: targets.into_iter().cloned().collect(),
+            covered: HashSet::new(),
             by_key: HashMap::new(),
             series: Vec::new(),
             unbound: HashMap::new(),
@@ -102,12 +105,13 @@ impl ObservationCollector {
             extractors,
             evaluations: Vec::new(),
             inputs: HashMap::new(),
+            asked: AtomicBool::new(false),
         }
     }
 
-    /// Whether the collector was built for `target`.
-    pub fn requests(&self, target: &AssertionTarget) -> bool {
-        self.requested.contains(target)
+    /// Whether the host has asked for its request.
+    pub fn was_asked(&self) -> bool {
+        self.asked.load(Ordering::Relaxed)
     }
 
     /// What a channel value whose payload is of type `payload` turns into:
@@ -119,13 +123,16 @@ impl ObservationCollector {
 }
 
 impl ObservationSink for ObservationCollector {
-    /// Paths, so a channel path watches every instance; [`bind`]
-    /// (Self::bind) decides which of them are kept.
+    /// Each bound key's path, a series' or an evaluation input's, spelled
+    /// as the host matches it. A channel path watches every instance; the
+    /// bound keys decide which of them are kept.
     fn request(&self) -> WatchRequest {
+        self.asked.store(true, Ordering::Relaxed);
         WatchRequest::Paths(
-            self.requested
-                .iter()
-                .map(|target| target.path().to_owned())
+            self.by_key
+                .keys()
+                .chain(self.inputs.keys())
+                .map(RecordedKey::path)
                 .collect(),
         )
     }
@@ -161,20 +168,24 @@ pub fn instance_of(subject: &Subject) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        fixtures::{channel_target, collector, emission_key, speed, target, CAR, NIS, SPEED},
+        fixtures::{channel_target, collector, emission_key, key, speed, target, CAR, NIS},
         *,
     };
 
     #[test]
-    fn request_names_each_target_once() {
-        let nis = target(CAR, NIS);
-        let speed = channel_target(CAR, &speed::<f64>());
-        let collector = collector(&[nis.clone(), speed.clone(), nis.clone()]);
+    fn the_request_is_each_bound_keys_path_once() {
+        // Two selectors on NIS bind one key; the speed's key spells its
+        // channel's path.
+        let speed_key = key(CAR, Subject::channel(speed::<f64>(), None));
+        let mut collector = collector();
+        collector.bind(&target(CAR, NIS), emission_key(CAR, NIS));
+        collector.bind(&target(CAR, NIS), emission_key(CAR, NIS));
+        collector.bind(&channel_target(CAR, &speed::<f64>()), speed_key.clone());
 
         assert_eq!(
             collector.request(),
             WatchRequest::Paths(
-                [nis.path().to_owned(), speed.path().to_owned()]
+                [emission_key(CAR, NIS).path(), speed_key.path()]
                     .into_iter()
                     .collect()
             )
@@ -182,12 +193,20 @@ mod tests {
     }
 
     #[test]
-    fn a_target_is_requested_but_has_no_series_until_its_key_is_bound() {
-        let nis = target(CAR, NIS);
-        let collector = collector(std::slice::from_ref(&nis));
+    fn a_collector_nothing_is_bound_in_requests_nothing() {
+        assert_eq!(
+            collector().request(),
+            WatchRequest::Paths(Default::default())
+        );
+    }
 
-        assert!(collector.requests(&nis));
-        assert!(!collector.requests(&target(CAR, SPEED)));
-        assert_eq!(collector.series_id(&emission_key(CAR, NIS)), None);
+    #[test]
+    fn asking_for_the_request_is_noted() {
+        let collector = collector();
+        assert!(!collector.was_asked());
+
+        collector.request();
+
+        assert!(collector.was_asked());
     }
 }

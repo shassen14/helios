@@ -210,25 +210,21 @@ pub(super) fn unusable(
     }
 }
 
-/// `assertions` resolved against [`pipeline`] and a collector built for
-/// `requested`.
+/// `assertions` resolved against [`pipeline`].
 pub(super) fn resolve_with(
     assertions: &[Assertion],
-    requested: &[AssertionTarget],
 ) -> (
     ObservationCollector,
     Result<ResolvedPlan, Vec<UnusableEntry>>,
 ) {
-    resolve_all(assertions, &[], requested)
+    resolve_all(assertions, &[])
 }
 
-/// `assertions` and `measures` resolved against [`pipeline`] and a
-/// collector built for `requested`, each entry named by its position
-/// ([`name_at`]).
+/// `assertions` and `measures` resolved against [`pipeline`], each entry
+/// named by its position ([`name_at`]).
 pub(super) fn resolve_all(
     assertions: &[Assertion],
     measures: &[Measure],
-    requested: &[AssertionTarget],
 ) -> (
     ObservationCollector,
     Result<ResolvedPlan, Vec<UnusableEntry>>,
@@ -252,7 +248,7 @@ pub(super) fn resolve_all(
     let pipeline = pipeline();
     let mut extractors = standard_extractors();
     extractors.register::<FrameSample, String>(|sample| sample.0.to_string(), None);
-    let mut collector = ObservationCollector::new(requested, extractors);
+    let mut collector = ObservationCollector::new(extractors);
     let resolved = resolve(
         &[],
         None,
@@ -266,14 +262,9 @@ pub(super) fn resolve_all(
     (collector, resolved)
 }
 
-/// The assertions the run can't judge, against a collector built for
-/// them.
+/// The assertions the run can't judge.
 pub(super) fn errors(assertions: &[Assertion]) -> Vec<UnusableEntry> {
-    let targets: Vec<AssertionTarget> = assertions.iter().map(|a| a.target.clone()).collect();
-    resolve_with(assertions, &targets)
-        .1
-        .err()
-        .unwrap_or_default()
+    resolve_with(assertions).1.err().unwrap_or_default()
 }
 
 /// The car's `channel`, at instance `instance`.

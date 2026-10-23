@@ -2,6 +2,7 @@
 //! under its input keys, and derives its series from them at finalize.
 
 use super::{CollectorId, ObservationCollector};
+use crate::assertion::AssertionTarget;
 use crate::evaluation::{
     derived::{Derived, Refused},
     kind::Evaluator,
@@ -15,16 +16,17 @@ use helios_runtime::observe::{
 
 impl ObservationCollector {
     /// Feeds `evaluation` the values recorded under each of `inputs`, one
-    /// key per role in role order. Bound before the first tick, as a series
-    /// is.
+    /// key per role in role order, each with the selector setup resolved it
+    /// from. Bound before the host asks what to record, as a series is.
     pub fn bind_evaluation(
         &mut self,
         evaluation: Box<dyn Evaluator>,
-        inputs: Vec<RecordedKey>,
+        inputs: Vec<(AssertionTarget, RecordedKey)>,
     ) -> EvaluationId {
         let index = self.evaluations.len();
         self.evaluations.push(evaluation);
-        for (role, key) in inputs.into_iter().enumerate() {
+        for (role, (selector, key)) in inputs.into_iter().enumerate() {
+            self.cover(selector);
             self.inputs.entry(key).or_default().push((index, role));
         }
         EvaluationId {

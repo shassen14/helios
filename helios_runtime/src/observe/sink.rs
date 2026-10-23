@@ -2,9 +2,10 @@
 //! recorders, visualizers, bridges.
 //!
 //! A sink says once what it wants, then receives each tick's batch. The
-//! runtime holds no sink and calls none: a host asks each of its sinks for
-//! its request before the first tick, and hands each the batch after every
-//! drain. A sink that only consumes data needs nothing from the host, so the
+//! runtime holds no sink and calls none. A host builds its pipelines, lets
+//! each sink that needs to set itself up against them, then asks each sink
+//! for its request, before the first tick, and hands each the batch after
+//! every drain. So a sink may request what it found in the pipelines. A sink that only consumes data needs nothing from the host, so the
 //! same sink runs in simulation and on hardware.
 
 use crate::observe::observation::Observation;
@@ -16,8 +17,9 @@ use std::collections::BTreeSet;
 /// No `Send` or `Sync` bound: a host that keeps sinks across threads adds the
 /// bounds where it names the sink type.
 pub trait ObservationSink {
-    /// What this sink wants recorded. The host asks once, before the first
-    /// tick; a request that changes later is not seen.
+    /// What this sink wants recorded. The host asks once, after its
+    /// pipelines are built and every sink is set up against them, and
+    /// before the first tick; a request that changes later is not seen.
     fn request(&self) -> WatchRequest;
 
     /// One tick's observations, from every agent the host runs, possibly

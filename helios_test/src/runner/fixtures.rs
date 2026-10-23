@@ -413,7 +413,7 @@ pub(super) fn set_up(
     let mut runner = Runner::with_evaluators(run, evaluators()).expect("valid run");
     let mut extractors = standard_extractors();
     extractors.register::<Wheel, f64>(|wheel| wheel.speed, Some(SiUnit::MetersPerSecond));
-    let mut collector = runner.collector_reading(extractors);
+    let mut collector = ObservationCollector::new(extractors);
     let pipelines: Vec<(AgentId, AutonomyPipeline)> = agents
         .iter()
         .map(|agent| (AgentId::new(*agent), pipeline()))

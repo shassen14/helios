@@ -108,10 +108,6 @@ pub enum TargetProblem {
     /// `allow_nondeterministic = true`.
     #[error("it is nondeterministic (set allow_nondeterministic = true to assert on it)")]
     Nondeterministic,
-    /// The collector doesn't record it: the host built the collector from
-    /// another run's entries.
-    #[error("the run's collector doesn't record it")]
-    Unrequested,
     /// `time_above` on an emission. It holds each sample until the next,
     /// which is right for a channel's state and wrong for an emission's
     /// events: a NIS doesn't stay at its value between updates.

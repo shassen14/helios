@@ -114,10 +114,6 @@ pub(super) fn locate(
                 extracted
             }
         });
-    if !collector.requests(target) {
-        problems.push(TargetProblem::Unrequested);
-    }
-
     match extracted {
         Some(Extracted { kind, si_unit }) if problems.is_empty() => Ok(Located {
             held: selected
@@ -305,18 +301,6 @@ mod tests {
     use helios_runtime::pipeline::autonomy_pipeline::TICK_DURATION_LEAF;
 
     #[test]
-    fn a_target_the_collector_does_not_record_is_unrequested() {
-        // The collector was built for another run's assertions.
-        let nis = estimator(NIS);
-        let (_, resolved) = resolve_with(&[assertion(nis.clone(), false)], &[channel(SPEED)]);
-
-        assert_eq!(
-            resolved,
-            Err(vec![unusable(1, nis, vec![TargetProblem::Unrequested])])
-        );
-    }
-
-    #[test]
     fn a_declared_leaf_and_an_extractable_channel_resolve() {
         assert_eq!(
             errors(&[
@@ -411,7 +395,7 @@ mod tests {
     #[test]
     fn a_keyed_channel_of_one_instance_is_that_series() {
         let root = channel(ROOT);
-        let (collector, resolved) = resolve_with(&[assertion_of_kind(root.clone())], &[root]);
+        let (collector, resolved) = resolve_with(&[assertion_of_kind(root.clone())]);
 
         assert!(resolved.is_ok());
         assert!(collector.series_id(&key(frame(ROOT, "base"))).is_some());
@@ -420,7 +404,7 @@ mod tests {
     #[test]
     fn an_instance_selects_one_series_of_a_keyed_channel() {
         let wheel = instance(EDGES, one("wheel"));
-        let (_, resolved) = resolve_with(&[assertion_of_kind(wheel.clone())], &[wheel]);
+        let (_, resolved) = resolve_with(&[assertion_of_kind(wheel.clone())]);
 
         assert_eq!(
             plan_keys(&resolved.expect("the instance is declared")),

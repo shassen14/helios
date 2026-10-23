@@ -4,7 +4,7 @@
 use super::{CollectorId, ObservationCollector};
 use crate::assertion::{
     extract::{ExtractError, ExtractorTable},
-    AssertionValue,
+    AssertionTarget, AssertionValue,
 };
 use crate::evaluation::kind::InputRejection;
 
@@ -33,9 +33,11 @@ impl ObservationCollector {
 
     /// The series values recorded under `key` arrive in, given an empty one
     /// unless `key` has one already, so every reader of one key shares one
-    /// series. Bound before the first tick: a value arriving under a key not
-    /// yet bound is dropped.
-    pub fn bind(&mut self, key: RecordedKey) -> SeriesId {
+    /// series. `selector` is what setup resolved `key` from, and covers it.
+    /// Bound before the host asks what to record: a value arriving under a
+    /// key not yet bound is dropped.
+    pub fn bind(&mut self, selector: &AssertionTarget, key: RecordedKey) -> SeriesId {
+        self.cover(selector.clone());
         if let Some(index) = self.by_key.get(&key) {
             return self.id_at(*index);
         }
@@ -168,10 +170,10 @@ mod tests {
 
     #[test]
     fn binding_one_key_twice_shares_one_series() {
-        let mut collector = collector(&[]);
+        let mut collector = collector();
 
-        let first = collector.bind(emission_key(CAR, NIS));
-        let second = collector.bind(emission_key(CAR, NIS));
+        let first = collector.bind(&target(CAR, NIS), emission_key(CAR, NIS));
+        let second = collector.bind(&target(CAR, NIS), emission_key(CAR, NIS));
 
         assert_eq!(first, second);
     }
@@ -250,9 +252,10 @@ mod tests {
     fn each_instance_of_a_keyed_channel_has_its_own_series() {
         let front = key(CAR, wheel("front"));
         let rear = key(CAR, wheel("rear"));
-        let mut collector = collector(&[channel_target(CAR, &wheels())]);
-        let front_id = collector.bind(front.clone());
-        let rear_id = collector.bind(rear.clone());
+        let every = channel_target(CAR, &wheels());
+        let mut collector = collector();
+        let front_id = collector.bind(&every, front.clone());
+        let rear_id = collector.bind(&every, rear.clone());
 
         collector.receive(&[
             arrival(&front, 1.0, ObservedValue::Scalar(1.0)),

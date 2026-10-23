@@ -146,7 +146,7 @@ fn plan(
             )));
             continue;
         };
-        match locate_input(target, role, catalogs, collector) {
+        match locate_input(target, role, catalogs) {
             Ok(input) => bound.push(input),
             Err(found) => {
                 problems.extend(found.into_iter().map(|problem| EvaluationProblem::Input {
@@ -193,7 +193,7 @@ fn plan(
         evaluator,
         bound
             .iter()
-            .map(|input| input.planned.key.clone())
+            .map(|input| (input.planned.target.clone(), input.planned.key.clone()))
             .collect(),
     );
 
@@ -228,13 +228,11 @@ struct Bound {
 }
 
 /// The one series `target` names for `role`, or every reason the run can't
-/// feed it to the role: it must be one series, of the role's payload type,
-/// requested by the collector.
+/// feed it to the role: it must be one series, of the role's payload type.
 fn locate_input(
     target: &AssertionTarget,
     role: &Role,
     catalogs: &[Catalog],
-    collector: &ObservationCollector,
 ) -> Result<Bound, Vec<TargetProblem>> {
     let (catalog, selected) = find(target, catalogs)?;
     let [(subject, observable)] = selected.as_slice() else {
@@ -242,23 +240,16 @@ fn locate_input(
         return Err(vec![TargetProblem::InputOnSeveral(spellings(&subjects))]);
     };
 
-    let mut problems = Vec::new();
     let carries = match observable.value() {
         ObservableValue::Scalar { .. } => Some(SCALAR),
         ObservableValue::Typed { type_id, .. } if type_id == role.payload => None,
         ObservableValue::Typed { type_name, .. } => Some(type_name),
     };
     if let Some(carries) = carries {
-        problems.push(TargetProblem::WrongPayload {
+        return Err(vec![TargetProblem::WrongPayload {
             carries,
             wants: role.payload_name,
-        });
-    }
-    if !collector.requests(target) {
-        problems.push(TargetProblem::Unrequested);
-    }
-    if !problems.is_empty() {
-        return Err(problems);
+        }]);
     }
 
     // An emission has no description: its node writes it, at no declared

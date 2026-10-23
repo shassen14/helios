@@ -324,7 +324,7 @@ pub(in crate::runner) fn resolve(
                 for target in found.targets {
                     let source = match target {
                         SeriesTarget::Recorded(key) => SeriesSource::Recorded {
-                            series: collector.bind(key.clone()),
+                            series: collector.bind(wanted.target, key.clone()),
                             key,
                         },
                         SeriesTarget::Derived { evaluation, metric } => {
@@ -340,7 +340,7 @@ pub(in crate::runner) fn resolve(
                     });
                 }
                 for (anchor, key) in found.anchors {
-                    let series = collector.bind(key);
+                    let series = collector.bind(anchor, key);
                     anchors.insert(anchor.clone(), series);
                 }
             }
@@ -405,7 +405,6 @@ mod tests {
                 assertion(nis.clone(), true),
             ],
             &[measure(speed.clone(), Reducer::Mean)],
-            &[nis.clone(), speed.clone()],
         );
 
         let entry = |owner, subject: Subject| PlanEntry {
@@ -444,8 +443,7 @@ mod tests {
     fn a_channel_target_binds_the_key_its_agent_declares_payload_type_included() {
         // The path spells only the name; the bound key is the catalog's, so
         // a value of another payload type under that name lands nowhere.
-        let (collector, resolved) =
-            resolve_with(&[assertion(channel(SPEED), false)], &[channel(SPEED)]);
+        let (collector, resolved) = resolve_with(&[assertion(channel(SPEED), false)]);
 
         assert!(resolved.is_ok());
         assert!(collector.series_id(&key(speed_subject())).is_some());
@@ -461,7 +459,7 @@ mod tests {
     #[test]
     fn an_assertion_the_run_cannot_judge_binds_nothing() {
         let label = channel(LABEL);
-        let (collector, resolved) = resolve_with(&[assertion(label.clone(), false)], &[label]);
+        let (collector, resolved) = resolve_with(&[assertion(label.clone(), false)]);
 
         assert!(resolved.is_err());
         assert_eq!(
@@ -512,7 +510,6 @@ mod tests {
         let (collector, resolved) = resolve_all(
             &[assertion_of_kind(each.clone())],
             &[measure(each.clone(), Reducer::Count)],
-            &[each],
         );
 
         let plan = resolved.expect("every instance resolves");
@@ -533,13 +530,10 @@ mod tests {
 
     #[test]
     fn a_channel_holds_its_values_and_an_emission_does_not() {
-        let (collector, resolved) = resolve_with(
-            &[
-                assertion(channel(SPEED), false),
-                assertion(estimator(NIS), false),
-            ],
-            &[channel(SPEED), estimator(NIS)],
-        );
+        let (collector, resolved) = resolve_with(&[
+            assertion(channel(SPEED), false),
+            assertion(estimator(NIS), false),
+        ]);
         let plan = resolved.expect("both resolve");
         let held: Vec<bool> = plan
             .with_series(&collector, &[])
@@ -554,8 +548,7 @@ mod tests {
     fn an_anchor_is_bound_beside_its_entrys_series() {
         let nis = estimator(NIS);
         let speed = channel(SPEED);
-        let (collector, resolved) =
-            resolve_with(&[anchored(speed.clone(), &nis)], &[speed, nis.clone()]);
+        let (collector, resolved) = resolve_with(&[anchored(speed.clone(), &nis)]);
 
         let plan = resolved.expect("the target and its anchor resolve");
         let bound = collector
