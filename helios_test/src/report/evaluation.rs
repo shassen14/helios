@@ -17,7 +17,16 @@ use serde::Serialize;
 /// compute, and every metric it offers, with the series of each one read.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EvaluationReportEntry {
+    /// The evaluation's name: an inline entry's own, or a suite's entry as
+    /// `agent.<agent>.<application>.<entry>`, so it is unique in the report.
     pub name: String,
+    /// The name the run file applied the entry's suite under, as `name`
+    /// spells it; `None` for an inline entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application: Option<String>,
+    /// The agent a suite's entry was bound to; `None` for an inline entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     pub kind: String,
     /// Base values stamped within the run, one sample of every metric each
     /// unless uncovered.
@@ -44,8 +53,9 @@ pub struct EvaluationReportEntry {
     pub metrics: Vec<MetricReport>,
 }
 
-/// _Post-step._ One role's input: the selector the run file gave, the
-/// instance it named, who wrote it, its cap and how it covered the base:
+/// _Post-step._ One role's input: the selector the run file gave, or a
+/// suite's agent series and the selector it was bound to, the instance it
+/// named, who wrote it, its cap and how it covered the base:
 /// another role's cap is the widest gap it spanned, and the base values it
 /// had none for are counted by where they fell (before its first value, in
 /// a gap wider than its cap, after its last); the base's cap is the gap its
@@ -55,6 +65,10 @@ pub struct EvaluationReportEntry {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InputReport {
     pub role: String,
+    /// The agent series a suite's entry read, which `target` is the
+    /// selector of on its agent; `None` for an inline entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
     pub target: AssertionTarget,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,

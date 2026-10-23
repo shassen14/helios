@@ -15,7 +15,7 @@ use crate::{
         },
         EvaluatorRegistry,
     },
-    run::Run,
+    run::{self, Run},
 };
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::{AgentId, FrameId, MonotonicTime, TfProvider};
@@ -291,7 +291,7 @@ pub(super) fn run_evaluating(
         text.push_str(block);
         text.push('\n');
     }
-    toml::from_str(&text).expect("valid run toml")
+    run::parse(&text, run::no_suite_files).expect("valid run toml")
 }
 
 /// An assertion named `name` that every sample of `agent`'s [`LEAF`] is

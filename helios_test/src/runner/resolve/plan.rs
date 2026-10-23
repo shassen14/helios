@@ -6,14 +6,14 @@
 
 use super::{
     entries::{check, Derivable, Wanted},
-    evaluations::{resolve_evaluations, PlannedEvaluation},
+    evaluations::{resolve_evaluations, PlannedEvaluation, RunEvaluations},
     locate::Catalog,
     problems::{Unusable, UnusableEntry},
 };
 use crate::{
-    assertion::{Assertion, AssertionTarget, EntryName, Measure},
+    assertion::{Assertion, AssertionTarget, Measure},
     collector::{ObservationCollector, Rejection, Series, SeriesId},
-    evaluation::{derived::Derived, Evaluation, EvaluationDefaults, EvaluatorRegistry},
+    evaluation::{derived::Derived, path::EvaluationName, EvaluatorRegistry},
     report::ReportedUnit,
     runner::state::AssertionState,
 };
@@ -242,14 +242,13 @@ impl<S: std::ops::Deref<Target = AssertionState>> EntryView<'_, '_, S> {
     }
 }
 
-/// The plan for evaluating `evaluations`, `assertions` and `measures`, with
-/// each one's series and inputs bound in `collector`, or every one the run
-/// can't evaluate, each list in run-file order. Evaluations are resolved
-/// first, since an entry may read one's metric; a role its entry gives no gap takes
-/// `evaluation_defaults`'.
+/// The plan for evaluating `evaluations` (each suite's on each agent it is
+/// applied to), `assertions` and `measures`, with each one's series and
+/// inputs bound in `collector`, or every one the run can't evaluate, each
+/// list in run-file order. Evaluations are resolved first, since an entry
+/// may read one's metric.
 pub(in crate::runner) fn resolve(
-    evaluations: &[Evaluation],
-    evaluation_defaults: Option<&EvaluationDefaults>,
+    evaluations: RunEvaluations,
     assertions: &[Assertion],
     measures: &[Measure],
     registry: &EvaluatorRegistry,
@@ -276,15 +275,9 @@ pub(in crate::runner) fn resolve(
         .collect();
 
     let mut unusable = Unusable::default();
-    let (planned, refused) = resolve_evaluations(
-        evaluations,
-        evaluation_defaults,
-        registry,
-        &catalogs,
-        collector,
-    );
+    let (planned, refused) = resolve_evaluations(evaluations, registry, &catalogs, collector);
     unusable.evaluations = refused;
-    let refused: HashSet<&EntryName> = unusable
+    let refused: HashSet<&EvaluationName> = unusable
         .evaluations
         .iter()
         .map(|evaluation| &evaluation.name)

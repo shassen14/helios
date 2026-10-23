@@ -10,8 +10,11 @@ use scenario_ref::ScenarioRef;
 use termination::Termination;
 
 use crate::{
-    assertion::{Assertion, Measure},
-    evaluation::{Evaluation, EvaluationDefaults},
+    assertion::{Assertion, EntryName, Measure},
+    evaluation::{
+        suite::{Suite, SuiteApplication},
+        Evaluation, EvaluationDefaults,
+    },
 };
 
 use serde::Deserialize;
@@ -23,30 +26,19 @@ const CURRENT_VERSION: &str = "2.0";
 /// The key every run file carries its version under.
 const VERSION_KEY: &str = "schema_version";
 
-/// _Pre-step._ The run-file vocabulary: the single top-level deserialize target
-/// that ties scenario + observation + assertions + measures + evaluations +
-/// termination into one file.
-///
-/// `deny_unknown_fields` rejects stray or misspelled top-level keys.
-/// `assert`, `measure` and `evaluate` are the author-facing keys for the
-/// three lists (`[[assert]]`, `[[measure]]`, `[[evaluate]]`); `default` lets
-/// a run declare none — a pure smoke run that only exercises the scenario is
-/// valid.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// _Pre-step._ A run: scenario + observation + assertions + measures +
+/// evaluations + suites + termination, as [`load`] read it, with each suite
+/// file its `[[suite]]` entries name.
+#[derive(Debug, Clone)]
 pub struct Run {
     schema_version: SchemaVersion,
     scenario: ScenarioRef,
     observation: ObservationRef,
-    #[serde(default, rename = "assert")]
     assertions: Vec<Assertion>,
-    #[serde(default, rename = "measure")]
     measures: Vec<Measure>,
-    #[serde(default, rename = "evaluate")]
     evaluations: Vec<Evaluation>,
-    /// `[evaluation]`, what every evaluation shares unless it gives its own.
-    #[serde(default, rename = "evaluation")]
     evaluation_defaults: Option<EvaluationDefaults>,
+    suites: Vec<Suite>,
     termination: Termination,
 }
 
@@ -81,9 +73,42 @@ impl Run {
         self.evaluation_defaults.as_ref()
     }
 
+    /// Each `[[suite]]`, in run-file order, with its suite file.
+    pub fn suites(&self) -> &[Suite] {
+        &self.suites
+    }
+
     pub fn termination(&self) -> &Termination {
         &self.termination
     }
+}
+
+/// The run-file vocabulary: the single top-level deserialize target, with
+/// each `[[suite]]` naming its suite file, not yet read.
+///
+/// `deny_unknown_fields` rejects stray or misspelled top-level keys.
+/// `assert`, `measure`, `evaluate` and `suite` are the author-facing keys for
+/// the four lists (`[[assert]]`, `[[measure]]`, `[[evaluate]]`,
+/// `[[suite]]`); `default` lets a run declare none — a pure smoke run that
+/// only exercises the scenario is valid.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunFile {
+    schema_version: SchemaVersion,
+    scenario: ScenarioRef,
+    observation: ObservationRef,
+    #[serde(default, rename = "assert")]
+    assertions: Vec<Assertion>,
+    #[serde(default, rename = "measure")]
+    measures: Vec<Measure>,
+    #[serde(default, rename = "evaluate")]
+    evaluations: Vec<Evaluation>,
+    /// `[evaluation]`, what every evaluation shares unless it gives its own.
+    #[serde(default, rename = "evaluation")]
+    evaluation_defaults: Option<EvaluationDefaults>,
+    #[serde(default, rename = "suite")]
+    suites: Vec<SuiteApplication>,
+    termination: Termination,
 }
 
 /// _Pre-step._ A run file's format version. Only the current one
@@ -129,7 +154,8 @@ pub struct UnsupportedVersion {
 
 /// _Pre-step._ Why a run file couldn't be loaded. The variants stay distinct so a
 /// caller can tell *unreadable* from *outdated* from *malformed* from
-/// *incoherent*: `Io`, `UnsupportedVersion` and `Parse` come from [`load`];
+/// *incoherent*: `Io`, `UnsupportedVersion`, `Parse` and the two suite
+/// variants come from [`load`];
 /// `Validation` is produced by the separate `validate` pass. Each carries its
 /// source so the report can show the detail rather than a bare "load failed".
 ///
@@ -143,26 +169,92 @@ pub enum RunLoadError {
     UnsupportedVersion(#[from] UnsupportedVersion),
     #[error("failed to parse run file: {0}")]
     Parse(#[from] toml::de::Error),
+    #[error("suite '{name}': failed to read its suite file '{from}': {source}")]
+    SuiteIo {
+        name: EntryName,
+        from: String,
+        source: std::io::Error,
+    },
+    #[error("suite '{name}': failed to parse its suite file '{from}': {source}")]
+    SuiteParse {
+        name: EntryName,
+        from: String,
+        source: Box<toml::de::Error>,
+    },
     #[error("run file failed validation")]
     Validation,
 }
 
-/// Read and parse a run file. Parse-only: this answers "can I read this?", not
-/// "is this a sane run?" — cross-field coherence is `validate`'s job, which
-/// keeps the two concerns and their error variants separate.
+/// Read and parse the run file at `path`, and each suite file it names,
+/// resolved against `config_root` as the scenario's `from` is.
+/// Parse-only: this answers "can I read this?", not "is this a sane run?" —
+/// cross-field coherence is `validate`'s job, which keeps the two concerns
+/// and their error variants separate.
+pub fn load(path: &Path, config_root: &Path) -> Result<Run, RunLoadError> {
+    let text = std::fs::read_to_string(path)?;
+    parse(&text, |from| {
+        std::fs::read_to_string(config_root.join(from))
+    })
+}
+
+/// Parse the run file `text`, reading each suite file it names through
+/// `read_suite`, given the `from` its `[[suite]]` writes.
 ///
 /// The version is read first, from the file as a plain TOML table: parsed
-/// straight into [`Run`], an older file fails on its first changed key, and
-/// the author sees that serde error instead of what changed. A file with no
-/// string version falls through to the typed parse, which names the problem.
-pub fn load(path: &Path) -> Result<Run, RunLoadError> {
-    let text = std::fs::read_to_string(path)?;
-    let table = toml::from_str::<toml::Table>(&text)?;
+/// straight into the run file's type, an older file fails on its first
+/// changed key, and the author sees that serde error instead of what
+/// changed. A file with no string version falls through to the typed parse,
+/// which names the problem.
+pub fn parse(
+    text: &str,
+    read_suite: impl Fn(&str) -> std::io::Result<String>,
+) -> Result<Run, RunLoadError> {
+    let table = toml::from_str::<toml::Table>(text)?;
     if let Some(version) = table.get(VERSION_KEY).and_then(toml::Value::as_str) {
         SchemaVersion::try_from(version.to_string())?;
     }
-    let run = toml::from_str::<Run>(&text)?;
-    Ok(run)
+    let file = toml::from_str::<RunFile>(text)?;
+    let suites = file
+        .suites
+        .into_iter()
+        .map(|application| {
+            let text = read_suite(&application.from).map_err(|source| RunLoadError::SuiteIo {
+                name: application.name.clone(),
+                from: application.from.clone(),
+                source,
+            })?;
+            let config = toml::from_str(&text).map_err(|source| RunLoadError::SuiteParse {
+                name: application.name.clone(),
+                from: application.from.clone(),
+                source: Box::new(source),
+            })?;
+            Ok(Suite {
+                application,
+                config,
+            })
+        })
+        .collect::<Result<_, RunLoadError>>()?;
+    Ok(Run {
+        schema_version: file.schema_version,
+        scenario: file.scenario,
+        observation: file.observation,
+        assertions: file.assertions,
+        measures: file.measures,
+        evaluations: file.evaluations,
+        evaluation_defaults: file.evaluation_defaults,
+        suites,
+        termination: file.termination,
+    })
+}
+
+/// A suite reader for a run that names no suite file: each is refused, so a
+/// test run naming one fails to parse.
+#[cfg(test)]
+pub(crate) fn no_suite_files(from: &str) -> std::io::Result<String> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("no suite file '{from}' in this test"),
+    ))
 }
 
 #[cfg(test)]
@@ -219,7 +311,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("helios_run_test_{}_{n}.toml", std::process::id()));
         std::fs::write(&path, contents).unwrap();
-        let result = load(&path);
+        let result = load(&path, Path::new(""));
         let _ = std::fs::remove_file(&path);
         result
     }
@@ -266,7 +358,7 @@ mod tests {
     #[test]
     fn no_run_of_another_version_parses_even_bypassing_load() {
         let text = VALID.replace("\"2.0\"", "\"1.0\"");
-        assert!(toml::from_str::<Run>(&text).is_err());
+        assert!(parse(&text, no_suite_files).is_err());
     }
 
     #[test]
@@ -285,7 +377,7 @@ mod tests {
 
     #[test]
     fn missing_file_is_io_error() {
-        let run = load(Path::new("/no/such/run/file.toml"));
+        let run = load(Path::new("/no/such/run/file.toml"), Path::new(""));
         assert!(matches!(run, Err(RunLoadError::Io(_))));
     }
 
@@ -299,5 +391,78 @@ mod tests {
             extra_key = true
         "#;
         assert!(matches!(load_str(toml), Err(RunLoadError::Parse(_))));
+    }
+
+    const APPLYING: &str = r#"
+        schema_version = "2.0"
+        scenario = { from = "s" }
+        observation = { from = "o" }
+        termination = { max_simulated_seconds = 5.0 }
+
+        [[suite]]
+        name = "tracking"
+        from = "test/evaluations/twist.toml"
+        agents = ["car"]
+    "#;
+
+    const TWIST_SUITE: &str = r#"
+        [[evaluate]]
+        name = "twist"
+        kind = "twist_tracking"
+        [evaluate.inputs]
+        truth = "truth.twist"
+        reference = "reference"
+    "#;
+
+    #[test]
+    fn a_suite_is_read_from_the_file_its_application_names() {
+        let run = parse(APPLYING, |from| {
+            assert_eq!(from, "test/evaluations/twist.toml");
+            Ok(TWIST_SUITE.to_owned())
+        })
+        .expect("the run and its suite parse");
+
+        let [suite] = run.suites() else {
+            panic!("one suite");
+        };
+        assert_eq!(suite.application.name.as_str(), "tracking");
+        assert_eq!(suite.config.evaluations.len(), 1);
+    }
+
+    #[test]
+    fn a_suite_file_resolves_against_the_config_root() {
+        let root = std::env::temp_dir().join(format!("helios_suite_root_{}", std::process::id()));
+        let suite = root.join("test/evaluations/twist.toml");
+        std::fs::create_dir_all(suite.parent().unwrap()).unwrap();
+        std::fs::write(&suite, TWIST_SUITE).unwrap();
+        let run_path = root.join("run.toml");
+        std::fs::write(&run_path, APPLYING).unwrap();
+
+        let run = load(&run_path, &root);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(run.expect("both files read").suites().len(), 1);
+    }
+
+    #[test]
+    fn a_suite_file_unread_or_malformed_is_refused_naming_its_suite() {
+        let missing = parse(APPLYING, no_suite_files).expect_err("no suite file");
+        assert!(
+            matches!(missing, RunLoadError::SuiteIo { .. }),
+            "{missing:?}"
+        );
+        assert!(
+            missing
+                .to_string()
+                .starts_with("suite 'tracking': failed to read its suite file"),
+            "{missing}"
+        );
+
+        let malformed =
+            parse(APPLYING, |_| Ok("[[evaluate]]\nname = 3".to_owned())).expect_err("malformed");
+        assert!(
+            matches!(malformed, RunLoadError::SuiteParse { .. }),
+            "{malformed:?}"
+        );
     }
 }

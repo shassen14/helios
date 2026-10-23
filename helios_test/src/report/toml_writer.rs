@@ -164,6 +164,8 @@ mod tests {
     fn twist_evaluation() -> EvaluationReportEntry {
         EvaluationReportEntry {
             name: "twist".to_string(),
+            application: None,
+            agent: None,
             kind: "twist_tracking".to_string(),
             samples: 100,
             uncovered: 1,
@@ -173,6 +175,7 @@ mod tests {
             inputs: vec![
                 InputReport {
                     role: "truth".to_string(),
+                    series: None,
                     target: AssertionTarget::parse("agent.car.channel.truth.twist")
                         .expect("valid target")
                         .with_instance(InstanceSelector::One("agent.car.base_link".into())),
@@ -185,6 +188,7 @@ mod tests {
                 },
                 InputReport {
                     role: "reference".to_string(),
+                    series: None,
                     target: AssertionTarget::parse("agent.car.channel.reference")
                         .expect("valid target"),
                     instance: None,
@@ -350,6 +354,31 @@ mod tests {
         assert_eq!(evaluation["binding"]["roots"].as_str(), Some(roots));
         assert!(evaluation.get("roots").is_none());
         assert_eq!(evaluation["params"]["align"].as_str(), Some("declared"));
+    }
+
+    #[test]
+    fn a_suites_entry_names_its_application_agent_and_each_inputs_series() {
+        let inline = written(&sample_report());
+        let inline = &inline["evaluations"].as_array().unwrap()[0];
+        assert!(inline.get("application").is_none());
+        assert!(inline.get("agent").is_none());
+        assert!(inline["inputs"].as_array().unwrap()[0]
+            .get("series")
+            .is_none());
+
+        let mut report = sample_report();
+        report.evaluations[0].application = Some("tracking".to_owned());
+        report.evaluations[0].agent = Some("car".to_owned());
+        report.evaluations[0].inputs[0].series = Some("truth.twist".to_owned());
+        let value = written(&report);
+
+        let evaluation = &value["evaluations"].as_array().unwrap()[0];
+        assert_eq!(evaluation["application"].as_str(), Some("tracking"));
+        assert_eq!(evaluation["agent"].as_str(), Some("car"));
+        assert_eq!(
+            evaluation["inputs"].as_array().unwrap()[0]["series"].as_str(),
+            Some("truth.twist")
+        );
     }
 
     #[test]

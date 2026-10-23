@@ -78,6 +78,7 @@ pub(super) fn report_evaluation(
             let (writer, provenance) = InputReport::writer_of(input.writer.as_ref());
             InputReport {
                 role: input.role.to_owned(),
+                series: input.series.map(|series| series.to_string()),
                 target: input.target.clone(),
                 instance: instance(&input.key),
                 writer,
@@ -98,8 +99,11 @@ pub(super) fn report_evaluation(
             samples: series.as_ref().map(|series| series.samples().len()),
         })
         .collect();
+    let applied = evaluation.name.applied();
     EvaluationReportEntry {
         name: evaluation.name.to_string(),
+        application: applied.map(|(_, application)| application.to_string()),
+        agent: applied.map(|(agent, _)| agent.as_str().to_owned()),
         kind: evaluation.kind.to_owned(),
         samples: derived.base_samples,
         uncovered: derived.uncovered,

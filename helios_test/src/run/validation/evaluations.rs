@@ -1,94 +1,166 @@
-//! Evaluations against the kinds they name, and the derived series an
-//! assertion or measure reads against the evaluations that offer them.
+//! Evaluations against the kinds they name, inline and in each suite, and
+//! the derived series an assertion or measure reads against the evaluations
+//! that offer them.
 
 use super::ValidationError;
 use crate::{
     assertion::{EntryName, TargetRoot},
-    evaluation::{kind::EvaluatorKind, EvaluatorRegistry},
+    evaluation::{
+        kind::EvaluatorKind,
+        path::{AgentEntry, DerivedName, EvaluationName},
+        suite::{AgentSelection, Suite},
+        Evaluation, EvaluatorRegistry,
+    },
     run::Run,
 };
 
 use std::collections::HashMap;
 
-/// Each evaluation's kind, by the evaluation's name, once every evaluation
+/// The kind of each evaluation a run declares: an inline one's by its name,
+/// a suite's by the name it was applied under and its entry's.
+pub(super) struct Kinds<'a, 'r> {
+    inline: HashMap<&'a EntryName, &'r dyn EvaluatorKind>,
+    suites: HashMap<&'a EntryName, AppliedKinds<'a, 'r>>,
+}
+
+/// One applied suite, and its entries' kinds by name.
+struct AppliedKinds<'a, 'r> {
+    suite: &'a Suite,
+    entries: HashMap<&'a EntryName, &'r dyn EvaluatorKind>,
+}
+
+/// Each evaluation's kind, once every evaluation, inline or in a suite,
 /// names a registered kind, a series for each of its roles and no other,
-/// recorded series only, parameters the kind reads, gaps for its roles only,
-/// and a frame policy that is built and that the kind applies.
+/// parameters the kind reads and gaps for its roles only; an inline one
+/// reads recorded series only, and a suite's reads, in each role, a series
+/// carrying the payload type the role reads, when the series' type is fixed.
+/// A suite's entries are named apart.
 pub(super) fn check_evaluations<'a, 'r>(
     run: &'a Run,
     evaluators: &'r EvaluatorRegistry,
-) -> Result<HashMap<&'a EntryName, &'r dyn EvaluatorKind>, ValidationError> {
-    let mut kinds = HashMap::new();
+) -> Result<Kinds<'a, 'r>, ValidationError> {
+    let mut inline = HashMap::new();
     for evaluation in run.evaluations() {
-        let name = &evaluation.name;
-        let Some(kind) = evaluators.get(&evaluation.kind) else {
-            return Err(ValidationError::UnknownKind {
-                name: name.clone(),
-                kind: evaluation.kind.clone(),
-                known: evaluators.names().join(", "),
-            });
+        let kind = check_evaluation(evaluation, evaluators, |_, role, target| {
+            if target.is_recorded() {
+                Ok(())
+            } else {
+                Err(ValidationError::DerivedInput {
+                    name: evaluation.name.clone(),
+                    role: role.to_owned(),
+                })
+            }
+        })?;
+        inline.insert(&evaluation.name, kind);
+    }
+
+    let mut suites = HashMap::new();
+    for suite in run.suites() {
+        let in_suite = |error| ValidationError::Suite {
+            suite: suite.application.name.clone(),
+            from: suite.application.from.clone(),
+            error: Box::new(error),
         };
-        let roles = kind.roles();
-        if let Some(role) = roles
+        let mut entries = HashMap::new();
+        for evaluation in &suite.config.evaluations {
+            if entries.contains_key(&evaluation.name) {
+                return Err(in_suite(ValidationError::DuplicateSuiteEntry(
+                    evaluation.name.clone(),
+                )));
+            }
+            // A series whose type is fixed is refused here, before a sim
+            // starts; the reference's type is known only once bound.
+            let kind = check_evaluation(evaluation, evaluators, |kind, role, &series| {
+                let index = kind
+                    .roles()
+                    .iter()
+                    .position(|declared| declared.name == role);
+                match index.map(|index| kind.series_key(index, series)) {
+                    Some(Err(problem)) => Err(ValidationError::UnfitSeries {
+                        name: evaluation.name.clone(),
+                        problem,
+                    }),
+                    _ => Ok(()),
+                }
+            })
+            .map_err(in_suite)?;
+            entries.insert(&evaluation.name, kind);
+        }
+        suites.insert(&suite.application.name, AppliedKinds { suite, entries });
+    }
+    Ok(Kinds { inline, suites })
+}
+
+/// `evaluation`'s kind, once it names a registered kind, an input for each
+/// of its roles and no other, each passing `check_input` (given the kind,
+/// the role's name and its input), parameters the kind reads, and gaps for
+/// its roles only.
+fn check_evaluation<'r, I>(
+    evaluation: &Evaluation<I>,
+    evaluators: &'r EvaluatorRegistry,
+    check_input: impl Fn(&dyn EvaluatorKind, &str, &I) -> Result<(), ValidationError>,
+) -> Result<&'r dyn EvaluatorKind, ValidationError> {
+    let name = &evaluation.name;
+    let Some(kind) = evaluators.get(&evaluation.kind) else {
+        return Err(ValidationError::UnknownKind {
+            name: name.clone(),
+            kind: evaluation.kind.clone(),
+            known: evaluators.names().join(", "),
+        });
+    };
+    let roles = kind.roles();
+    let role_names = || {
+        roles
             .iter()
-            .find(|role| !evaluation.inputs.contains_key(role.name))
-        {
-            return Err(ValidationError::MissingInput {
-                name: name.clone(),
-                role: role.name,
-            });
-        }
-        for (role, target) in &evaluation.inputs {
-            if !roles.iter().any(|declared| declared.name == role) {
-                return Err(ValidationError::UnknownInput {
-                    name: name.clone(),
-                    role: role.clone(),
-                    roles: roles
-                        .iter()
-                        .map(|role| role.name)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                });
-            }
-            if !target.is_recorded() {
-                return Err(ValidationError::DerivedInput {
-                    name: name.clone(),
-                    role: role.clone(),
-                });
-            }
-        }
-        if let Err(problem) = kind.check_params(&evaluation.params) {
-            return Err(ValidationError::UnusableParams {
-                name: name.clone(),
-                problem,
-            });
-        }
-        if let Some(role) = evaluation
-            .gap
-            .keys()
-            .find(|role| !roles.iter().any(|declared| declared.name == *role))
-        {
-            return Err(ValidationError::UnknownGapRole {
+            .map(|role| role.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if let Some(role) = roles
+        .iter()
+        .find(|role| !evaluation.inputs.contains_key(role.name))
+    {
+        return Err(ValidationError::MissingInput {
+            name: name.clone(),
+            role: role.name,
+        });
+    }
+    for (role, input) in &evaluation.inputs {
+        if !roles.iter().any(|declared| declared.name == role) {
+            return Err(ValidationError::UnknownInput {
                 name: name.clone(),
                 role: role.clone(),
-                roles: roles
-                    .iter()
-                    .map(|role| role.name)
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                roles: role_names(),
             });
         }
-        kinds.insert(name, kind);
+        check_input(kind, role, input)?;
     }
-    Ok(kinds)
+    if let Err(problem) = kind.check_params(&evaluation.params) {
+        return Err(ValidationError::UnusableParams {
+            name: name.clone(),
+            problem,
+        });
+    }
+    if let Some(role) = evaluation
+        .gap
+        .keys()
+        .find(|role| !roles.iter().any(|declared| declared.name == *role))
+    {
+        return Err(ValidationError::UnknownGapRole {
+            name: name.clone(),
+            role: role.clone(),
+            roles: role_names(),
+        });
+    }
+    Ok(kind)
 }
 
 /// Whether each derived series an assertion or measure names is a metric
-/// of an evaluation the run declares.
-pub(super) fn check_derived_targets(
-    run: &Run,
-    kinds: &HashMap<&EntryName, &dyn EvaluatorKind>,
-) -> Result<(), ValidationError> {
+/// of an evaluation the run declares: an inline entry, or an entry of a
+/// suite applied under that name, to that agent when the suite lists its
+/// agents. Under `"*"`, whether the run has the agent is known only at
+/// setup.
+pub(super) fn check_derived_targets(run: &Run, kinds: &Kinds) -> Result<(), ValidationError> {
     let targets = run
         .assertions()
         .iter()
@@ -102,12 +174,17 @@ pub(super) fn check_derived_targets(
         let TargetRoot::Derived(derived) = target.root() else {
             continue;
         };
-        let Some(kind) = kinds.get(derived.evaluation()) else {
-            return Err(ValidationError::UnknownEvaluation {
+        let kind = kind_of(derived, kinds).map_err(|why| match why {
+            None => ValidationError::UnknownEvaluation {
                 name: name.clone(),
                 target: derived.clone(),
-            });
-        };
+            },
+            Some(why) => ValidationError::UnappliedSuiteTarget {
+                name: name.clone(),
+                target: derived.clone(),
+                why,
+            },
+        })?;
         // A menu known only once bound is checked at setup.
         let Some(metrics) = kind.menu() else {
             continue;
@@ -125,6 +202,50 @@ pub(super) fn check_derived_targets(
         }
     }
     Ok(())
+}
+
+/// The kind of the evaluation `derived` is a metric of, or why the run
+/// declares none: `None` for an inline name, which no entry has, or what
+/// is wrong with a suite's.
+fn kind_of<'r>(
+    derived: &DerivedName,
+    kinds: &Kinds<'_, 'r>,
+) -> Result<&'r dyn EvaluatorKind, Option<String>> {
+    match derived.evaluation() {
+        EvaluationName::Inline(entry) => kinds.inline.get(entry).copied().ok_or(None),
+        EvaluationName::Agent(named) => {
+            let AgentEntry {
+                agent,
+                application,
+                entry,
+            } = &**named;
+            let Some(applied) = kinds.suites.get(application) else {
+                return Err(Some(format!(
+                    "names no [[suite]]: none is named '{application}'"
+                )));
+            };
+            let Some(kind) = applied.entries.get(entry) else {
+                let mut names: Vec<&str> =
+                    applied.entries.keys().map(|name| name.as_str()).collect();
+                names.sort_unstable();
+                return Err(Some(format!(
+                    "names no entry of suite '{application}': it has no '{entry}' (it has {})",
+                    names.join(", ")
+                )));
+            };
+            if let AgentSelection::Listed(agents) = &applied.suite.application.agents {
+                if !agents.contains(agent) {
+                    let listed: Vec<&str> = agents.iter().map(|agent| agent.as_str()).collect();
+                    return Err(Some(format!(
+                        "names agent '{}', and suite '{application}' is applied to {} only",
+                        agent.as_str(),
+                        listed.join(", ")
+                    )));
+                }
+            }
+            Ok(*kind)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -246,5 +367,132 @@ mod tests {
             ),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_suite_with_an_assertion_on_its_metric_on_a_listed_agent_is_ok() {
+        let run = applying(
+            &max_of("a", "eval.agent.car.tracking.twist.surge"),
+            &[("tracking", "[\"car\"]", TWIST_SUITE)],
+        );
+        assert_eq!(check(&run), Ok(()));
+    }
+
+    #[test]
+    fn a_suites_entries_are_checked_as_inline_ones_naming_the_suite() {
+        let run = applying(
+            "",
+            &[(
+                "tracking",
+                "\"*\"",
+                &TWIST_SUITE.replace("twist_tracking", "goal_distance"),
+            )],
+        );
+        let error = check(&run).expect_err("no such kind");
+        assert!(
+            matches!(&error, ValidationError::Suite { error, .. }
+                if matches!(**error, ValidationError::UnknownKind { .. })),
+            "{error:?}"
+        );
+        assert!(
+            error.to_string().starts_with(
+                "suite 'tracking' (tracking.toml): evaluation 'twist': no evaluator kind"
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_fixed_type_series_read_by_a_role_of_another_type_is_refused_at_load() {
+        let run = applying(
+            "",
+            &[(
+                "tracking",
+                "\"*\"",
+                &TWIST_SUITE.replace("\"truth.twist\"", "\"truth.pose\""),
+            )],
+        );
+        let error = check(&run).expect_err("a pose is not a twist");
+        assert!(
+            matches!(&error, ValidationError::Suite { error, .. }
+                if matches!(**error, ValidationError::UnfitSeries { .. })),
+            "{error:?}"
+        );
+        assert!(
+            error.to_string().contains("`truth.pose` carries"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn two_entries_of_one_suite_may_not_share_a_name() {
+        let run = applying(
+            "",
+            &[("tracking", "\"*\"", &format!("{TWIST_SUITE}{TWIST_SUITE}"))],
+        );
+        assert!(matches!(
+            check(&run),
+            Err(ValidationError::Suite { error, .. })
+                if *error == ValidationError::DuplicateSuiteEntry(EntryName::parse("twist").unwrap())
+        ));
+    }
+
+    #[test]
+    fn a_suite_shares_the_name_space_of_the_runs_entries() {
+        let run = applying(
+            &max_of("tracking", "agent.car.node.estimator.x"),
+            &[("tracking", "\"*\"", TWIST_SUITE)],
+        );
+        assert_eq!(
+            check(&run),
+            Err(ValidationError::DuplicateName(
+                EntryName::parse("tracking").unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_suite_metric_names_an_applied_suite_its_entry_and_a_listed_agent() {
+        let suites = [("tracking", "[\"car\"]", TWIST_SUITE)];
+        for (target, why) in [
+            (
+                "eval.agent.car.steering.twist.surge",
+                "none is named 'steering'",
+            ),
+            (
+                "eval.agent.car.tracking.yaw.surge",
+                "it has no 'yaw' (it has twist)",
+            ),
+            (
+                "eval.agent.truck.tracking.twist.surge",
+                "applied to car only",
+            ),
+        ] {
+            let error = check(&applying(&max_of("a", target), &suites)).expect_err(target);
+            assert!(
+                matches!(error, ValidationError::UnappliedSuiteTarget { .. }),
+                "{target}: {error:?}"
+            );
+            assert!(error.to_string().contains(why), "{target}: {error}");
+        }
+    }
+
+    #[test]
+    fn under_every_agent_any_agent_passes_load_and_the_metric_is_still_checked() {
+        let suites = [("tracking", "\"*\"", TWIST_SUITE)];
+        assert_eq!(
+            check(&applying(
+                &max_of("a", "eval.agent.truck.tracking.twist.surge"),
+                &suites
+            )),
+            Ok(())
+        );
+        assert!(matches!(
+            check(&applying(
+                &max_of("a", "eval.agent.truck.tracking.twist.surge_error"),
+                &suites
+            )),
+            Err(ValidationError::UnknownMetric { .. })
+        ));
     }
 }

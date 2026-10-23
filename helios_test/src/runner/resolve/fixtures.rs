@@ -2,6 +2,7 @@
 //! channel and an outside input, and entries resolved against it.
 
 use super::{
+    evaluations::RunEvaluations,
     plan::{resolve, EntryOwner, ResolvedPlan, SeriesSource},
     problems::{TargetProblem, UnusableEntry},
 };
@@ -250,8 +251,7 @@ pub(super) fn resolve_all(
     extractors.register::<FrameSample, String>(|sample| sample.0.to_string(), None);
     let mut collector = ObservationCollector::new(extractors);
     let resolved = resolve(
-        &[],
-        None,
+        RunEvaluations::default(),
         &assertions,
         &measures,
         &standard_evaluators(),

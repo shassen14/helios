@@ -17,14 +17,16 @@ use std::{fmt, sync::Arc};
 const PATH_KEY: &str = "path";
 const INSTANCE_KEY: &str = "instance";
 
-/// How a selector asks for every instance of a keyed channel.
-const EACH_INSTANCE: &str = "*";
+/// How a selector asks for every instance of a keyed channel, and a suite
+/// application for every agent of the run.
+pub(crate) const WILDCARD: &str = "*";
 
 /// _Shared (pre + per + post)._ A selector: the path of a series, held whole
 /// and in its parts, and, on a keyed channel, which of its instances. A
 /// recorded series' path is the watcher path it is recorded under
 /// (`agent.<agent>.node.<node>.<leaf>` or `agent.<agent>.channel.<channel>`);
-/// a derived one's is `eval.inline.<evaluation>.<metric>`.
+/// a derived one's is `eval.inline.<evaluation>.<metric>`, or
+/// `eval.agent.<agent>.<suite>.<evaluation>.<metric>` for a suite's.
 ///
 /// Written as the path alone, or as `{ path = "…", instance = "…" }`: an
 /// instance gets its own field because its spelling holds dots (a frame,
@@ -179,7 +181,7 @@ impl<'de> Visitor<'de> for TargetVisitor {
         write!(
             f,
             "a watcher path, or {{ {PATH_KEY} = \"<path>\", {INSTANCE_KEY} = \"<instance>\" \
-             or \"{EACH_INSTANCE}\" }}"
+             or \"{WILDCARD}\" }}"
         )
     }
 
@@ -221,7 +223,7 @@ impl TryFrom<String> for InstanceSelector {
     fn try_from(instance: String) -> Result<Self, Self::Error> {
         match instance.as_str() {
             "" => Err("an instance is never empty; leave `instance` out to name none"),
-            EACH_INSTANCE => Ok(InstanceSelector::Each),
+            WILDCARD => Ok(InstanceSelector::Each),
             _ => Ok(InstanceSelector::One(instance.into())),
         }
     }
@@ -231,7 +233,7 @@ impl fmt::Display for InstanceSelector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             InstanceSelector::One(one) => f.write_str(one),
-            InstanceSelector::Each => f.write_str(EACH_INSTANCE),
+            InstanceSelector::Each => f.write_str(WILDCARD),
         }
     }
 }
@@ -294,11 +296,15 @@ pub enum TargetFault {
     #[error(
         "is not a watcher path agent.<agent>.node.<node>.<leaf> or \
          agent.<agent>.channel.<channel>, nor a derived series \
-         eval.inline.<evaluation>.<metric>: {}",
+         eval.inline.<evaluation>.<metric> or \
+         eval.agent.<agent>.<suite>.<evaluation>.<metric>: {}",
         what_is_wrong(*.0)
     )]
     Recorded(PathPart),
-    #[error("is not a derived series eval.inline.<evaluation>.<metric>: {0}")]
+    #[error(
+        "is not a derived series eval.inline.<evaluation>.<metric> or \
+         eval.agent.<agent>.<suite>.<evaluation>.<metric>: {0}"
+    )]
     Derived(DerivedProblem),
 }
 
@@ -321,7 +327,7 @@ fn what_is_wrong(part: PathPart) -> String {
 mod tests {
     use super::*;
 
-    use crate::assertion::EntryName;
+    use crate::{assertion::EntryName, evaluation::path::EvaluationName};
 
     use helios_runtime::channels;
 
@@ -367,7 +373,7 @@ mod tests {
         assert_eq!(
             target.root(),
             &TargetRoot::Derived(DerivedName::new(
-                EntryName::parse("twist").expect("valid name"),
+                EvaluationName::Inline(EntryName::parse("twist").expect("valid name")),
                 "surge_error"
             ))
         );
@@ -380,7 +386,9 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "target 'eval.inline.twist' is not a derived series \
-             eval.inline.<evaluation>.<metric>: the metric is missing or not one level"
+             eval.inline.<evaluation>.<metric> or \
+             eval.agent.<agent>.<suite>.<evaluation>.<metric>: the metric is missing or not one \
+             level"
         );
     }
 

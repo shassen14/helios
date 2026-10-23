@@ -27,11 +27,11 @@ pub enum ValidationError {
     )]
     FailFastWithoutEverySample,
     /// Names identify verdicts in the report and across runs, so two
-    /// entries can't share one, whether assertions, measures or
-    /// evaluations.
+    /// entries can't share one, whether assertions, measures, evaluations
+    /// or suites.
     #[error(
-        "two entries are named '{0}'; names are unique across [[assert]], [[measure]] and \
-         [[evaluate]]"
+        "two entries are named '{0}'; names are unique across [[assert]], [[measure]], \
+         [[evaluate]] and [[suite]]"
     )]
     DuplicateName(EntryName),
     #[error("assertion '{name}': {problem}")]
@@ -77,10 +77,31 @@ pub enum ValidationError {
         role: String,
         roles: String,
     },
+    /// A problem in a suite file, named with the suite.
+    #[error("suite '{suite}' ({from}): {error}")]
+    Suite {
+        suite: EntryName,
+        from: String,
+        error: Box<ValidationError>,
+    },
+    #[error("two evaluations of the suite are named '{0}'")]
+    DuplicateSuiteEntry(EntryName),
+    /// A suite's role reading an agent series of another type than it reads.
+    #[error("evaluation '{name}': {problem}")]
+    UnfitSeries { name: EntryName, problem: String },
     #[error("'{name}': '{target}' names no [[evaluate]] entry")]
     UnknownEvaluation {
         name: EntryName,
         target: DerivedName,
+    },
+    /// A derived series of a suite's evaluation the run doesn't apply: no
+    /// suite of that name, no entry of that name in it, or an agent it isn't
+    /// applied to.
+    #[error("'{name}': '{target}' {why}")]
+    UnappliedSuiteTarget {
+        name: EntryName,
+        target: DerivedName,
+        why: String,
     },
     #[error(
         "'{name}': '{target}' names a metric its evaluation doesn't offer (it offers {metrics})"

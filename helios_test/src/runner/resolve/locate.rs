@@ -164,25 +164,35 @@ pub(super) fn find<'c, 'a>(
 /// What the derived `target`, metric `name` of an evaluation, names: one
 /// series of floats in the metric's unit, held when the evaluation's base
 /// is, or why the run can't read it. A refused evaluation's metric is
-/// refused for that alone; its own reasons are reported with it.
+/// refused for that alone; its own reasons are reported with it. A suite's
+/// entry on an agent `catalogs` lacks is refused as an unknown agent.
 pub(super) fn locate_derived(
     target: &AssertionTarget,
     name: &DerivedName,
     allow_nondeterministic: bool,
     derivable: &Derivable,
+    catalogs: &[Catalog],
 ) -> Result<Located, Vec<TargetProblem>> {
     if derivable.refused.contains(name.evaluation()) {
         return Err(vec![TargetProblem::EvaluationUnusable]);
     }
     // Load checked the evaluation exists, and the metric when its kind's
-    // menu is fixed.
+    // menu is fixed; under `"*"`, only setup knows the run's agents.
     let Some((evaluation, planned)) = derivable
         .planned
         .iter()
         .enumerate()
         .find(|(_, planned)| &planned.name == name.evaluation())
     else {
-        return Err(vec![TargetProblem::Unreported]);
+        let unknown_agent = name
+            .evaluation()
+            .applied()
+            .is_some_and(|(agent, _)| !catalogs.iter().any(|catalog| catalog.agent == agent));
+        return Err(vec![if unknown_agent {
+            TargetProblem::UnknownAgent
+        } else {
+            TargetProblem::Unreported
+        }]);
     };
     let Some(metric) = planned
         .metrics

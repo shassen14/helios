@@ -7,7 +7,7 @@ use crate::evaluation::derived::Coverage;
 use helios_core::kernel::identifier::LEVEL_SEPARATOR;
 
 /// "[evaluate] <name>: <kind>[ (<param> = <value>, …, <bound> = <value>,
-/// …)] of <role> (<target>,
+/// …)] of <role> ([<series> at ]<target>,
 /// <writer>[, <provenance>][, gaps up to <seconds> s[ = <multiple> periods]]
 /// [, <n> before its first value][, <n> in its gaps][, <n> after its last
 /// value]), … (the base's cap reads "<n> gaps past <seconds> s")
@@ -58,8 +58,13 @@ pub(super) fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
                     }
                 }
             }
+            let series = input
+                .series
+                .as_ref()
+                .map(|series| format!("{series} at "))
+                .unwrap_or_default();
             format!(
-                "{} ({}{instance}, {}{provenance}{cap}{uncovered})",
+                "{} ({series}{}{instance}, {}{provenance}{cap}{uncovered})",
                 input.role,
                 input.target.path(),
                 input.writer
@@ -124,6 +129,8 @@ mod tests {
     fn an_evaluation_shows_its_inputs_coverage_and_the_metrics_read_then_offered() {
         let twist = EvaluationReportEntry {
             name: "twist".to_string(),
+            application: None,
+            agent: None,
             kind: "twist_tracking".to_string(),
             samples: 100,
             uncovered: 3,
@@ -133,6 +140,7 @@ mod tests {
             inputs: vec![
                 InputReport {
                     role: "truth".to_string(),
+                    series: None,
                     target: AssertionTarget::parse("agent.car.channel.truth.twist")
                         .expect("valid target"),
                     instance: Some("agent.car.base_link".to_string()),
@@ -144,6 +152,7 @@ mod tests {
                 },
                 InputReport {
                     role: "reference".to_string(),
+                    series: None,
                     target: AssertionTarget::parse("agent.car.channel.reference")
                         .expect("valid target"),
                     instance: None,
@@ -191,6 +200,8 @@ mod tests {
     fn an_evaluation_shows_its_params_what_binding_fixed_and_what_it_didnt_compute() {
         let pose = EvaluationReportEntry {
             name: "pose".to_string(),
+            application: None,
+            agent: None,
             kind: "pose_error".to_string(),
             samples: 10,
             uncovered: 0,

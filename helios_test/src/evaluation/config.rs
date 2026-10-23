@@ -31,19 +31,20 @@ pub struct Evaluation<I = AssertionTarget> {
     /// Read by the kind, which refuses any it doesn't know.
     #[serde(default)]
     pub params: toml::Table,
-    /// The widest gap each capped role named spans, in place of the run's
+    /// The widest gap each capped role named spans, in place of its file's
     /// `gap_multiple`, keyed by role as `inputs` is.
     #[serde(default)]
     pub gap: BTreeMap<String, Gap>,
 }
 
-/// _Pre-step._ `[evaluation]`: what every `[[evaluate]]` entry shares unless
-/// it gives its own.
+/// _Pre-step._ `[evaluation]`: what every `[[evaluate]]` entry in the same
+/// file shares unless it gives its own. A run file's applies to its inline
+/// entries only; a suite file's, to its own.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvaluationDefaults {
     /// The widest gap a capped role spans, in periods of its input's
-    /// declared rate. Policy for this run, so it shows in its report.
+    /// declared rate. Each cap it gives shows in the report.
     pub gap_multiple: GapWidth,
 }
 

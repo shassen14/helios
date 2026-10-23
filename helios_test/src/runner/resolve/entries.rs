@@ -11,6 +11,7 @@ use super::{
 use crate::{
     assertion::{AssertionTarget, Condition, EntryName, TargetRoot, Window},
     collector::ObservationCollector,
+    evaluation::path::EvaluationName,
     report::ReportedUnit,
     statistics::within_run::Reducer,
 };
@@ -35,7 +36,7 @@ pub(super) struct Wanted<'r> {
 /// and the names of those it refused.
 pub(super) struct Derivable<'a> {
     pub(super) planned: &'a [PlannedEvaluation],
-    pub(super) refused: &'a HashSet<&'a EntryName>,
+    pub(super) refused: &'a HashSet<&'a EvaluationName>,
 }
 
 /// The series an entry the run can evaluate reads.
@@ -60,9 +61,13 @@ pub(super) fn check<'r>(
 ) -> Result<Found<'r>, Vec<TargetProblem>> {
     let mut problems = Vec::new();
     let located = match wanted.target.root() {
-        TargetRoot::Derived(name) => {
-            locate_derived(wanted.target, name, wanted.allow_nondeterministic, derived)
-        }
+        TargetRoot::Derived(name) => locate_derived(
+            wanted.target,
+            name,
+            wanted.allow_nondeterministic,
+            derived,
+            catalogs,
+        ),
         TargetRoot::Agent { .. } => locate(
             wanted.target,
             wanted.allow_nondeterministic,

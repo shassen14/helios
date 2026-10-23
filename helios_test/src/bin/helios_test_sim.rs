@@ -39,8 +39,8 @@ struct SimCli {
     #[arg(long)]
     pub run: PathBuf,
 
-    /// Root directory for all Helios config files; the run's scenario `from` is
-    /// resolved relative to this.
+    /// Root directory for all Helios config files; the run's scenario `from`
+    /// and each suite's `from` are resolved relative to this.
     #[arg(long, default_value = "configs")]
     pub config_root: PathBuf,
 
@@ -86,7 +86,7 @@ fn main() {
     // --- Pre-flight: prove the run file is sane before spinning up a sim. ---
     // Any failure here is exit 2 ("the run file is wrong"), distinct from a
     // test that runs and fails (exit 1).
-    let run = match helios_test::run::load(&args.run) {
+    let run = match helios_test::run::load(&args.run, &args.config_root) {
         Ok(run) => run,
         Err(e) => {
             eprintln!("malformed run: {e}");

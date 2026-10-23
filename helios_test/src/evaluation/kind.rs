@@ -223,8 +223,8 @@ impl Cap {
                  writer declares a rate"
             )),
             (None, _) => Err(format!(
-                "the {role} {used}, and the run gives none: give \
-                 [evaluation] gap_multiple, or [evaluate.gap.{role}] multiple or seconds"
+                "the {role} {used}, and none is given: give [evaluation] gap_multiple in \
+                 the entry's file, or [evaluate.gap.{role}] multiple or seconds"
             )),
         }
     }

@@ -156,7 +156,7 @@ mod tests {
             {body}
             "#
         );
-        toml::from_str(&toml).expect("valid run toml")
+        crate::run::parse(&toml, crate::run::no_suite_files).expect("valid run toml")
     }
 
     #[test]

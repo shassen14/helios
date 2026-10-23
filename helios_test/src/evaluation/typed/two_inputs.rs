@@ -78,7 +78,7 @@ pub trait TwoInputs: Send + Sync + Sized + 'static {
     fn keep_other(&self, payload: &Self::OtherPayload) -> Result<Self::OtherValue, InputRejection>;
 
     /// How the other input lines up at each base stamp, and whether across
-    /// gaps up to a cap, which the run gives.
+    /// gaps up to a cap, which the entry's file gives.
     fn other_lining(&self) -> Lining<Self::OtherValue>;
 
     /// The metrics every evaluator of this kind offers, when they are fixed,
@@ -782,8 +782,8 @@ mod tests {
         assert_eq!(
             problems(Some(10.0), None),
             vec![
-                "the other spans gaps up to a cap, and the run gives none: give [evaluation] \
-                 gap_multiple, or [evaluate.gap.other] multiple or seconds"
+                "the other spans gaps up to a cap, and none is given: give [evaluation] \
+                 gap_multiple in the entry's file, or [evaluate.gap.other] multiple or seconds"
                     .to_owned()
             ]
         );

@@ -1,5 +1,5 @@
 use super::{
-    resolve::{resolve, Unusable},
+    resolve::{resolve, RunEvaluations, Unusable},
     Phase, Runner,
 };
 use crate::collector::ObservationCollector;
@@ -34,9 +34,13 @@ impl Runner {
             return Err(SetupError::AskedBeforeSetup);
         }
 
+        let evaluations = RunEvaluations {
+            inline: self.run.evaluations(),
+            defaults: self.run.evaluation_defaults(),
+            suites: self.run.suites(),
+        };
         match resolve(
-            self.run.evaluations(),
-            self.run.evaluation_defaults(),
+            evaluations,
             self.run.assertions(),
             self.run.measures(),
             &self.evaluators,
@@ -291,9 +295,9 @@ mod tests {
         assert_eq!(
             unusable.evaluations[0].problems,
             vec![EvaluationProblem::Refused(
-                "the actual is the base, whose gaps are found against a cap, and the run gives \
-                 none: give [evaluation] gap_multiple, or [evaluate.gap.actual] multiple or \
-                 seconds"
+                "the actual is the base, whose gaps are found against a cap, and none is \
+                 given: give [evaluation] gap_multiple in the entry's file, or \
+                 [evaluate.gap.actual] multiple or seconds"
                     .to_owned()
             )]
         );

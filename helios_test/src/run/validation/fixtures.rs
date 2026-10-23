@@ -2,7 +2,10 @@
 //! the real type, checked whole against the standard evaluator kinds.
 
 use super::{validate, ValidationError};
-use crate::{evaluation::standard_evaluators, run::Run};
+use crate::{
+    evaluation::standard_evaluators,
+    run::{self, Run},
+};
 
 /// `run` checked against the standard evaluator kinds.
 pub(super) fn check(run: &Run) -> Result<(), ValidationError> {
@@ -21,7 +24,7 @@ pub(super) fn run_with(body: &str) -> Run {
         {body}
         "#
     );
-    toml::from_str(&toml).unwrap()
+    run::parse(&toml, run::no_suite_files).unwrap()
 }
 
 pub(super) const BUDGET: &str = "termination = { max_simulated_seconds = 5.0 }";
@@ -69,3 +72,31 @@ pub(super) fn max_of(name: &str, target: &str) -> String {
          condition = {{ less_than = 1.0 }}"
     )
 }
+
+/// A run under a plain budget, with `body` and each of `suites` (its
+/// application's name, the agents it is applied to, and the suite file's
+/// text) applied.
+pub(super) fn applying(body: &str, suites: &[(&str, &str, &str)]) -> Run {
+    let mut text = format!(
+        "schema_version = \"2.0\"\nscenario = {{ from = \"s\" }}\n\
+         observation = {{ from = \"o\" }}\n{BUDGET}\n{body}\n"
+    );
+    for (name, agents, _) in suites {
+        text.push_str(&format!(
+            "\n[[suite]]\nname = \"{name}\"\nfrom = \"{name}.toml\"\nagents = {agents}\n"
+        ));
+    }
+    run::parse(&text, |from| {
+        suites
+            .iter()
+            .find(|(name, _, _)| format!("{name}.toml") == from)
+            .map(|(_, _, suite)| suite.to_string())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, from.to_owned()))
+    })
+    .expect("a valid run and suites")
+}
+
+/// A suite of one `twist_tracking` entry named "twist", over the car's
+/// reference and its true twist.
+pub(super) const TWIST_SUITE: &str = "[[evaluate]]\nname = \"twist\"\nkind = \"twist_tracking\"\n\
+     [evaluate.inputs]\ntruth = \"truth.twist\"\nreference = \"reference\"\n";

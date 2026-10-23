@@ -7,7 +7,7 @@ use crate::{assertion::TargetRoot, run::Run, statistics::within_run::Reducer};
 
 use std::collections::HashSet;
 
-/// Whether every entry is unique by name, each condition's operand usable,
+/// Whether every entry and suite is unique by name, each condition's operand usable,
 /// each `time_above` threshold finite, and each window placeable within
 /// `budget` and anchored on a recorded series.
 pub(super) fn check_entries(run: &Run, budget: f64) -> Result<(), ValidationError> {
@@ -16,7 +16,8 @@ pub(super) fn check_entries(run: &Run, budget: f64) -> Result<(), ValidationErro
         .iter()
         .map(|assertion| &assertion.name)
         .chain(run.measures().iter().map(|measure| &measure.name))
-        .chain(run.evaluations().iter().map(|evaluation| &evaluation.name));
+        .chain(run.evaluations().iter().map(|evaluation| &evaluation.name))
+        .chain(run.suites().iter().map(|suite| &suite.application.name));
     let mut seen = HashSet::new();
     for name in names {
         if !seen.insert(name) {
