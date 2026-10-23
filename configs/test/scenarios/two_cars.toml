@@ -1,0 +1,28 @@
+# Two raycast cars in the two-lane world, side by side and 20 m apart, each
+# driving 50 m east to its own goal. Nothing stands on either route. Each
+# car's lidar sees the wall beyond its lane from its first scan, so each
+# maps and plans on its own, never needing to see the other car.
+#
+# The scenario every run judging more than one agent uses.
+
+[simulation]
+duration_seconds = 60.0
+seed             = 7
+
+[world.layout]
+from = "sim.catalog.worlds.two_lanes"
+
+[world.semantic_classes]
+from = "runtime.catalog.semantic_classes.default"
+
+[[agents]]
+from          = "sim.catalog.agents.raycast_car"
+name          = "NorthCar"
+starting_pose = { translation = [-25.0, 10.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose     = { translation = [25.0, 10.0, 0.5] }
+
+[[agents]]
+from          = "sim.catalog.agents.raycast_car"
+name          = "SouthCar"
+starting_pose = { translation = [-25.0, -10.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose     = { translation = [25.0, -10.0, 0.5] }
