@@ -14,6 +14,7 @@
 //! read afterward).
 
 use helios_sim::prelude::*;
+use helios_sim::world::LoadingHold;
 use helios_test::{
     monte_carlo::seed_for_run,
     report::aggregate::{console::print, toml_writer::write, BatchRun},
@@ -62,6 +63,12 @@ struct SimCli {
     /// run without it.
     #[arg(long, default_value_t = false)]
     pub watch_stats: bool,
+
+    /// Stay in asset loading this many updates after every asset has loaded.
+    /// A test hook: how long loading lasts must change nothing a run
+    /// computes, and this varies it on purpose.
+    #[arg(long, hide = true)]
+    pub hold_loading: Option<u32>,
 }
 
 fn main() {
@@ -140,6 +147,9 @@ fn main() {
         // with the systems that pump it.
         app.insert_resource(report_slot.clone()); // the world's clone of the slot
         app.insert_resource(RunSeed::new(seed));
+        if let Some(updates) = args.hold_loading {
+            app.insert_resource(LoadingHold(updates));
+        }
 
         // Fresh runner per run: `Runner::new` re-validates and allocates fresh
         // per-run state (awaiting its pipelines, pending latches). Pre-flight already

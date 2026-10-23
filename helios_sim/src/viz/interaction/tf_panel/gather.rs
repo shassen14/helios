@@ -6,6 +6,7 @@
 //! isolation. [`gather_tf_panel`] is the thin ECS shell around it: read the
 //! selection and the clock, call the builder per agent, write the resource.
 
+use crate::core::run_clock::RunClock;
 use crate::prelude::{AgentIdComponent, TfServiceComponent};
 use crate::viz::interaction::selection::Selected;
 use crate::viz::interaction::tf_panel::geometry::TfPanelHealthColors;
@@ -111,11 +112,14 @@ impl TfPanelHealthThresholds {
 /// there is no dirty-tracking to justify.
 pub fn gather_tf_panel(
     query: Query<(&TfServiceComponent, &AgentIdComponent), With<Selected>>,
-    time: Res<Time>,
+    clock: RunClock,
     thresholds: Res<TfPanelHealthThresholds>,
     mut model: ResMut<TfPanelModel>,
 ) {
-    let now = MonotonicTime(time.elapsed_secs_f64());
+    // Runs only while `Running`, when the clock has started.
+    let Some(now) = clock.now() else {
+        return;
+    };
 
     model.0 = query
         .iter()

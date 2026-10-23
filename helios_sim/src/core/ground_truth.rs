@@ -1,5 +1,6 @@
 use crate::brain_bridge::{AgentIdComponent, AutonomyPipelineComponent};
 use crate::core::components::GroundTruthState;
+use crate::core::run_clock::RunClock;
 use crate::core::transforms::{
     bevy_transform_to_transform_bevy, vec3_to_freevector_bevy, FromBevy, TfTree,
 };
@@ -117,9 +118,9 @@ pub fn truth_body_channels(
 ///   in `base_link`, rotated out of [`GroundTruthState`]'s world axes by the
 ///   same pose.
 ///
-/// The bus timestamp source is `Time::elapsed_secs_f64`, identical to
-/// the `now` the host passes into `pipeline.tick` in the autonomy tick — so
-/// `read_fresh(max_age)` comparisons across systems work without skew.
+/// Stamped from the [`RunClock`], as is the `now` the host passes into
+/// `pipeline.tick` in the autonomy tick, so `read_fresh(max_age)`
+/// comparisons across systems work without skew.
 ///
 /// The body declares both channels, so each write has a slot whether or not
 /// a node reads it. A refused write (an undeclared channel or instance, a
@@ -131,12 +132,15 @@ pub fn publish_truth_channels_system(
         &AutonomyPipelineComponent,
     )>,
     tf_tree: Res<TfTree>,
-    time: Res<Time>,
+    clock: RunClock,
     mut has_logged_first_tick: Local<bool>,
     mut has_warned_no_datum: Local<bool>,
     mut warned_refused: Local<HashSet<(AgentId, ChannelKey)>>,
 ) {
-    let now = MonotonicTime(time.elapsed_secs_f64());
+    // Runs only while `Running`, when the clock has started.
+    let Some(now) = clock.now() else {
+        return;
+    };
 
     // One-shot verification trace: fires exactly once the first time this
     // system actually executes. Used to confirm the schedule wiring is

@@ -11,6 +11,7 @@
 
 use super::{model::*, CurrentInspection};
 use crate::{
+    core::run_clock::RunClock,
     core::transforms::{bevy_transform_to_transform_bevy, FromBevy},
     prelude::AutonomyPipelineComponent,
     viz::interaction::selection::Selected,
@@ -21,7 +22,6 @@ use helios_core::{
         actuators::{ActuatorCommand, SetpointValue},
         reference::BodyTwistRef,
     },
-    prelude::MonotonicTime,
     spatial::{
         conventions::{Enu, Flu},
         quantities::{FreeVector, Point},
@@ -47,18 +47,20 @@ use std::sync::Arc;
 /// downstream `gather_*` has an [`InspectorModel`] to append into.
 ///
 /// `SubjectId` is derived from `Name` here rather than stored as a component, so no
-/// Bevy coupling leaks into the pure model layer. `time` is a placeholder — swap it
-/// for the same clock `truth.tf` is stamped with so the model's `at` lines up
-/// with bus payload timestamps.
+/// Bevy coupling leaks into the pure model layer. The model's `at` is the
+/// [`RunClock`]'s instant, the clock `truth.tf` is stamped with, so it lines up
+/// with bus payload timestamps; before the run starts there is no model.
 pub fn begin_inspection(
     selected: Query<&Name, With<Selected>>,
-    time: Res<Time>,
+    clock: RunClock,
     mut out: ResMut<CurrentInspection>,
 ) {
-    out.0 = selected.iter().next().map(|name| InspectorModel {
-        subject: SubjectId(Arc::from(name.as_str())),
-        at: MonotonicTime(time.elapsed_secs_f64()),
-        sections: Vec::new(),
+    out.0 = clock.now().and_then(|at| {
+        selected.iter().next().map(|name| InspectorModel {
+            subject: SubjectId(Arc::from(name.as_str())),
+            at,
+            sections: Vec::new(),
+        })
     })
 }
 
@@ -305,10 +307,12 @@ pub fn gather_actuators(
 mod tests {
     use super::*;
 
+    use crate::core::run_clock::start_run_clock_now;
+
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
     use helios_core::control::commands::BodyTwist;
     use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
-    use helios_core::prelude::{AgentId, TfProvider};
+    use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
     use helios_core::spatial::quantities::FluVector;
     use helios_core::spatial::state::{Component, Quantity};
     use helios_core::spatial::transforms::Convention;
@@ -334,6 +338,8 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<CurrentInspection>();
         app.init_resource::<Time>();
+        app.init_resource::<Time<Fixed>>();
+        start_run_clock_now(app.world_mut());
         app
     }
 

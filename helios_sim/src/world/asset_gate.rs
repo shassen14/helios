@@ -21,6 +21,13 @@ impl Plugin for AssetGatePlugin {
     }
 }
 
+/// Updates to stay in `AssetLoading` after every asset has loaded.
+///
+/// A test hook, inserted only by a harness: how long loading lasts must
+/// change nothing a run computes, and this varies it on purpose.
+#[derive(Resource, Debug)]
+pub struct LoadingHold(pub u32);
+
 /// Where loading stands across every tracked asset.
 #[derive(Debug, PartialEq)]
 enum LoadProgress {
@@ -55,6 +62,7 @@ fn finish_asset_loading(
     mut next_state: ResMut<NextState<AppState>>,
     asset_server: Res<AssetServer>,
     objects: Res<ObjectAssets>,
+    hold: Option<ResMut<LoadingHold>>,
 ) {
     let state = |(label, id): (String, UntypedAssetId)| (label, asset_server.get_load_state(id));
     let tracked = objects.tracked().map(state);
@@ -62,6 +70,10 @@ fn finish_asset_loading(
     match load_progress(tracked) {
         LoadProgress::Waiting => {}
         LoadProgress::Ready => {
+            if let Some(mut hold) = hold.filter(|hold| hold.0 > 0) {
+                hold.0 -= 1;
+                return;
+            }
             info!("[Assets] All world assets loaded. Transitioning to SceneBuilding.");
             next_state.set(AppState::SceneBuilding);
         }

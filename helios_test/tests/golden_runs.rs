@@ -31,6 +31,9 @@
 //! `target/tmp/golden_runs/golden/<platform>/`. For a platform you can't run
 //! locally, CI uploads that folder; replacing `configs/test/golden/<platform>/`
 //! with it blesses that platform.
+//!
+//! Beside it, one run file is run twice, once with loading held for extra
+//! updates: how long loading lasts must change no report.
 
 #![cfg(feature = "sim")]
 
@@ -54,6 +57,18 @@ const CONFIG_ROOT: &str = "configs";
 const NEGATIVE: &str = "negative";
 /// Set to rewrite the golden files instead of comparing.
 const BLESS: &str = "HELIOS_BLESS";
+
+/// The run file the loading guard runs twice: a minute of closed loop
+/// through the GPS EKF, where a last-bit difference in any stamp reaches the
+/// reported numbers.
+const LOADING_GUARD_RUN: &str = "pose_error_proving_ground.toml";
+/// Under `OUTPUT`, the loading guard's reports.
+const LOADING: &str = "loading";
+/// `helios_test_sim`'s hidden flag holding loading for extra updates, and the
+/// number the guard holds it for. Before the run clock, 40 moved every
+/// pose-error number of the guard's run.
+const HOLD_LOADING: &str = "--hold-loading";
+const HELD_UPDATES: &str = "40";
 
 /// The one report line that differs between identical runs.
 const WALL_TIME_KEY: &str = "wall_duration_secs = ";
@@ -195,6 +210,26 @@ fn every_run_matches_its_golden_file() {
     );
 }
 
+#[test]
+#[ignore = "runs one run file through the sim twice; needs --features sim"]
+fn loading_time_changes_no_report() {
+    let run = Path::new(LOADING_GUARD_RUN);
+    let reports = output().join(LOADING);
+    let prompt = execute_into(run, &reports.join("prompt"), &[]);
+    let held = execute_into(run, &reports.join("held"), &[HOLD_LOADING, HELD_UPDATES]);
+
+    assert_eq!(prompt.exit, held.exit, "{}: exit differs", run.display());
+    let difference =
+        first_labelled_difference(("prompt", &prompt.golden.text), ("held", &held.golden.text));
+    if let Some(difference) = difference {
+        panic!(
+            "{}: holding loading for {HELD_UPDATES} updates changed the report, \
+             so a stamp still counts loading time: {difference}",
+            run.display()
+        );
+    }
+}
+
 /// The workspace root, which run paths and the config root are relative to.
 fn workspace() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -246,9 +281,13 @@ fn files_under(root: &Path, dir: &Path, extension: &str) -> Vec<PathBuf> {
 
 /// Runs `run` through `helios_test_sim` from the workspace root, as by hand.
 fn execute(run: &Path) -> Outcome {
-    let report = output()
-        .join(REPORTS)
-        .join(run.with_extension(REPORT_SUFFIX));
+    execute_into(run, &output().join(REPORTS), &[])
+}
+
+/// Runs `run` as [`execute`] does, passing `extra` arguments and writing its
+/// report under `reports`.
+fn execute_into(run: &Path, reports: &Path, extra: &[&str]) -> Outcome {
+    let report = reports.join(run.with_extension(REPORT_SUFFIX));
     fs::create_dir_all(report.parent().expect("a report has a folder"))
         .expect("create the report folder");
     // A report left by an earlier run must not stand in for this one's.
@@ -262,6 +301,7 @@ fn execute(run: &Path) -> Outcome {
         .arg(CONFIG_ROOT)
         .arg("--out")
         .arg(&report)
+        .args(extra)
         .output()
         .unwrap_or_else(|e| panic!("start helios_test_sim: {e}"));
 
@@ -320,17 +360,25 @@ fn compare(run: &Path, outcome: &Outcome) -> Option<String> {
 
 /// The first line where `actual` departs from `golden`, if it does.
 fn first_difference(golden: &str, actual: &str) -> Option<String> {
-    let mut golden_lines = golden.lines();
-    let mut actual_lines = actual.lines();
+    first_labelled_difference(("golden", golden), ("actual", actual))
+}
+
+/// The first line where two texts depart, each shown under its label.
+fn first_labelled_difference(
+    (left_label, left): (&str, &str),
+    (right_label, right): (&str, &str),
+) -> Option<String> {
+    let mut left_lines = left.lines();
+    let mut right_lines = right.lines();
     let mut number = 1;
     loop {
-        match (golden_lines.next(), actual_lines.next()) {
+        match (left_lines.next(), right_lines.next()) {
             (None, None) => return None,
-            (expected, found) if expected != found => {
+            (left_line, right_line) if left_line != right_line => {
                 return Some(format!(
-                    "line {number} differs\n  golden: {}\n  actual: {}",
-                    expected.unwrap_or("<end of file>"),
-                    found.unwrap_or("<end of file>")
+                    "line {number} differs\n  {left_label}: {}\n  {right_label}: {}",
+                    left_line.unwrap_or("<end of file>"),
+                    right_line.unwrap_or("<end of file>")
                 ));
             }
             _ => number += 1,

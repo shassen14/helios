@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use crate::agents::sensors::HeliosSensorsPlugin;
 use crate::agents::vehicles::HeliosVehiclesPlugin;
 use crate::brain_bridge::BrainBridgePlugin;
+use crate::core::run_clock::RunClockPlugin;
 use crate::core::simulation_setup::SimulationSetupPlugin;
 use crate::registry::embodiment::EmbodimentRegistryPlugin;
 use crate::registry::plugin::AutonomyRegistryPlugin;
@@ -45,6 +46,7 @@ impl Plugin for HeliosSimulationPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             SimulationSetupPlugin,
+            RunClockPlugin,
             AutonomyRegistryPlugin,
             EmbodimentRegistryPlugin,
             HeliosWorldPlugin,

@@ -14,7 +14,7 @@ pub mod atmosphere;
 pub mod layout;
 pub mod plugin_set;
 
-pub use asset_gate::AssetGatePlugin;
+pub use asset_gate::{AssetGatePlugin, LoadingHold};
 pub use atmosphere::AtmospherePlugin;
 pub use layout::{ResolvedWorldLayout, WorldLayoutPlugin};
 pub use plugin_set::HeliosWorldPlugin;

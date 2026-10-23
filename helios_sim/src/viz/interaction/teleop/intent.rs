@@ -4,13 +4,14 @@
 //! folds over whatever axes are bound; it has no notion of a car.
 
 use crate::brain_bridge::components::TeleopControlled;
+use crate::core::run_clock::RunClock;
 use crate::prelude::HostInputPublisher;
 use crate::viz::interaction::{
     sampling::ActionState,
     teleop::actions::{AxisPair, TeleopActions},
 };
 
-use helios_core::{control::commands::TwistIntent, prelude::MonotonicTime};
+use helios_core::control::commands::TwistIntent;
 use helios_runtime::channels::control;
 
 use bevy::prelude::*;
@@ -33,7 +34,7 @@ pub(crate) fn teleop_intent(state: &ActionState, actions: &TeleopActions) -> Twi
 }
 
 /// Publish this frame's intent to every teleop-piloted agent's `control::intent`
-/// channel, stamped at the current clock.
+/// channel, stamped at the [`RunClock`]'s instant: the last step the frame ran.
 ///
 /// A neutral intent — no drive key held — publishes nothing. That is the freshness
 /// handoff: with no fresh intent on the bus the mapper's last output ages out, and
@@ -41,7 +42,7 @@ pub(crate) fn teleop_intent(state: &ActionState, actions: &TeleopActions) -> Twi
 /// channel is named from `helios_runtime`'s own `control::intent` role, so the
 /// reserved string is never spelled here.
 pub(crate) fn publish_teleop_intent(
-    time: Res<Time>,
+    clock: RunClock,
     state: Res<ActionState>,
     actions: Res<TeleopActions>,
     agents: Query<Entity, With<TeleopControlled>>,
@@ -52,7 +53,10 @@ pub(crate) fn publish_teleop_intent(
         return;
     }
 
-    let now = MonotonicTime(time.elapsed_secs_f64());
+    // Runs only while `Running`, when the clock has started.
+    let Some(now) = clock.now() else {
+        return;
+    };
 
     for agent in &agents {
         publisher.publish(agent, control::intent::<TwistIntent>(), intent, now);

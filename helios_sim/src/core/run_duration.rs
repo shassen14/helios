@@ -6,6 +6,7 @@
 //! viewer closes the window, and the test harness ends a run by its own run
 //! file's termination rules.
 
+use crate::core::run_clock::RunClock;
 use crate::prelude::*;
 
 use std::time::Duration;
@@ -16,7 +17,7 @@ pub struct RunDurationPlugin;
 
 impl Plugin for RunDurationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Running), start_run_clock)
+        app.add_systems(OnEnter(AppState::Running), set_run_deadline)
             .add_systems(
                 FixedUpdate,
                 end_run_at_deadline
@@ -27,36 +28,35 @@ impl Plugin for RunDurationPlugin {
     }
 }
 
-/// The fixed-clock time at which the run ends.
+/// The run time at which the run ends.
 ///
-/// Measured from when the scene starts running, not from app start, so time
-/// spent loading assets and building the scene doesn't eat into the run.
+/// Run time starts when the scene starts running, so time spent loading
+/// assets and building the scene doesn't eat into the run.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 struct RunDeadline(Duration);
 
-/// Sets the deadline from the scenario's duration and the clock as the run
-/// starts.
-fn start_run_clock(mut commands: Commands, config: Res<ScenarioConfig>, time: Res<Time<Fixed>>) {
+/// Sets the deadline from the scenario's duration.
+fn set_run_deadline(mut commands: Commands, config: Res<ScenarioConfig>) {
     let duration = run_duration(config.common.simulation.duration_seconds);
     info!(
         "run ends after {:.1} s of simulated time",
         duration.as_secs_f64()
     );
-    commands.insert_resource(RunDeadline(time.elapsed() + duration));
+    commands.insert_resource(RunDeadline(duration));
 }
 
 /// Ends the run on the first tick at or past the deadline.
 fn end_run_at_deadline(
     deadline: Option<Res<RunDeadline>>,
-    time: Res<Time<Fixed>>,
+    clock: RunClock,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
-    // Inserted on entering `Running`, so it is always present here; a missing
-    // one keeps the run going rather than panicking mid-run.
-    let Some(deadline) = deadline else {
+    // Both are set on entering `Running`, so they are always present here;
+    // a missing one keeps the run going rather than panicking mid-run.
+    let (Some(deadline), Some(elapsed)) = (deadline, clock.elapsed()) else {
         return;
     };
-    if time.elapsed() >= deadline.0 {
+    if elapsed >= deadline.0 {
         next_state.set(AppState::Flushing);
     }
 }
@@ -82,19 +82,33 @@ fn run_duration(seconds: f32) -> Duration {
 mod tests {
     use super::*;
 
+    use crate::core::run_clock::RunClockPlugin;
+
     use bevy::ecs::system::RunSystemOnce;
     use bevy::state::app::StatesPlugin;
 
-    /// An app holding only the state machine, the fixed clock advanced by
-    /// `elapsed`, and a deadline.
+    /// Fixed time spent loading before the run starts: the deadline must not
+    /// count it.
+    const LOADING: Duration = Duration::from_secs(3);
+
+    /// An app holding only the state machine, the run's clock `elapsed` into
+    /// the run, and a deadline.
     fn app_at(elapsed: Duration, deadline: Duration) -> App {
         let mut app = App::new();
-        app.add_plugins(StatesPlugin);
+        app.add_plugins((StatesPlugin, RunClockPlugin));
         app.init_state::<AppState>();
 
         let mut time = Time::<Fixed>::default();
-        time.advance_by(elapsed);
+        time.advance_by(LOADING);
         app.insert_resource(time);
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::Running);
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<Time<Fixed>>()
+            .advance_by(elapsed);
         app.insert_resource(RunDeadline(deadline));
         app
     }

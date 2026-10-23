@@ -3,13 +3,13 @@ use crate::run::termination::TerminationReason;
 use crate::sim::{ReportOutputPath, ReportSlot, RunSeed};
 use crate::{HostFacts, ObservationCollector, ReportStatus, Runner, TickAction};
 
-use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::prelude::AgentId;
 use helios_runtime::{port::RefusedWrites, AutonomyPipeline};
 use helios_sim::brain_bridge::{
     components::{AgentIdComponent, AutonomyPipelineComponent, PipelineBuildFailed},
     ObservationSinkAppExt, RegisteredSink,
 };
-use helios_sim::prelude::{AppState, SimulationSet};
+use helios_sim::prelude::{AppState, RunClock, SimulationSet};
 
 use bevy::prelude::*;
 
@@ -123,7 +123,7 @@ fn on_pipeline_built_system(
 /// routing to `Flushing`. No host-side timeout lives here.
 fn tick_system(
     collector: Res<RegisteredSink<ObservationCollector>>,
-    time: Res<Time<Fixed>>,
+    clock: RunClock,
     mut runner: ResMut<ActiveRunner>,
     mut outcome: ResMut<RunOutcome>,
     mut next_state: ResMut<NextState<AppState>>,
@@ -138,9 +138,11 @@ fn tick_system(
         return;
     }
 
-    // Same clock source as the brain's tick, so the time budget and the brain
-    // never disagree.
-    let now = MonotonicTime(time.elapsed_secs_f64());
+    // Same clock as the brain's tick, so the time budget and the brain never
+    // disagree. Runs only while `Running`, when the clock has started.
+    let Some(now) = clock.now() else {
+        return;
+    };
 
     match runner.0.tick(now, &collector.0) {
         TickAction::Terminate { reason } => {
@@ -163,11 +165,7 @@ fn tick_system(
 #[allow(clippy::too_many_arguments)]
 fn finalize_system(
     collector: Res<RegisteredSink<ObservationCollector>>,
-    // `Time<Fixed>`, not the generic `Time`. This system runs on a state
-    // transition, which the frame orders *before* the fixed loop — so generic
-    // `Time` here resolves to `Time<Virtual>` and reads a moment up to one
-    // frame past the tick the assertions were actually judged on.
-    time: Res<Time<Fixed>>,
+    clock: RunClock,
     wall_start: Res<WallClockStart>,
     runner: Res<ActiveRunner>,
     outcome: Res<RunOutcome>,
@@ -181,10 +179,11 @@ fn finalize_system(
     // The tick that ended the run, not the clock as it stands now — the two
     // differ by however many steps the fixed loop had left in its batch. Falls
     // back to the live clock only on the setup-failure path, where no tick ever
-    // ran to record one.
+    // ran to record one, and to the run's start if the run never started.
     let now = outcome
         .terminated_at
-        .unwrap_or_else(|| MonotonicTime(time.elapsed_secs_f64()));
+        .or_else(|| clock.now())
+        .unwrap_or(RunClock::START);
     let wall_secs = wall_start.0.elapsed().as_secs_f64();
     let run_name = outcome.run_name.clone();
     // `None` only on the "terminated before any tick" path (system 1's

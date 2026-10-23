@@ -58,6 +58,7 @@ pub struct CurrentInspection(pub Option<InspectorModel>);
 mod tests {
     use super::*;
 
+    use crate::core::run_clock::RunClockPlugin;
     use crate::viz::interaction::{inspector::model::SubsystemPath, selection::Selected};
 
     use std::sync::Arc;
@@ -74,7 +75,8 @@ mod tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.insert_state(AppState::Running);
         app.init_resource::<Time>();
-        app.add_plugins(InspectorPlugin);
+        app.init_resource::<Time<Fixed>>();
+        app.add_plugins((RunClockPlugin, InspectorPlugin));
         app.world_mut().spawn((
             Name::new("robot_3"),
             Selected,

@@ -11,10 +11,11 @@
 //! [`StateSensor`].
 
 use crate::core::prng::SensorRng;
+use crate::core::run_clock::RunClock;
 use crate::core::transforms::{bevy_transform_to_transform_bevy, FromBevy};
 use crate::prelude::{AgentIdComponent, GroundTruthState, SensorPublishChannel, SensorPublisher};
 
-use helios_core::prelude::{MonotonicTime, SensorPayload, SensorReading};
+use helios_core::prelude::{SensorPayload, SensorReading};
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::transforms::Transform as CoreTransform;
 
@@ -95,6 +96,9 @@ pub trait StateSensor: Component<Mutability = Mutable> {
 /// under its installation's frame entity when one installation carries several
 /// sensors (an IMU).
 ///
+/// Nothing samples before the run starts, since a reading is stamped with
+/// [`RunClock`]'s instant: each sensor's timer starts with the run.
+///
 /// Noise is drawn from the entity's own [`SensorRng`], so a sensor's readings
 /// depend only on its own name, its own tick count, and the run's master seed.
 /// The registrations of this system for different sensor types are unordered
@@ -103,9 +107,12 @@ pub trait StateSensor: Component<Mutability = Mutable> {
 /// A sensor with no agent above it, or whose agent has no
 /// [`GroundTruthState`], can never produce data — that is a scene-wiring bug,
 /// so the entity is skipped with a warning, once per entity.
-#[allow(clippy::type_complexity)]
+// Bevy systems declare their dependencies as parameters, so the count exceeds
+// clippy's default threshold; that's idiomatic here, not a smell.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn publish_state_sensor<S: StateSensor>(
     time: Res<Time>,
+    clock: RunClock,
     truth_query: Query<&GroundTruthState>,
     mut sensor_query: Query<(
         Entity,
@@ -120,7 +127,9 @@ pub fn publish_state_sensor<S: StateSensor>(
     mut publisher: SensorPublisher,
     mut warned_missing_truth: Local<HashSet<Entity>>,
 ) {
-    let elapsed = time.elapsed_secs_f64();
+    let Some(now) = clock.now() else {
+        return;
+    };
     let dt = time.delta();
 
     for (entity, mut sensor, mut timer, mut rng, transform, channel) in &mut sensor_query {
@@ -153,7 +162,7 @@ pub fn publish_state_sensor<S: StateSensor>(
 
         let reading = SensorReading {
             sensor: channel.mount().clone(),
-            timestamp: MonotonicTime(elapsed),
+            timestamp: now,
             data: payload,
         };
 
@@ -165,6 +174,7 @@ pub fn publish_state_sensor<S: StateSensor>(
 mod tests {
     use super::*;
 
+    use crate::core::run_clock::start_run_clock_now;
     use crate::prelude::AutonomyPipelineComponent;
 
     use helios_core::interchange::measurement::sensor::GpsPosition;
@@ -177,6 +187,7 @@ mod tests {
 
     use bevy::ecs::schedule::Schedule;
     use bevy::ecs::world::World;
+    use bevy::time::Fixed;
     use nalgebra::Vector3;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
@@ -238,6 +249,8 @@ mod tests {
     fn world_with_sensor(agent_has_truth: bool) -> (World, Entity) {
         let mut world = World::new();
         world.insert_resource(Time::<()>::default());
+        world.init_resource::<Time<Fixed>>();
+        start_run_clock_now(&mut world);
 
         let agent = world.spawn(AgentIdComponent(AgentId::new(TEST_AGENT))).id();
         if agent_has_truth {
@@ -450,6 +463,8 @@ mod tests {
     fn draws_per_sensor(names: &[&str]) -> Vec<Vec<u64>> {
         let mut world = World::new();
         world.insert_resource(Time::<()>::default());
+        world.init_resource::<Time<Fixed>>();
+        start_run_clock_now(&mut world);
         let agent = world
             .spawn((
                 AgentIdComponent(AgentId::new("car_1")),

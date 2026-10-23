@@ -1,0 +1,11 @@
+# Simulated time since app start counts loading, which lasts as long as its
+# asset work does. Every stamp and lookup reads the run's clock instead
+# (`helios_sim::core::run_clock`), the one place allowed to read these.
+disallowed-methods = [
+    { path = "bevy::time::Time::elapsed", reason = "read `RunClock`: Bevy's clocks count loading" },
+    { path = "bevy::time::Time::elapsed_secs", reason = "read `RunClock`: Bevy's clocks count loading" },
+    { path = "bevy::time::Time::elapsed_secs_f64", reason = "read `RunClock`: Bevy's clocks count loading" },
+    { path = "bevy::time::Time::elapsed_wrapped", reason = "read `RunClock`: Bevy's clocks count loading" },
+    { path = "bevy::time::Time::elapsed_secs_wrapped", reason = "read `RunClock`: Bevy's clocks count loading" },
+    { path = "bevy::time::Time::elapsed_secs_wrapped_f64", reason = "read `RunClock`: Bevy's clocks count loading" },
+]

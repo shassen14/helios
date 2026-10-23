@@ -3,6 +3,7 @@ use crate::brain_bridge::components::SensorPublishChannel;
 use crate::config::structs::CHANNEL_FIELD;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
+use crate::core::run_clock::RunClock;
 use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
@@ -11,7 +12,6 @@ use helios_core::prelude::{RangeField, SphericalAngular};
 use helios_core::sensors::lidar::{LidarModel, LidarNoise};
 use helios_core::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel};
 use helios_core::spatial::conventions::Flu;
-use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::quantities::FreeVector;
 
 use avian3d::prelude::{ColliderOf, SpatialQuery, SpatialQueryFilter};
@@ -161,8 +161,12 @@ fn spawn_raycasting_sensors(
 // == Runtime System ==
 // =========================================================================
 
+/// Casts each sensor's rays when its timer fires and publishes the scan.
+/// Nothing scans before the run starts, since a scan is stamped with
+/// [`RunClock`]'s instant: each sensor's timer starts with the run.
 fn raycasting_sensor_system(
     time: Res<Time>,
+    clock: RunClock,
     spatial_query: SpatialQuery,
     collider_bodies: Query<&ColliderOf>,
     mut sensor_query: Query<(
@@ -176,7 +180,9 @@ fn raycasting_sensor_system(
     mut publisher: SensorPublisher,
 ) {
     let _span = tracing::trace_span!("sim.sensor.publish", sensor = "raycasting").entered();
-    let elapsed = time.elapsed_secs_f64();
+    let Some(capture_time) = clock.now() else {
+        return;
+    };
     let dt = time.delta();
 
     for (mut sensor, mut rng, mut capture, sensor_publish_channel, sensor_transform, parent) in
@@ -234,8 +240,6 @@ fn raycasting_sensor_system(
 
         let output = sensor.model.process_hits(&hits, &mut rng.0);
 
-        let capture_time = MonotonicTime(elapsed);
-
         capture.latest = Some(CapturePose {
             pose: *sensor_transform,
             timestamp: capture_time,
@@ -272,6 +276,8 @@ fn is_inside_own_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::core::run_clock::start_run_clock_now;
 
     use helios_core::prelude::{AgentId, TfProvider};
     use helios_core::spatial::transforms::Convention;
@@ -373,6 +379,8 @@ mod tests {
         let mut time = Time::<()>::default();
         time.advance_by(advance);
         world.insert_resource(time);
+        world.init_resource::<Time<Fixed>>();
+        start_run_clock_now(&mut world);
         world.insert_resource(ColliderTrees::default());
 
         let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
@@ -463,6 +471,7 @@ mod tests {
 
         let moved_pose = GlobalTransform::from_translation(Vec3::new(1.0, 0.0, 4.0));
         world.resource_mut::<Time>().advance_by(period());
+        world.resource_mut::<Time<Fixed>>().advance_by(period());
         *world
             .get_mut::<GlobalTransform>(sensor)
             .expect("the sensor has a transform") = moved_pose;
