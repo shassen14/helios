@@ -1,11 +1,15 @@
 # Pose error against an estimate that is the truth: the mock oracle
 # republishes the body's truth as its estimate, so every error is near zero.
 #
-# It covers `pose_error` end to end: both inputs bound to the agent's
-# `base_link` instance, `first_pose` alignment, the truth interpolated onto
+# It covers `pose_error` end to end under `declared`: the mock pins its odom
+# to the datum through the truth it reads, so the build anchors odom there
+# and each estimate is placed in the datum through that anchor. Both inputs
+# are bound to the agent's `base_link` instance, the truth interpolated onto
 # each estimate's stamp, and every metric derived. The errors left are the
-# interpolation between truth samples (millimeters, milliradians); a number
-# that grows here means the evaluation itself moved, not an estimator.
+# interpolation between truth samples (millimeters, milliradians); anything
+# past that is the anchor's, so a number that grows here means the anchor or
+# the evaluation moved, not an estimator. `pose_error_sole_instance` covers
+# `first_pose`.
 
 schema_version = "2.0"
 scenario = { from = "sim/scenarios/dev_mock_oracle.toml" }
@@ -22,7 +26,7 @@ kind = "pose_error"
 estimate = { path = "agent.MockOraclePro.channel.tf", instance = "agent.MockOraclePro.base_link" }
 truth = { path = "agent.MockOraclePro.channel.truth.tf", instance = "agent.MockOraclePro.base_link" }
 [evaluate.params]
-align = "first_pose"
+align = "declared"
 
 [[assert]]
 name = "position_held"

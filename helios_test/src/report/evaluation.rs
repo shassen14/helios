@@ -34,6 +34,11 @@ pub struct EvaluationReportEntry {
     /// shaped the numbers, such as a frame policy.
     #[serde(skip_serializing_if = "toml::Table::is_empty")]
     pub params: toml::Table,
+    /// What binding fixed beside the parameters that shapes the numbers,
+    /// in its own table, so no key of it can shadow one of the entry's:
+    /// under `align = "declared"`, `roots`, how the two roots relate.
+    #[serde(skip_serializing_if = "toml::Table::is_empty")]
+    pub binding: toml::Table,
     /// In role order, the base first.
     pub inputs: Vec<InputReport>,
     pub metrics: Vec<MetricReport>,

@@ -118,6 +118,7 @@ mod tests {
             instance: instance.map(str::to_owned),
             expressed_in: root,
             convention: None,
+            placement: None,
             rate_hz: None,
             writer: None,
         }

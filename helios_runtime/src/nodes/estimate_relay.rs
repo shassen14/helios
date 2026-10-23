@@ -26,7 +26,7 @@ use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::tf::TfProvider;
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::spatial::transforms::{Convention, ConventionOf, ErasedTransform};
-use helios_core::spatial::{FrameAwareState, FrameId};
+use helios_core::spatial::FrameAwareState;
 
 use std::sync::atomic::AtomicBool;
 
@@ -79,12 +79,6 @@ impl EstimateRelay {
             descriptor,
             edge_warned: AtomicBool::new(false),
         }
-    }
-
-    /// The frame the relayed estimate holds the body's pose in: the parent of
-    /// the edge it publishes.
-    pub(crate) fn root(&self) -> &FrameId {
-        &self.edge.parent
     }
 }
 
@@ -157,6 +151,7 @@ mod tests {
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::state::Quantity;
     use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::FrameId;
     use nalgebra::{DMatrix, DVector, Isometry3};
     use std::borrow::Cow;
     use std::sync::Arc;
@@ -320,7 +315,6 @@ mod tests {
         let published =
             published(&bus, &frames.body).expect("the edge from the estimate's root is published");
         assert_eq!(published.value.parent, frames.root);
-        assert_eq!(relay.root(), &frames.root);
     }
 
     #[test]

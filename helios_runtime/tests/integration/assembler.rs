@@ -1926,10 +1926,6 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
         host(),
     )
     .expect("an estimate beside a shadow builds");
-    assert_eq!(
-        pipeline.estimate_root(),
-        Some(&FrameId::odom(agent.clone()))
-    );
     // The oracle and the shadow each give the root they define its
     // convention.
     let conventions = pipeline.frame_conventions();
@@ -1978,24 +1974,4 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
         shadow.value.reference_frame(),
         Some(FrameId::agent(agent, "nav_ekf.odom"))
     );
-}
-
-#[test]
-fn a_stack_naming_no_estimate_exposes_no_root() {
-    let stack = AutonomyStackConfig {
-        nodes: BTreeMap::from([imu_ekf("nav_ekf")]),
-        ..Default::default()
-    };
-    let agent = AgentId::new("test_agent");
-
-    let pipeline = build_pipeline(
-        &stack,
-        &AutonomyRegistry::default(),
-        agent.clone(),
-        body_publishing(channels_with_imu(&agent, vec![])),
-        host(),
-    )
-    .expect("an estimator alone builds");
-
-    assert_eq!(pipeline.estimate_root(), None);
 }

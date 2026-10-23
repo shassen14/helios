@@ -18,7 +18,7 @@ use crate::evaluation::{
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::{AgentId, FrameId, MonotonicTime};
 use helios_core::spatial::transforms::Convention;
-use helios_runtime::port::Writer;
+use helios_runtime::{pipeline::FramePlacement, port::Writer};
 
 use serde::Serialize;
 use std::{
@@ -83,6 +83,11 @@ pub trait Evaluator: Send + Sync {
     /// old.
     fn caps(&self) -> Vec<Option<Cap>>;
 
+    /// What binding fixed, beyond the entry's parameters, that shapes every
+    /// value, as the report states it beside them: how two roots relate,
+    /// say. Empty when nothing does.
+    fn binding(&self) -> toml::Table;
+
     /// Each role's refusals so far, in role order.
     fn refused(&self) -> &[Refused];
 
@@ -122,9 +127,10 @@ pub struct Metric {
 
 /// _Pre-step._ The series setup bound one role to: whose it is, which
 /// instance of a keyed channel, and the facts its writer declared before the
-/// first value: the frame its values are expressed in and that frame's axis
-/// convention, its nominal rate, and who writes it.
-#[derive(Debug, Clone, PartialEq)]
+/// first value: the frame its values are expressed in, that frame's axis
+/// convention and where it sits in the world, its nominal rate, and who
+/// writes it.
+#[derive(Debug, Clone)]
 pub struct BoundInput {
     pub agent: AgentId,
     pub instance: Option<String>,
@@ -136,6 +142,10 @@ pub struct BoundInput {
     /// agent's pipeline. `None` when no frame is declared or no owner gives
     /// it one.
     pub convention: Option<Convention>,
+    /// Where `expressed_in` sits in the world, when a node of the agent's
+    /// pipeline defines it: anchored at a world frame, or free and why.
+    /// `None` for a world or body frame, or when no frame is declared.
+    pub placement: Option<FramePlacement>,
     /// How many times a second its writer writes it, nominally, as declared.
     pub rate_hz: Option<f64>,
     /// Who writes it, with a body writer's provenance. `None` only when no

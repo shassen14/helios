@@ -108,13 +108,9 @@ pub fn build_pipeline(
     // --- Estimate seam ---
     // The `[estimate]` section names the estimator whose state the rest of
     // the stack reads; a relay forwards it and publishes the TF edge from its
-    // root, which the pipeline exposes to the host.
+    // root to the body.
     match estimate_relay(stack.estimate.as_ref(), &nodes, &agent) {
-        Ok(Some(relay)) => {
-            builder = builder
-                .with_estimate_root(relay.root().clone())
-                .add_node(Box::new(relay))
-        }
+        Ok(Some(relay)) => builder = builder.add_node(Box::new(relay)),
         Ok(None) => {}
         Err(seam_errors) => errors.extend(seam_errors),
     }

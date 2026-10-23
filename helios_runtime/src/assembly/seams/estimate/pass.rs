@@ -137,7 +137,7 @@ mod tests {
         let outputs: Vec<ChannelKey> = descriptor.outputs().cloned().collect();
         assert!(outputs.contains(&estimate()));
         assert!(outputs.contains(&tf()));
-        // The relay writes base_link's edge, from the source's root, odom.
+        // The relay writes base_link's edge.
         let instances: Vec<&InstanceKey> = descriptor
             .output_ports()
             .iter()
@@ -149,7 +149,6 @@ mod tests {
                 agent()
             ))]
         );
-        assert_eq!(relay.root(), &FrameId::odom(agent()));
     }
 
     #[test]

@@ -271,6 +271,7 @@ pub(in crate::runner) fn resolve(
                 .collect(),
             descriptions: pipeline.descriptions(),
             frame_conventions: pipeline.frame_conventions(),
+            frame_placements: pipeline.frame_placements(),
         })
         .collect();
 

@@ -144,7 +144,10 @@ samples = 24000
 uncovered = 0
 
 [evaluations.params]
-align = "first_pose"
+align = "declared"
+
+[evaluations.binding]
+roots = "agent.MockOraclePro.odom anchored at global.proving_ground"
 
 [[evaluations.inputs]]
 role = "estimate"

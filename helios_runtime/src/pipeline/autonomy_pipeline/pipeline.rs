@@ -52,9 +52,6 @@ pub struct AutonomyPipeline {
     pub(in crate::pipeline) frame_conventions: FrameConventions,
     /// Where each frame a node defines sits in the world.
     pub(in crate::pipeline) frame_placements: Vec<FramePlacement>,
-    /// The frame the estimate holds the body's pose in, when the stack names
-    /// an estimate.
-    pub(in crate::pipeline) estimate_root: Option<FrameId>,
 }
 
 impl AutonomyPipeline {
@@ -106,14 +103,6 @@ impl AutonomyPipeline {
             .iter()
             .filter(|description| *description.writer() == Writer::Outside)
             .map(ChannelDescription::key)
-    }
-
-    /// The frame the estimate holds the body's pose in: the root of the
-    /// estimator the stack names as its estimate, the parent of the edge its
-    /// relay publishes to `base_link`. `None` when the stack names no
-    /// estimate. A host tracks and draws the estimate under this frame.
-    pub fn estimate_root(&self) -> Option<&FrameId> {
-        self.estimate_root.as_ref()
     }
 
     /// The mounts of the channels some node reads, each frame once, in

@@ -102,6 +102,13 @@ pub trait TwoInputs: Send + Sync + Sized + 'static {
     /// The metrics it offers, each a component read off the output.
     fn components(&self) -> Vec<Component<Self::Output>>;
 
+    /// What [`bind`](Self::bind) fixed, beyond the parameters, that shapes
+    /// every output, as the report states it beside them: how two roots
+    /// relate, say. Empty when nothing does.
+    fn binding(&self) -> toml::Table {
+        toml::Table::new()
+    }
+
     /// What it fits from every covered sample, in stamp order, or why
     /// nothing can be, which refuses every sample.
     fn fit(
@@ -304,6 +311,10 @@ impl<K: TwoInputs> Evaluator for TwoInputsEvaluation<K> {
 
     fn caps(&self) -> Vec<Option<Cap>> {
         vec![Some(self.base_cap), self.other_rule.cap()]
+    }
+
+    fn binding(&self) -> toml::Table {
+        self.kind.binding()
     }
 
     fn refused(&self) -> &[Refused] {
@@ -590,6 +601,7 @@ mod tests {
             instance: None,
             expressed_in: None,
             convention: None,
+            placement: None,
             rate_hz: None,
             writer: None,
         }

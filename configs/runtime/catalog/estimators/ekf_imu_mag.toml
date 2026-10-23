@@ -1,0 +1,49 @@
+# IMU + magnetometer EKF: ekf_advanced without its GPS aiding. Nothing fixes
+# its position in the world, so it dead-reckons position from the IMU while
+# the magnetometer holds its heading, and its odom is free in the world: no
+# input pins odom's position to the datum.
+#
+# A RecursiveEstimator node: the filter, dynamics, prior and aiding are each
+# named by their own `kind`. Aiding entries are named tables, applied in name
+# order each tick; the model's kind fixes the payload it reads.
+kind = "RecursiveEstimator"
+
+[filter]
+kind = "Ekf"
+# The floor and jitter the EKF applied unconditionally before they were
+# parameters, kept so this prefab's runs don't move. Both hide a diverging
+# filter; drop them once its covariance is shown to stay healthy without.
+covariance_floor = 1e-9
+covariance_jitter = 1e-12
+
+[dynamics]
+kind = "IntegratedImu"
+# Bus channels the predict step reads IMU data from. Must match the IMU entity's
+# `accel_channel` / `gyro_channel`.
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"
+accel_noise_stddev = 0.02
+gyro_noise_stddev = 0.001
+accel_bias_instability = 0.005
+gyro_bias_instability = 0.0005
+
+# Prior std dev on each bias at cold start (P₀), distinct from the
+# *_instability random walk (Q) above. Grade-scaled with the IMU: a
+# navigation-grade sensor powers on with a tightly-known bias. Position and
+# velocity keep their cold-start defaults.
+[dynamics.initial_uncertainty]
+accel_bias_mps2 = 0.02
+gyro_bias_radps = 0.002
+# TODO: stopgap that assumes the vehicle starts near level. The default
+# (180° on every axis) is beyond what the EKF can linearize, and a
+# horizontal magnetic field can't observe the tilt axis along it, so the
+# filter can sit confidently wrong about tilt for tens of seconds. Replace
+# with a starting attitude the estimator works out itself (level from
+# gravity at start, say) and drop this line.
+orientation_deg = 5.0
+
+# Magnetometer aiding — r_diag = noise_stddev² for magnetometer_pro [0.005, 0.005, 0.005]
+[aiding.mag]
+input = "sensor.mag.body"
+r_diag = [0.000025, 0.000025, 0.000025]
+model = { kind = "magnetometer", magnetic_field_enu = [0.0, 50.0, 0.0] }

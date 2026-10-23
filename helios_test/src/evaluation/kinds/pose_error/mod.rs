@@ -5,6 +5,8 @@
 //! graded: a body's `base_link`, a sensor's mount.
 
 pub mod config;
+#[cfg(test)]
+mod fixtures;
 mod kind;
 mod roots;
 

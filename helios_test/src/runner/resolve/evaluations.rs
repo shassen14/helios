@@ -41,6 +41,8 @@ pub struct PlannedEvaluation {
     pub kind: &'static str,
     /// The entry's `[evaluate.params]`, as the run file gave them.
     pub params: toml::Table,
+    /// What the bound evaluator fixed beside them, as it states it.
+    pub binding: toml::Table,
     pub id: EvaluationId,
     /// One per role, in the kind's order.
     pub inputs: Vec<PlannedInput>,
@@ -175,6 +177,7 @@ fn plan(
         })?;
     let metrics = evaluator.metrics();
     let caps = evaluator.caps();
+    let binding = evaluator.binding();
     // Whether a role is capped is the bound kind's, so an unused gap is
     // refused here, not at load.
     let unused: Vec<EvaluationProblem> = roles
@@ -198,6 +201,7 @@ fn plan(
         name: evaluation.name.clone(),
         kind: kind.name(),
         params: evaluation.params.clone(),
+        binding,
         id,
         held: bound.first().is_some_and(|base| base.held),
         nondeterministic: bound.iter().any(|input| input.nondeterministic),
@@ -291,6 +295,13 @@ fn locate_input(
     let convention = expressed_in
         .as_ref()
         .and_then(|frame| catalog.frame_conventions.convention_of(frame));
+    let placement = expressed_in.as_ref().and_then(|frame| {
+        catalog
+            .frame_placements
+            .iter()
+            .find(|placement| placement.frame() == frame)
+            .cloned()
+    });
     Ok(Bound {
         held: matches!(subject, Subject::Channel { .. }),
         nondeterministic: observable.determinism() == Determinism::Nondeterministic,
@@ -299,6 +310,7 @@ fn locate_input(
             instance: instance_of(subject).map(str::to_owned),
             expressed_in,
             convention,
+            placement,
             rate_hz,
             writer: writer.clone(),
         },

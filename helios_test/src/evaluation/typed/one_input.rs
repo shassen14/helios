@@ -239,6 +239,10 @@ impl<K: OneInput> Evaluator for OneInputEvaluation<K> {
         vec![Some(self.base_cap)]
     }
 
+    fn binding(&self) -> toml::Table {
+        toml::Table::new()
+    }
+
     fn refused(&self) -> &[Refused] {
         &self.refused
     }
@@ -386,6 +390,7 @@ mod tests {
             instance: instance.map(str::to_owned),
             expressed_in: None,
             convention: None,
+            placement: None,
             rate_hz: None,
             writer: None,
         }

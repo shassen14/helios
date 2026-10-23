@@ -55,7 +55,6 @@ pub struct PipelineBuilder {
     outside_inputs: Vec<ChannelKey>,
     tick_rate_hz: Option<f64>,
     world_frames: HashMap<FrameId, Convention>,
-    estimate_root: Option<FrameId>,
 }
 
 impl PipelineBuilder {
@@ -71,7 +70,6 @@ impl PipelineBuilder {
             outside_inputs: vec![],
             tick_rate_hz: None,
             world_frames: HashMap::new(),
-            estimate_root: None,
         }
     }
 
@@ -127,14 +125,6 @@ impl PipelineBuilder {
     pub fn with_host(mut self, host: HostDeclaration) -> Self {
         self.tick_rate_hz = Some(host.tick_rate_hz);
         self.world_frames = host.world_frames;
-        self
-    }
-
-    /// Names the frame the estimate holds the body's pose in, which the built
-    /// pipeline exposes through [`AutonomyPipeline::estimate_root`]. Set by
-    /// the estimate seam, which knows which estimator is authoritative.
-    pub(crate) fn with_estimate_root(mut self, root: FrameId) -> Self {
-        self.estimate_root = Some(root);
         self
     }
 
@@ -262,7 +252,6 @@ impl PipelineBuilder {
             descriptions,
             frame_conventions,
             frame_placements,
-            estimate_root: self.estimate_root,
         })
     }
 

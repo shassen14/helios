@@ -105,6 +105,7 @@ pub(super) fn report_evaluation(
         uncovered: derived.uncovered,
         refused: derived.not_computed.count,
         params: evaluation.params.clone(),
+        binding: evaluation.binding.clone(),
         inputs,
         metrics,
     }

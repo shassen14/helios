@@ -95,6 +95,7 @@ mod tests {
             instance,
             expressed_in: None,
             convention: None,
+            placement: None,
             rate_hz: None,
             writer: None,
         }

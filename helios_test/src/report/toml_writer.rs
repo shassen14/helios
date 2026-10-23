@@ -169,6 +169,7 @@ mod tests {
             uncovered: 1,
             refused: 0,
             params: toml::Table::new(),
+            binding: toml::Table::new(),
             inputs: vec![
                 InputReport {
                     role: "truth".to_string(),
@@ -333,6 +334,22 @@ mod tests {
         // Offered and not read, so listed without samples.
         assert_eq!(metrics[1]["path"].as_str(), Some("eval.inline.twist.sway"));
         assert!(metrics[1].get("samples").is_none());
+    }
+
+    #[test]
+    fn what_binding_fixed_is_written_in_its_own_table_beside_its_params() {
+        let mut report = sample_report();
+        let roots = "agent.car.odom anchored at global.datum";
+        report.evaluations[0].params = "align = \"declared\"".parse().expect("valid TOML");
+        report.evaluations[0].binding =
+            toml::Table::from_iter([("roots".to_owned(), roots.into())]);
+
+        let value = written(&report);
+
+        let evaluation = &value["evaluations"].as_array().unwrap()[0];
+        assert_eq!(evaluation["binding"]["roots"].as_str(), Some(roots));
+        assert!(evaluation.get("roots").is_none());
+        assert_eq!(evaluation["params"]["align"].as_str(), Some("declared"));
     }
 
     #[test]

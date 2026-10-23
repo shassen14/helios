@@ -6,13 +6,14 @@ use crate::evaluation::derived::Coverage;
 
 use helios_core::kernel::identifier::LEVEL_SEPARATOR;
 
-/// "[evaluate] <name>: <kind>[ (<param> = <value>, …)] of <role> (<target>,
+/// "[evaluate] <name>: <kind>[ (<param> = <value>, …, <bound> = <value>,
+/// …)] of <role> (<target>,
 /// <writer>[, <provenance>][, gaps up to <seconds> s[ = <multiple> periods]]
 /// [, <n> before its first value][, <n> in its gaps][, <n> after its last
 /// value]), … (the base's cap reads "<n> gaps past <seconds> s")
 /// … — <samples> samples[, <n> uncovered][, <refused> not computed]", then
-/// each metric's path and unit. The parameters and each count but the
-/// base's gaps show only when nonzero.
+/// each metric's path and unit. The parameters, then what binding fixed,
+/// and each count but the base's gaps show only when nonzero.
 pub(super) fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
     let inputs: Vec<String> = evaluation
         .inputs
@@ -77,14 +78,15 @@ pub(super) fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
         .iter()
         .filter_map(|metric| metric.path.rsplit(LEVEL_SEPARATOR).next())
         .collect();
-    let params = if evaluation.params.is_empty() {
+    let params: Vec<String> = evaluation
+        .params
+        .iter()
+        .chain(&evaluation.binding)
+        .map(|(key, value)| format!("{key} = {value}"))
+        .collect();
+    let params = if params.is_empty() {
         String::new()
     } else {
-        let params: Vec<String> = evaluation
-            .params
-            .iter()
-            .map(|(key, value)| format!("{key} = {value}"))
-            .collect();
         format!(" ({})", params.join(", "))
     };
     let mut line = format!(
@@ -127,6 +129,7 @@ mod tests {
             uncovered: 3,
             refused: 0,
             params: toml::Table::new(),
+            binding: toml::Table::new(),
             inputs: vec![
                 InputReport {
                     role: "truth".to_string(),
@@ -185,22 +188,26 @@ mod tests {
     }
 
     #[test]
-    fn an_evaluation_shows_its_params_and_what_it_didnt_compute() {
+    fn an_evaluation_shows_its_params_what_binding_fixed_and_what_it_didnt_compute() {
         let pose = EvaluationReportEntry {
             name: "pose".to_string(),
             kind: "pose_error".to_string(),
             samples: 10,
             uncovered: 0,
             refused: 2,
-            params: "align = \"first_pose\"".parse().expect("valid TOML"),
+            params: "align = \"declared\"".parse().expect("valid TOML"),
+            binding: toml::Table::from_iter([(
+                "roots".to_owned(),
+                "agent.car.odom anchored at global.datum".into(),
+            )]),
             inputs: vec![],
             metrics: vec![],
         };
 
         assert_eq!(
             evaluation_line(&pose),
-            "[evaluate] pose: pose_error (align = \"first_pose\") of  - 10 samples, 2 \
-             not computed -> "
+            "[evaluate] pose: pose_error (align = \"declared\", roots = \"agent.car.odom \
+             anchored at global.datum\") of  - 10 samples, 2 not computed -> "
         );
     }
 }

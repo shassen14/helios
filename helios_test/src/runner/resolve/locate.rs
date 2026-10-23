@@ -18,7 +18,7 @@ use helios_runtime::{
         key::{RecordedKey, Subject},
         path::channel_path,
     },
-    pipeline::FrameConventions,
+    pipeline::{FrameConventions, FramePlacement},
     port::{ChannelDescription, ChannelKey, Determinism, Observable, ObservableValue},
 };
 
@@ -33,6 +33,8 @@ pub(super) struct Catalog<'a> {
     pub descriptions: &'a [ChannelDescription],
     /// Each owned frame's axis convention, as its owner gives it.
     pub frame_conventions: &'a FrameConventions,
+    /// Where each frame a node defines sits in the world.
+    pub frame_placements: &'a [FramePlacement],
 }
 
 impl Catalog<'_> {
