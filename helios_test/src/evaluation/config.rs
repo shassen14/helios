@@ -11,19 +11,23 @@ use std::collections::BTreeMap;
 /// `eval.inline.<name>.<metric>`, which assertions and measures name as
 /// they name any other.
 ///
+/// Each role's series is an `I`: a recorded series' selector in a run file,
+/// an [`AgentSeries`](super::AgentSeries) in a suite, which binding to an
+/// agent turns into the selector.
+///
 /// Inputs and parameters are sub-tables, `[evaluate.inputs]` and
 /// `[evaluate.params]`: inline tables over several lines are TOML 1.1 only,
 /// which tools reading TOML 1.0 refuse.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Evaluation {
+pub struct Evaluation<I = AssertionTarget> {
     /// Unique across the run file's assertions, measures and evaluations.
     pub name: EntryName,
     /// A kind in the evaluator registry.
     pub kind: String,
     /// Each of the kind's roles, with the series it reads. A series is
     /// recorded, never another evaluation's.
-    pub inputs: BTreeMap<String, AssertionTarget>,
+    pub inputs: BTreeMap<String, I>,
     /// Read by the kind, which refuses any it doesn't know.
     #[serde(default)]
     pub params: toml::Table,

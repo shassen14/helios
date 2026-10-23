@@ -1,7 +1,10 @@
 use crate::evaluation::path::{DerivedName, DerivedProblem};
 
-use helios_core::prelude::AgentId;
-use helios_runtime::observe::path::{AgentPathParts, PathPart, PathSubject, SUBJECT_WORDS};
+use helios_core::prelude::{AgentId, FrameId};
+use helios_runtime::{
+    observe::path::{channel_path, AgentPathParts, PathPart, PathSubject, SUBJECT_WORDS},
+    port::ChannelKey,
+};
 
 use serde::{
     de::{self, value::MapAccessDeserializer, MapAccess, Visitor},
@@ -62,6 +65,22 @@ impl AssertionTarget {
                 instance: None,
             }),
             Err(fault) => Err(MalformedTarget { path, fault }),
+        }
+    }
+
+    /// The selector of `channel` on `agent`, at `instance` when the channel
+    /// is keyed by frame. Its path is spelled from the parts, never parsed,
+    /// so it is well-formed by construction.
+    pub fn channel(agent: &AgentId, channel: &ChannelKey, instance: Option<&FrameId>) -> Self {
+        Self {
+            path: channel_path(agent.as_str(), channel),
+            root: TargetRoot::Agent {
+                agent: agent.clone(),
+                subject: TargetSubject::Channel {
+                    channel: channel.name().clone(),
+                },
+            },
+            instance: instance.map(|frame| InstanceSelector::One(frame.to_string().into())),
         }
     }
 
@@ -304,6 +323,8 @@ mod tests {
 
     use crate::assertion::EntryName;
 
+    use helios_runtime::channels;
+
     #[test]
     fn parse_keeps_the_path_and_its_parts() {
         let target = AssertionTarget::parse("agent.car.node.estimator.aiding.gps.nis")
@@ -461,6 +482,20 @@ mod tests {
             .unwrap();
             assert_eq!(toml::from_str::<Wrap>(&written).unwrap().target, target);
         }
+    }
+
+    #[test]
+    fn a_selector_built_from_its_parts_equals_the_one_its_spelling_parses_to() {
+        let car = AgentId::new("car");
+        let base_link = FrameId::base_link(car.clone());
+
+        let built = AssertionTarget::channel(&car, &channels::truth_tf(), Some(&base_link));
+        let parsed = read(&format!(
+            "{{ path = \"{TF}\", instance = \"agent.car.base_link\" }}"
+        ))
+        .unwrap();
+
+        assert_eq!(built, parsed);
     }
 
     #[test]

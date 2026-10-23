@@ -14,6 +14,7 @@ pub mod kind;
 pub mod kinds;
 pub mod path;
 pub mod registry;
+pub mod suite;
 pub mod typed;
 
 pub use agent_series::AgentSeries;
