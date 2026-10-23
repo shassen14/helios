@@ -25,10 +25,14 @@
 //! config-derived part (`aiding.<entry>.nis`) are formatted by the node as it
 //! builds its descriptor.
 //!
+//! A node reading named instances of a keyed input declares each with
+//! [`reads_instance`](PortDescriptorBuilder::reads_instance), and the build
+//! refuses one no writer declares.
+//!
 //! A node that places a frame it defines in the world one of its inputs names
 //! declares it with [`pins`](PortDescriptorBuilder::pins), or
 //! [`pins_by_instance`](PortDescriptorBuilder::pins_by_instance) on a keyed
-//! channel.
+//! channel, through an instance it reads.
 //!
 //! Every input the builder records is same-tick: [`input`](PortDescriptorBuilder::input)
 //! records a required input and [`optional`](PortDescriptorBuilder::optional)
@@ -56,6 +60,7 @@ pub struct PortDescriptorBuilder {
     required_inputs: Vec<ChannelKey>,
     optional_inputs: Vec<ChannelKey>,
     mount_readings: Vec<(ChannelKey, Convention)>,
+    instance_readings: Vec<(ChannelKey, InstanceKey)>,
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
     defined_frames: Vec<(FrameId, Convention)>,
@@ -110,6 +115,31 @@ impl PortDescriptorBuilder {
     /// input by then.
     pub fn reads_mount_in(mut self, channel: &ChannelKey, convention: Convention) -> Self {
         self.mount_readings.push((channel.clone(), convention));
+        self
+    }
+
+    /// Declares that the node reads `instance` of keyed input `channel`,
+    /// spelled as `T` spells its instances: the mock oracle reads its body's
+    /// instance of the truth transforms. One input may name several. The
+    /// build refuses an instance no writer of the channel declares. Checked
+    /// at [`build`](Self::build): `channel` must be declared as an input by
+    /// then.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` is not keyed or does not carry `T`.
+    pub fn reads_instance<T: Keyed>(
+        mut self,
+        channel: &ChannelKey,
+        instance: &T::Instance,
+    ) -> Self {
+        assert!(
+            channel.is_keyed() && channel.type_id() == TypeId::of::<T>(),
+            "an instance is read from a keyed channel of {}, got {channel}",
+            std::any::type_name::<T>()
+        );
+        self.instance_readings
+            .push((channel.clone(), InstanceKey::of::<T>(instance)));
         self
     }
 
@@ -252,7 +282,10 @@ impl PortDescriptorBuilder {
     /// `frame`, as
     /// [`pins`](Self::pins) does: the world frame is the one the instance's
     /// values are expressed in, a transform's parent. The mock oracle pins its
-    /// root through its body's instance of the truth transforms.
+    /// root through its body's instance of the truth transforms. Checked at
+    /// [`build`](Self::build): `instance` must be read with
+    /// [`reads_instance`](Self::reads_instance) by then, so the pin and the
+    /// read can't name two instances.
     ///
     /// # Panics
     ///
@@ -288,9 +321,10 @@ impl PortDescriptorBuilder {
     ///
     /// # Panics
     ///
-    /// If [`reads_mount_in`](Self::reads_mount_in) named a channel that is
-    /// not a declared input, or a pin names a frame the node doesn't define or
-    /// a channel it doesn't read.
+    /// If [`reads_mount_in`](Self::reads_mount_in) or
+    /// [`reads_instance`](Self::reads_instance) named a channel that is not a
+    /// declared input, or a pin names a frame the node doesn't define, or a
+    /// channel or instance it doesn't read.
     pub fn build(self) -> PortDescriptor {
         PortDescriptor::new(
             self.required_inputs,
@@ -300,6 +334,7 @@ impl PortDescriptorBuilder {
         )
         .with_class(self.class)
         .with_mount_readings(self.mount_readings)
+        .with_instance_readings(self.instance_readings)
         .with_outputs(self.outputs)
         .with_observables(self.observables)
         .with_defined_frames(self.defined_frames)
@@ -528,6 +563,7 @@ mod tests {
         let d = PortDescriptorBuilder::algorithm()
             .optional(gps.clone())
             .input(edges())
+            .reads_instance::<Edge>(&edges(), &"base".to_string())
             .defines_frame(root(), Convention::Enu)
             .pins(root(), Pinned::Position, &gps)
             .pins_by_instance::<Edge>(root(), Pinned::Position, &edges(), &"base".to_string())
@@ -583,6 +619,48 @@ mod tests {
             &ChannelKey::internal::<Edge>("edges"),
             &"base".to_string(),
         );
+    }
+
+    /// One input may name several instances, each kept once, in order.
+    #[test]
+    fn an_input_keeps_the_instances_it_reads() {
+        let d = PortDescriptorBuilder::algorithm()
+            .optional(edges())
+            .reads_instance::<Edge>(&edges(), &"wheel".to_string())
+            .reads_instance::<Edge>(&edges(), &"base".to_string())
+            .reads_instance::<Edge>(&edges(), &"wheel".to_string())
+            .build();
+
+        let input = d.inputs().next().expect("edges is read");
+        let spelled: Vec<&str> = input.instances().iter().map(InstanceKey::as_str).collect();
+        assert_eq!(spelled, ["wheel", "base"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "but the node does not read that channel")]
+    fn an_instance_of_a_channel_not_read_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .reads_instance::<Edge>(&edges(), &"base".to_string())
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "an instance is read from a keyed channel")]
+    fn an_instance_of_a_single_value_channel_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .reads_instance::<Edge>(&ChannelKey::internal::<Edge>("edges"), &"base".to_string());
+    }
+
+    /// The pin and the read name one instance, or the node is wrong.
+    #[test]
+    #[should_panic(expected = "a pin is declared through instance \"odom\"")]
+    fn a_pin_by_an_instance_not_read_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .input(edges())
+            .reads_instance::<Edge>(&edges(), &"base".to_string())
+            .defines_frame(root(), Convention::Enu)
+            .pins_by_instance::<Edge>(root(), Pinned::Position, &edges(), &"odom".to_string())
+            .build();
     }
 
     #[test]

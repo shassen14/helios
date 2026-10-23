@@ -86,8 +86,8 @@ pub fn ground_truth_sync_system(
 /// The channels [`publish_truth_channels_system`] writes for `agent`, as
 /// the body publishes them: `truth.tf` and `truth.twist`, each with one
 /// instance, the agent's `base_link` (its pose expressed in the world's
-/// `datum`), exact because the simulator is ground truth, and written every
-/// tick, at the host's `tick_rate_hz`.
+/// `datum`, its twist relative to it), exact because the simulator is ground
+/// truth, and written every tick, at the host's `tick_rate_hz`.
 pub fn truth_body_channels(
     agent: &AgentId,
     datum: &FrameId,
@@ -103,6 +103,7 @@ pub fn truth_body_channels(
             .with_rate(tick_rate_hz),
         BodyChannel::new(truth_twist(), TRUTH_RIG_UNIT, Provenance::Exact)
             .with_instances::<StampedTwist<Flu>>([base_link])
+            .with_reference(datum.clone())
             .with_rate(tick_rate_hz),
     ]
 }
@@ -279,5 +280,18 @@ mod tests {
         );
         assert!((twist.linear.into_inner() - Vector3::new(2.0, 0.0, 0.0)).norm() < 1e-9);
         assert!((twist.angular.into_inner() - Vector3::new(0.0, 0.0, 0.5)).norm() < 1e-9);
+    }
+
+    /// The twist states the datum it is relative to, so the build can refuse
+    /// a node reading it beside a pose in another world frame. The pose
+    /// names its datum through its instance's parent instead.
+    #[test]
+    fn the_twist_is_stated_relative_to_the_datum() {
+        const TICK_RATE_HZ: f64 = 100.0;
+        let datum = FrameId::global("datum");
+        let [pose, twist] = truth_body_channels(&AgentId::new("car"), &datum, TICK_RATE_HZ);
+
+        assert_eq!(pose.reference(), None);
+        assert_eq!(twist.reference(), Some(&datum));
     }
 }

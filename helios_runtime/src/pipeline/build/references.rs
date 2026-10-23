@@ -55,7 +55,8 @@ pub(super) fn check_references(
 /// the instance is expressed in, when that is one of `host_frames`. A node
 /// output names none, so a pin through a mux or a converter is refused until
 /// node outputs carry a reference. One error per pin. A pin through an input
-/// no writer supplies is the supplier check's to report.
+/// no writer supplies is the supplier check's to report, and one through an
+/// instance no writer declares the instance check's.
 ///
 /// Returns each pin that names a world frame, with it.
 pub(super) fn check_pins(
@@ -143,7 +144,8 @@ enum PinReference<'a> {
         writer: &'a Writer,
         stated: Option<&'a FrameId>,
     },
-    /// No writer supplies the input, or the instance read.
+    /// No writer supplies the input, or the instance read: the supplier and
+    /// instance checks refuse it.
     Unwritten,
 }
 
@@ -275,6 +277,7 @@ mod tests {
         estimator(
             PortDescriptorBuilder::mock()
                 .input(truth_tf())
+                .reads_instance::<StampedTransform>(&truth_tf(), &base_link())
                 .pins_by_instance::<StampedTransform>(
                     root(),
                     Pinned::Position,
@@ -416,6 +419,23 @@ mod tests {
     #[test]
     fn a_pin_through_an_unwritten_input_is_left_to_the_supplier_check() {
         assert!(anchoring_errors(&[pinning(&sensor("gps"))], &[]).is_empty());
+    }
+
+    /// A body whose truth names another frame than the one the pin reads
+    /// (mocap naming its rigid body) places nothing here; the instance check
+    /// refuses the read, so the root is never reported free.
+    #[test]
+    fn a_pin_through_an_undeclared_instance_is_left_to_the_instance_check() {
+        let mocap_body = BodyChannel::new(truth_tf(), "truth", Provenance::Exact)
+            .with_instances::<StampedTransform>([FrameEdge {
+                child: FrameId::global("mocap_body"),
+                parent: datum(),
+            }]);
+        let (pinned, errors) =
+            anchoring(&[pinning_truth()], &[ChannelDescription::body(&mocap_body)]);
+
+        assert!(pinned.is_empty());
+        assert!(errors.is_empty(), "{errors:?}");
     }
 
     #[test]

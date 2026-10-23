@@ -6,13 +6,13 @@
 //! output mount rules name inputs, each node reads and writes only the channel
 //! kinds its class may, channel names are well formed and each names one
 //! channel, each node's watchable leaves are well formed, distinct and
-//! outside the pipeline's own group, every input has exactly one supplier, and every instance of a keyed channel has
-//! one writer. These need only the declarations, not an order, so they run
+//! outside the pipeline's own group, every input has exactly one supplier, every instance of a keyed channel has
+//! one writer, and every instance a node reads by name has one. These need only the declarations, not an order, so they run
 //! before the sort.
 
 use super::anchors::{place_frames, FramePlacement};
 use super::declaration::NodeDeclaration;
-use super::instances::check_instances;
+use super::instances::{check_instances, check_instances_read};
 use super::kinds::check_kind_access;
 use super::mounts::{check_body_mounts, check_mount_rules};
 use super::owners::{check_frame_owners, FrameConventions};
@@ -47,8 +47,9 @@ use std::{
 /// outside the pipeline's own group, no node names a leaf twice, and every
 /// input,
 /// required or optional, has exactly one supplier: a node output, a body
-/// channel, or a declared outside input, and every writer of a keyed channel
-/// declares instances no other writer does. `descriptions` holds every
+/// channel, or a declared outside input, every writer of a keyed channel
+/// declares instances no other writer does, and every instance a node reads
+/// by name is declared by a writer of its channel. `descriptions` holds every
 /// channel some writer declares; `body_frames` and `host_frames` the frames
 /// the body and the host own, with their conventions.
 ///
@@ -88,6 +89,7 @@ pub(super) fn check_wiring(
     let supplier_of = map_suppliers(descriptions, &mut errors);
     check_instances(descriptions, &mut errors);
     check_inputs_supplied(nodes, &supplier_of, &refused_names, &mut errors);
+    check_instances_read(nodes, descriptions, &refused_names, &mut errors);
     (errors, conventions, placements)
 }
 

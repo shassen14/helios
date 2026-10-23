@@ -25,10 +25,13 @@
 //!
 //! ## Body capability requirement
 //!
-//! The descriptor declares `truth.tf` as a required oracle input. A body
-//! that does not publish `truth.tf` fails the build with
-//! [`PipelineBuildError::UnsatisfiedBodyCapabilities`]. This is the
-//! type-level fence that keeps oracle-reading nodes off bodies without truth.
+//! The descriptor declares `truth.tf` as a required oracle input and
+//! `truth.twist` as an optional one, each read at its body's `base_link`
+//! instance. A body that does not publish `truth.tf` fails the build with
+//! [`PipelineBuildError::UnsatisfiedBodyCapabilities`], and one whose truth
+//! channels don't declare that instance with
+//! [`PipelineBuildError::UnsatisfiedInstance`]. This is the type-level fence
+//! that keeps oracle-reading nodes off bodies without truth.
 //!
 //! ## Schema
 //!
@@ -39,7 +42,9 @@
 //! not declare them.
 //!
 //! [`PipelineBuildError::UnsatisfiedBodyCapabilities`]:
-//!     crate::pipeline::build_error::PipelineBuildError::UnsatisfiedBodyCapabilities
+//!     crate::PipelineBuildError::UnsatisfiedBodyCapabilities
+//! [`PipelineBuildError::UnsatisfiedInstance`]:
+//!     crate::PipelineBuildError::UnsatisfiedInstance
 
 use crate::channels::estimate::estimator_output;
 use crate::channels::{truth_tf, truth_twist};
@@ -95,7 +100,9 @@ impl MockOracleEstimatorNode {
             .expect("the carrier schema holds its position in the root");
         let descriptor = PortDescriptorBuilder::mock()
             .input(truth_tf())
+            .reads_instance::<StampedTransform>(&truth_tf(), &frames.body)
             .optional(truth_twist())
+            .reads_instance::<StampedTwist<Flu>>(&truth_twist(), &frames.body)
             .output(output.clone())
             .defines_frame(frames.root.clone(), root_convention)
             .pins_by_instance::<StampedTransform>(
@@ -303,6 +310,9 @@ mod tests {
 
     // --- Test fixtures ---
 
+    /// The host's tick rate in the build tests.
+    const TICK_RATE_HZ: f64 = 100.0;
+
     struct MockRuntime;
 
     impl TfProvider for MockRuntime {
@@ -437,7 +447,8 @@ mod tests {
                         parent: datum(),
                     }]),
                 BodyChannel::new(truth_twist(), "truth", Provenance::Exact)
-                    .with_instances::<StampedTwist<Flu>>([body]),
+                    .with_instances::<StampedTwist<Flu>>([body])
+                    .with_reference(datum()),
             ],
             ..Default::default()
         }
@@ -469,6 +480,32 @@ mod tests {
                 .optional_inputs()
                 .any(|k| *k == truth_twist()),
             "truth.twist must be optional, not required"
+        );
+    }
+
+    /// Each truth channel is read at its body's instance and no other.
+    #[test]
+    fn descriptor_reads_its_bodys_instance_of_each_truth_channel() {
+        let node = mock();
+        let body = FrameId::base_link(agent());
+        let read: Vec<(&ChannelKey, &[InstanceKey])> = node
+            .port_descriptor()
+            .inputs()
+            .map(|input| (input.channel(), input.instances()))
+            .collect();
+
+        assert_eq!(
+            read,
+            [
+                (
+                    &truth_tf(),
+                    &[InstanceKey::of::<StampedTransform>(&body)][..]
+                ),
+                (
+                    &truth_twist(),
+                    &[InstanceKey::of::<StampedTwist<Flu>>(&body)][..]
+                ),
+            ]
         );
     }
 
@@ -712,11 +749,90 @@ mod tests {
         );
     }
 
+    /// Truth naming another frame than the agent's `base_link`, as mocap
+    /// naming its rigid body would, is the body's gap at build, not a root
+    /// left free and a mock that never publishes.
+    #[test]
+    fn build_fails_when_the_bodys_truth_names_another_frame() {
+        let mocap_body = FrameId::global("mocap_body");
+        let body = BodyCapabilities {
+            publishes: vec![
+                BodyChannel::new(truth_tf(), "truth", Provenance::Exact)
+                    .with_instances::<StampedTransform>([FrameEdge {
+                        child: mocap_body.clone(),
+                        parent: datum(),
+                    }]),
+                BodyChannel::new(truth_twist(), "truth", Provenance::Exact)
+                    .with_instances::<StampedTwist<Flu>>([mocap_body]),
+            ],
+            ..Default::default()
+        };
+
+        let errs = PipelineBuilder::new(agent())
+            .add_node(Box::new(mock()))
+            .with_body_capabilities(body)
+            .with_host(HostDeclaration {
+                tick_rate_hz: TICK_RATE_HZ,
+                world_frames: HashMap::from([(datum(), Convention::Enu)]),
+            })
+            .build()
+            .map(|_| ())
+            .expect_err("build must reject truth without the body's instance");
+
+        let refused: Vec<(&ChannelKey, &InstanceKey)> = errs
+            .iter()
+            .filter_map(|e| match e {
+                PipelineBuildError::UnsatisfiedInstance {
+                    channel, instance, ..
+                } => Some((channel, instance)),
+                _ => None,
+            })
+            .collect();
+        let body = FrameId::base_link(agent());
+        assert_eq!(
+            refused,
+            [
+                (&truth_tf(), &InstanceKey::of::<StampedTransform>(&body)),
+                (&truth_twist(), &InstanceKey::of::<StampedTwist<Flu>>(&body)),
+            ],
+            "{errs:?}"
+        );
+        assert_eq!(errs.len(), 2, "{errs:?}");
+    }
+
+    /// A twist relative to another world frame than the pose's parent can't
+    /// be written as velocity in the root the pose places there, so it is
+    /// refused at build, naming both inputs.
+    #[test]
+    fn build_fails_when_the_twist_is_relative_to_another_world_frame() {
+        let site = FrameId::global("site");
+        let mut body = body_with_truth();
+        body.publishes[1] = body.publishes[1].clone().with_reference(site.clone());
+
+        let errs = PipelineBuilder::new(agent())
+            .add_node(Box::new(mock()))
+            .with_body_capabilities(body)
+            .with_host(HostDeclaration {
+                tick_rate_hz: TICK_RATE_HZ,
+                world_frames: HashMap::from([
+                    (datum(), Convention::Enu),
+                    (site.clone(), Convention::Enu),
+                ]),
+            })
+            .build()
+            .map(|_| ())
+            .expect_err("build must reject a twist in another world frame");
+
+        let [PipelineBuildError::ReferencesDisagree { references, .. }] = errs.as_slice() else {
+            panic!("expected only disagreeing references, got {errs:?}");
+        };
+        assert_eq!(references, &[(truth_twist(), site), (truth_tf(), datum())]);
+    }
+
     /// The host declares the datum the truth is published in, so the pin
     /// through it holds and anchors the root there.
     #[test]
     fn build_succeeds_when_body_publishes_truth_tf() {
-        const TICK_RATE_HZ: f64 = 100.0;
         let result = PipelineBuilder::new(agent())
             .add_node(Box::new(mock()))
             .with_body_capabilities(body_with_truth())

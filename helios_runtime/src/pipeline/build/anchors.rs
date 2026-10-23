@@ -74,7 +74,8 @@ pub enum Placement {
 }
 
 /// Why a defined frame is free in the world. A pin through an input no
-/// writer supplies is no reason: the build refuses that input.
+/// writer supplies, or an instance no writer declares, is no reason: the
+/// build refuses that input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unanchored {
     /// Its node pins its position through no input.
@@ -304,6 +305,7 @@ mod tests {
     fn a_root_pinned_by_instance_is_anchored_at_the_instances_parent() {
         let ports = PortDescriptorBuilder::mock()
             .input(truth_tf())
+            .reads_instance::<StampedTransform>(&truth_tf(), &FrameId::base_link(agent()))
             .pins_by_instance::<StampedTransform>(
                 root(),
                 Pinned::Position,

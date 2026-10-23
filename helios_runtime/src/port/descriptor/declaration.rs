@@ -1,5 +1,6 @@
 //! [`PortDescriptor`]: what a node declares it reads from and writes to the
-//! bus, with each input as an [`InputPort`] record of channel, need and timing,
+//! bus, with each input as an [`InputPort`] record of channel, need, timing
+//! and, on a keyed channel, the instances it reads,
 //! and each output as an [`OutputPort`] record of channel, the actuators it
 //! drives and the [`MountRule`] that gives its mount. It also
 //! declares what the node can emit for watchers, each value an [`Observable`]
@@ -45,7 +46,8 @@ use std::{any::TypeId, sync::Arc};
 /// No two nodes may declare the same `outputs` channel — enforced at build time.
 ///
 /// Each input is stored as an [`InputPort`] record carrying its channel, its
-/// [`InputNeed`] and its [`InputTiming`]. [`inputs`](Self::inputs) yields the
+/// [`InputNeed`] and its [`InputTiming`], and, on a keyed channel, the
+/// instances the node reads by name. [`inputs`](Self::inputs) yields the
 /// records; [`required_inputs`](Self::required_inputs) and
 /// [`optional_inputs`](Self::optional_inputs) yield just the channel keys.
 ///
@@ -177,13 +179,47 @@ impl PortDescriptor {
         self
     }
 
-    /// Records the inputs that pin the frames the node defines. For the
-    /// builder, after the inputs and the defined frames.
+    /// Records the instances the node reads of each listed keyed input, each
+    /// once. For the builder, after the inputs.
     ///
     /// # Panics
     ///
-    /// If a pin names a frame the node doesn't define or a channel it doesn't
-    /// read: either is a bug in the node.
+    /// If a listed channel is not a declared input: a node naming what it
+    /// reads of a channel it never reads is a bug in the node.
+    pub(crate) fn with_instance_readings(
+        mut self,
+        readings: Vec<(ChannelKey, InstanceKey)>,
+    ) -> Self {
+        for (channel, instance) in readings {
+            let mut read = false;
+            for input in self
+                .required_inputs
+                .iter_mut()
+                .chain(&mut self.optional_inputs)
+                .filter(|input| input.channel == channel)
+            {
+                read = true;
+                if !input.instances.contains(&instance) {
+                    input.instances.push(instance.clone());
+                }
+            }
+            assert!(
+                read,
+                "instance \"{instance}\" of {channel} is named, but the node does not read \
+                 that channel"
+            );
+        }
+        self
+    }
+
+    /// Records the inputs that pin the frames the node defines. For the
+    /// builder, after the inputs, the instances they read and the defined
+    /// frames.
+    ///
+    /// # Panics
+    ///
+    /// If a pin names a frame the node doesn't define, a channel it doesn't
+    /// read, or an instance it doesn't read: each is a bug in the node.
     pub(crate) fn with_pins(mut self, pins: Vec<Pin>) -> Self {
         for pin in &pins {
             assert!(
@@ -198,6 +234,16 @@ impl PortDescriptor {
                 "a pin is declared through {}, which the node does not read",
                 pin.channel
             );
+            if let Some(instance) = &pin.instance {
+                assert!(
+                    self.inputs()
+                        .any(|input| input.channel == pin.channel
+                            && input.instances.contains(instance)),
+                    "a pin is declared through instance \"{instance}\" of {}, which the node \
+                     does not read",
+                    pin.channel
+                );
+            }
         }
         self.pins = pins;
         self
@@ -296,7 +342,9 @@ impl PortDescriptor {
 }
 
 /// One declared input of a node: which channel it reads, whether the node
-/// can run without it, and which tick's value it expects.
+/// can run without it, which tick's value it expects, and, on a keyed
+/// channel, the instances it reads by name. An input naming none reads
+/// whatever instances there are, as a mux over every keyed sensor would.
 ///
 /// Need and timing are independent — an optional input is not implicitly
 /// delayed, and a delayed input is not implicitly optional. Only the
@@ -306,6 +354,7 @@ pub struct InputPort {
     channel: ChannelKey,
     need: InputNeed,
     timing: InputTiming,
+    instances: Vec<InstanceKey>,
 }
 
 impl InputPort {
@@ -314,6 +363,7 @@ impl InputPort {
             channel,
             need,
             timing,
+            instances: Vec::new(),
         }
     }
 
@@ -330,6 +380,13 @@ impl InputPort {
     /// Which tick's value this input expects.
     pub fn timing(&self) -> InputTiming {
         self.timing
+    }
+
+    /// The instances of its keyed channel the node reads by name, in
+    /// declaration order. The build refuses one no writer declares. Empty for
+    /// a channel that holds one value, and for a node reading every instance.
+    pub fn instances(&self) -> &[InstanceKey] {
+        &self.instances
     }
 }
 

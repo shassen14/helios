@@ -52,6 +52,19 @@ pub enum PipelineBuildError {
         channel_key: ChannelKey,
         need: InputNeed,
     },
+    /// A node reads an instance of a keyed channel that no writer of the
+    /// channel declares, so the node would wait on it forever. `declared`
+    /// lists every instance the channel's writers do declare, in
+    /// description order. Raised for optional inputs too, as for channels.
+    /// On an oracle or health channel it is the body's gap. Reported once
+    /// per instance per input.
+    UnsatisfiedInstance {
+        node_name: String,
+        channel: ChannelKey,
+        instance: InstanceKey,
+        need: InputNeed,
+        declared: Vec<InstanceKey>,
+    },
     /// Two suppliers provide the same channel: two nodes, or a node and the
     /// body, or a node and an outside input. Each channel has exactly one
     /// supplier, so every read has one writer.
@@ -284,6 +297,38 @@ impl std::fmt::Display for PipelineBuildError {
                     "node \"{node_name}\" reads channel {channel_key} ({need}); the body does not \
                      publish it"
                 )
+            }
+            PipelineBuildError::UnsatisfiedInstance {
+                node_name,
+                channel,
+                instance,
+                need,
+                declared,
+            } => {
+                let need = need_label(*need);
+                write!(
+                    f,
+                    "node \"{node_name}\" reads instance \"{instance}\" of {channel} ({need}), "
+                )?;
+                match channel.kind() {
+                    ChannelKind::Measurement | ChannelKind::Internal => {
+                        write!(f, "which no writer declares")?
+                    }
+                    ChannelKind::Health | ChannelKind::Oracle => {
+                        write!(f, "which the body does not publish")?
+                    }
+                }
+                write!(f, "; declared: ")?;
+                if declared.is_empty() {
+                    return write!(f, "none");
+                }
+                for (index, declared) in declared.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "\"{declared}\"")?;
+                }
+                Ok(())
             }
             PipelineBuildError::MultipleSuppliers {
                 channel,
