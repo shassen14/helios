@@ -11,6 +11,7 @@
 //! one that pairs its values some other way, such as by association.
 
 use crate::evaluation::{
+    agent_series::AgentSeries,
     config::{Gap, GapWidth},
     derived::{Derived, Refused},
 };
@@ -18,7 +19,10 @@ use crate::evaluation::{
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::{AgentId, FrameId, MonotonicTime};
 use helios_core::spatial::transforms::Convention;
-use helios_runtime::{pipeline::FramePlacement, port::Writer};
+use helios_runtime::{
+    pipeline::FramePlacement,
+    port::{ChannelKey, Writer},
+};
 
 use serde::Serialize;
 use std::{
@@ -35,6 +39,12 @@ pub trait EvaluatorKind: Send + Sync {
     /// Its input roles, the first of them the base: each of its values is one
     /// sample of every metric. Each entry names one series for every role.
     fn roles(&self) -> Vec<Role>;
+
+    /// The channel the role at `role` in [`roles`](Self::roles) reads when
+    /// a suite binds it to `series`, or why it can't: the series carries
+    /// another type, or the kind has no such role. Answered by the kind's
+    /// typed form, where each role's payload type is known.
+    fn series_key(&self, role: usize, series: AgentSeries) -> Result<ChannelKey, String>;
 
     /// The metrics every evaluator of this kind offers, when they are fixed,
     /// so load checks a derived target's metric before a sim starts. `None`

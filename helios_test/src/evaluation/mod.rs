@@ -7,6 +7,7 @@
 //! time as the kind declares, and each metric something reads becomes a series spelled
 //! `eval.inline.<name>.<metric>`, which assertions and measures name.
 
+pub mod agent_series;
 pub mod config;
 pub mod derived;
 pub mod kind;
@@ -15,5 +16,6 @@ pub mod path;
 pub mod registry;
 pub mod typed;
 
+pub use agent_series::AgentSeries;
 pub use config::{Evaluation, EvaluationDefaults, Gap, GapWidth};
 pub use registry::{standard_evaluators, EvaluatorRegistry};

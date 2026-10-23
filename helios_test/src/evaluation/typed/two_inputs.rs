@@ -11,12 +11,14 @@ use super::{
     params,
 };
 use crate::evaluation::{
+    agent_series::AgentSeries,
     config::Gap,
     derived::{Coverage, Derived, Refused, Uncovered, UncoveredCounts},
     kind::{BoundInput, Cap, CapUse, Evaluator, EvaluatorKind, InputRejection, Metric, Role},
 };
 
 use helios_core::prelude::MonotonicTime;
+use helios_runtime::port::ChannelKey;
 
 use serde::de::DeserializeOwned;
 
@@ -170,6 +172,14 @@ impl<K: TwoInputs> EvaluatorKind for TwoInputsKind<K> {
             Role::of::<K::BasePayload>(K::BASE),
             Role::of::<K::OtherPayload>(K::OTHER),
         ]
+    }
+
+    fn series_key(&self, role: usize, series: AgentSeries) -> Result<ChannelKey, String> {
+        match role {
+            0 => series.key::<K::BasePayload>(K::BASE),
+            1 => series.key::<K::OtherPayload>(K::OTHER),
+            _ => Err(format!("{} has no role {role}", K::NAME)),
+        }
     }
 
     fn menu(&self) -> Option<Vec<Metric>> {
