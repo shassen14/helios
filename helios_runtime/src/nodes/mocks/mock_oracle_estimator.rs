@@ -144,6 +144,14 @@ impl MockOracleEstimatorNode {
         let Some(twist) = twist else {
             return Ok(());
         };
+        // The root sits at the pose's parent, a world frame the build pinned
+        // it to, so only a motion relative to that frame is the root's.
+        if twist.relative_to != pose.parent {
+            return Err(TruthRefused::TwistReference {
+                relative_to: twist.relative_to.clone(),
+                pinned: pose.parent.clone(),
+            });
+        }
         // Rotating by the pose is right only for a twist in the body's axes.
         if twist.expressed_in != self.frames.body {
             return Err(TruthRefused::TwistAxes {
@@ -214,6 +222,12 @@ impl PipelineNode for MockOracleEstimatorNode {
 enum TruthRefused {
     /// The true pose does not carry body FLU to root ENU axes.
     PoseAxes(FrameMismatch),
+    /// The true twist is relative to a frame other than the one the root
+    /// is pinned to.
+    TwistReference {
+        relative_to: FrameId,
+        pinned: FrameId,
+    },
     /// The true twist is expressed in a frame other than the body.
     TwistAxes { expressed_in: FrameId },
     /// The carrier schema refused a block: a mismatch between the schema
@@ -225,6 +239,13 @@ impl Display for TruthRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TruthRefused::PoseAxes(mismatch) => write!(f, "true pose: {mismatch}"),
+            TruthRefused::TwistReference {
+                relative_to,
+                pinned,
+            } => write!(
+                f,
+                "true twist is relative to {relative_to}, not {pinned}, where the root is pinned"
+            ),
             TruthRefused::TwistAxes { expressed_in } => {
                 write!(f, "true twist is expressed in {expressed_in}, not the body")
             }
@@ -264,6 +285,7 @@ mod tests {
     use crate::host::HostDeclaration;
     use crate::pipeline::PipelineBuildError;
     use crate::pipeline::PipelineBuilder;
+    use crate::pipeline::Placement;
     use crate::port::Provenance;
     use crate::port::{ChannelKey, PortDescriptor};
 
@@ -607,6 +629,23 @@ mod tests {
         assert!(node.refusal_warned.load(Ordering::Relaxed));
     }
 
+    /// The root sits at the pose's parent, so a motion relative to any other
+    /// frame is not the root's: the tick is dropped and warned about once.
+    #[test]
+    fn a_twist_relative_to_another_frame_is_refused() {
+        let node = mock();
+        let bus = make_bus_with_truth_producer(&node);
+
+        write_pose(&bus, FrameId::base_link(agent()), Isometry3::identity());
+        let mut twist = twist_in(FrameId::base_link(agent()), Vector3::x(), Vector3::zeros());
+        twist.relative_to = FrameId::global("mocap");
+        write_twist(&bus, twist);
+        node.execute(&bus, &MockRuntime, tick_at(0.0, 0.01));
+
+        assert!(bus.read::<FrameAwareState>(state_channel()).is_none());
+        assert!(node.refusal_warned.load(Ordering::Relaxed));
+    }
+
     #[test]
     fn a_pose_in_other_axes_is_refused() {
         let node = mock();
@@ -674,7 +713,7 @@ mod tests {
     }
 
     /// The host declares the datum the truth is published in, so the pin
-    /// through it holds and places the root there.
+    /// through it holds and anchors the root there.
     #[test]
     fn build_succeeds_when_body_publishes_truth_tf() {
         const TICK_RATE_HZ: f64 = 100.0;
@@ -690,11 +729,14 @@ mod tests {
         let Ok(pipeline) = result else {
             panic!("build should succeed: {:?}", result.err());
         };
-        let placed: Vec<(&FrameId, &FrameId)> = pipeline
-            .pinned_frames()
+        let anchored: Vec<(&FrameId, &FrameId)> = pipeline
+            .frame_placements()
             .iter()
-            .map(|pinned| (pinned.pin().frame(), pinned.reference()))
+            .filter_map(|placement| match placement.placement() {
+                Placement::Anchored(edge) => Some((&edge.child, &edge.parent)),
+                Placement::Free(_) => None,
+            })
             .collect();
-        assert_eq!(placed, [(&FrameId::odom(agent()), &datum())]);
+        assert_eq!(anchored, [(&FrameId::odom(agent()), &datum())]);
     }
 }

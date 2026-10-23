@@ -216,7 +216,7 @@ impl PipelineBuilder {
     /// at `0`, indexing into the pipeline's rate-timer array.
     pub fn build(self) -> Result<AutonomyPipeline, Vec<PipelineBuildError>> {
         let descriptions = self.describe_channels();
-        let (errors, frame_conventions, pinned_frames) = check_wiring(
+        let (errors, frame_conventions, frame_placements) = check_wiring(
             &self.agent,
             &self.nodes,
             &descriptions,
@@ -261,7 +261,7 @@ impl PipelineBuilder {
             host_writes,
             descriptions,
             frame_conventions,
-            pinned_frames,
+            frame_placements,
             estimate_root: self.estimate_root,
         })
     }

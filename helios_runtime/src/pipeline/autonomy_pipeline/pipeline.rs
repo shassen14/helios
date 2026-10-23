@@ -8,7 +8,7 @@ use super::{
 
 use crate::{
     channels::{control, estimate::estimate},
-    pipeline::{FrameConventions, PinnedFrame},
+    pipeline::{FrameConventions, FramePlacement},
     port::{ChannelDescription, ChannelKey, InputPort, MountReading, PortBus, Writer},
     prelude::{Stamped, TickContext},
 };
@@ -50,8 +50,8 @@ pub struct AutonomyPipeline {
     /// Each frame's axis convention, as the body, the host and the nodes
     /// declared it.
     pub(in crate::pipeline) frame_conventions: FrameConventions,
-    /// Each pin a node declared, with the world frame its input names.
-    pub(in crate::pipeline) pinned_frames: Vec<PinnedFrame>,
+    /// Where each frame a node defines sits in the world.
+    pub(in crate::pipeline) frame_placements: Vec<FramePlacement>,
     /// The frame the estimate holds the body's pose in, when the stack names
     /// an estimate.
     pub(in crate::pipeline) estimate_root: Option<FrameId>,
@@ -89,11 +89,13 @@ impl AutonomyPipeline {
         &self.frame_conventions
     }
 
-    /// Each pin a node declared, with the world frame its input places the
-    /// pinned frame in, in node declaration order: the estimate's root pinned
-    /// to the datum by a GPS fix. A frame no pin places is free in the world.
-    pub fn pinned_frames(&self) -> &[PinnedFrame] {
-        &self.pinned_frames
+    /// Where each frame a node defines sits in the world, in node and
+    /// declaration order: anchored, as the static edge from the world frame a
+    /// pin of its position names (the estimate's root at the datum, pinned by
+    /// a GPS fix), or free, with the reason. A host seeds each anchor into the
+    /// tree it serves.
+    pub fn frame_placements(&self) -> &[FramePlacement] {
+        &self.frame_placements
     }
 
     /// The inputs declared as sent from outside the robot (goals, teleop

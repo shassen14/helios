@@ -3,7 +3,7 @@
 
 use crate::{
     channels::tf::tf,
-    pipeline::{FrameConventions, ReadMount},
+    pipeline::{AutonomyPipeline, FrameConventions, Placement, ReadMount},
     port::{InstanceKey, PortBus},
 };
 
@@ -50,7 +50,8 @@ impl TfService {
     /// against the seeds folded before it: a wiring error in the host's
     /// static feed, which the host reports with the pipeline's build errors
     /// rather than panic on. A sample tagged against its frame's owner later
-    /// is rejected on ingest, as any malformed sample is.
+    /// is rejected on ingest, as any malformed sample is. A host builds its
+    /// agent's service with [`for_pipeline`](Self::for_pipeline).
     pub fn new(
         window: TfWindow,
         static_seeds: Vec<StampedTransform>,
@@ -80,6 +81,25 @@ impl TfService {
             buffer,
             last_seen: BTreeMap::new(),
         })
+    }
+
+    /// `pipeline`'s service: [`new`](Self::new) with its frame conventions,
+    /// seeded with the host's `static_seeds` and each anchor in its
+    /// [`frame_placements`](AutonomyPipeline::frame_placements), so a host
+    /// can't hand over the one without the other. Through an anchor the tree
+    /// reaches the world frame a defined frame is pinned to.
+    pub fn for_pipeline(
+        window: TfWindow,
+        mut static_seeds: Vec<StampedTransform>,
+        pipeline: &AutonomyPipeline,
+    ) -> Result<Self, Vec<SeedRejected>> {
+        static_seeds.extend(pipeline.frame_placements().iter().filter_map(|placement| {
+            match placement.placement() {
+                Placement::Anchored(edge) => Some(edge.clone()),
+                Placement::Free(_) => None,
+            }
+        }));
+        Self::new(window, static_seeds, pipeline.frame_conventions())
     }
 
     /// The tree as a read-only [`TfProvider`], for consumers to query this tick.

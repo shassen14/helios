@@ -17,23 +17,24 @@
 //! independently (a map→odom correction, or online-estimated extrinsics).
 //!
 //! Topology comes from the buffer's `edges()`; each frame is placed by looking
-//! it up relative to the estimate's root (the relay's parent, `odom`), the
-//! same tree root and ENU→Bevy path `estimate.rs` uses, so a triad lands
-//! exactly where the estimator believes the frame is. Each edge also draws a
-//! parent→child segment, so the frames read as a tree rather than a loose
-//! scatter of triads.
+//! it up relative to the world's datum, the same lookup and ENU→Bevy path
+//! `estimate.rs` uses, so a triad lands exactly where the estimator believes
+//! the frame is. The estimate's root reaches the datum only through the
+//! anchor the build placed it by, seeded into the tree; a root nothing
+//! anchors has no place in the world, so its tree isn't drawn. Each edge
+//! also draws a parent→child segment, so the frames read as a tree rather
+//! than a loose scatter of triads.
 //!
-//! Anchoring at the root, each frame draws in its own native robotics axes: the
-//! child's convention is baked into the looked-up isometry, so the triad's arrows
-//! point where the frame actually points (RViz-style, no `<Flu, Enu>` hardcode),
-//! crossing one-sided to Bevy through `frame_triad_to_bevy`. The only assumption
-//! left is that the anchor resolves to an ENU root — which an estimator's root
-//! (and `map`, once SLAM lands) does. A frame whose lookup fails, or a non-ENU
-//! anchor, is skipped this pass.
+//! Looked up from the datum, each frame draws in its own native robotics axes:
+//! the child's convention is baked into the looked-up isometry, so the triad's
+//! arrows point where the frame actually points (RViz-style, no `<Flu, Enu>`
+//! hardcode), crossing one-sided to Bevy through `frame_triad_to_bevy`. The
+//! only assumption left is that the datum is held in ENU, as the sim's is. A
+//! frame whose lookup fails, or a non-ENU datum, is skipped this pass.
 
 use crate::{
-    core::transforms::{frame_triad_to_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3},
-    prelude::{AgentIdComponent, AutonomyPipelineComponent, GroundTruthState, TfServiceComponent},
+    core::transforms::{frame_triad_to_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3, TfTree},
+    prelude::{AgentIdComponent, GroundTruthState, TfServiceComponent},
     viz::interaction::{
         actions::{
             handle::{ActionHandle, ActionId},
@@ -144,26 +145,19 @@ impl TfOverlayTuning {
 
 pub fn tf_overlay_system(
     tuning: Res<TfOverlayTuning>,
-    query: Query<
-        (
-            &TfServiceComponent,
-            &AutonomyPipelineComponent,
-            &AgentIdComponent,
-            &GroundTruthState,
-        ),
-        With<Selected>,
-    >,
+    tf_tree: Res<TfTree>,
+    query: Query<(&TfServiceComponent, &AgentIdComponent, &GroundTruthState), With<Selected>>,
     mut gizmos: Gizmos,
 ) {
-    for (tf_service, pipeline, agent_id, ground_truth) in query {
+    // A world without a datum builds no pipeline, so there is nothing to draw.
+    let Some(root) = tf_tree.datum() else {
+        return;
+    };
+    for (tf_service, agent_id, ground_truth) in query {
         let agent = agent_id.0.clone();
-        // A stack naming no estimate has no root to place the tree in.
-        let Some(root) = pipeline.0.estimate_root() else {
-            continue;
-        };
         // Each non-root frame is the child of exactly one edge (single-parent
         // tree), so iterating children visits every drawable frame once — no
-        // dedup. The root is identity, nothing to draw. `_kind` is the
+        // dedup. The datum is identity, nothing to draw. `_kind` is the
         // static/dynamic tag, unused until a full per-frame truth walk branches
         // on it (today only `base_link` carries a truth pose, below).
         for (edge, _kind) in tf_service.0.buffer().edges() {
@@ -188,9 +182,8 @@ pub fn tf_overlay_system(
         // the whole estimator error; the static mounts below repeat that rigid
         // offset and are not re-drawn from truth. Truth pose is `GroundTruthState`
         // (ENU world), the same source `pose.rs` uses, through the one sanctioned
-        // ENU→Bevy helper. While the tree is `map`-less, the estimate's root
-        // coincides with the world origin, so the estimated (root-anchored) and
-        // truth (world) triads share a frame and the segment length reads as drift.
+        // ENU→Bevy helper. Both are placed from the datum, the estimate through
+        // its root's anchor, so the segment length reads as the estimate's error.
         // Ground truth is a `base_link` (FLU) pose in the ENU world, so its triad
         // crosses through the one sanctioned ENU root — the same `frame_triad_to_bevy`
         // the estimated frames take, just from `GroundTruthState` instead of a tf

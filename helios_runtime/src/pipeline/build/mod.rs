@@ -17,12 +17,15 @@
 //! - `references` checks every reference the body states is a host world
 //!   frame and every pin is through an input naming one, resolving each
 //!   pin's world frame;
+//! - `anchors` places each frame a node defines in the world, anchored at
+//!   the world frame a pin of its position names or free with the reason;
 //! - `builder` allocates bus slots from the declared ports, builds each plan
 //!   with the mounts of its inputs, adds rate timers, and hands back the
 //!   pipeline.
 //!
 //! Errors from every stage are [`PipelineBuildError`]s, defined in `error`.
 
+mod anchors;
 mod builder;
 mod cycle;
 mod declaration;
@@ -35,10 +38,10 @@ mod owners;
 mod references;
 mod wiring;
 
+pub use anchors::{FramePlacement, Placement, Unanchored};
 pub use builder::PipelineBuilder;
 pub(crate) use declaration::NodeDeclaration;
 pub use declaration::{NodeConstructor, NodePlan};
 pub use error::{ChannelUses, CycleEdge, FrameOwner, MountRefusal, PipelineBuildError};
 pub use mounts::{InputMounts, MountLookupError};
 pub use owners::FrameConventions;
-pub use references::PinnedFrame;

@@ -3,7 +3,7 @@ use crate::spatial::transforms::{
     interpolate_pose, Transform,
 };
 
-use nalgebra::Isometry3;
+use nalgebra::{Isometry3, Translation3};
 use std::{error::Error, fmt::Display};
 
 /// A rigid transform whose frame identities have been **erased** to runtime tags.
@@ -43,6 +43,18 @@ impl ErasedTransform {
             from: ends.child,
             to: ends.parent,
         }
+    }
+
+    /// The pose of a frame whose origin is its parent's, each held in the
+    /// axes `ends` names: no translation, and the rotation carrying the
+    /// child's axes into the parent's through ENU. Two frames in one
+    /// convention coincide exactly.
+    pub fn coincident(ends: EdgeEnds) -> Self {
+        let rotation = ends.parent.to_enu().inverse() * ends.child.to_enu();
+        Self::new(
+            Isometry3::from_parts(Translation3::identity(), rotation),
+            ends,
+        )
     }
 
     /// Erases a statically-typed [`Transform<A, B>`](Transform) to its runtime
@@ -459,5 +471,43 @@ mod tests {
         );
         assert!(sample_edge().is_finite());
         assert!(!nan.is_finite());
+    }
+
+    #[test]
+    fn frames_in_one_convention_coincide_exactly() {
+        let ends = EdgeEnds {
+            child: Convention::Enu,
+            parent: Convention::Enu,
+        };
+        let coincident = ErasedTransform::coincident(ends);
+
+        assert!(iso_close(coincident.isometry, Isometry3::identity()));
+        assert_eq!(coincident.from, Convention::Enu);
+        assert_eq!(coincident.to, Convention::Enu);
+    }
+
+    /// A body frame at the world's origin: its forward is the world's north
+    /// and its left the world's west, and the edge back is the inverse.
+    #[test]
+    fn a_frame_in_other_axes_is_turned_into_its_parents() {
+        let flu_on_enu = ErasedTransform::coincident(EdgeEnds {
+            child: Convention::Flu,
+            parent: Convention::Enu,
+        });
+        let enu_on_flu = ErasedTransform::coincident(EdgeEnds {
+            child: Convention::Enu,
+            parent: Convention::Flu,
+        });
+
+        let rotation = flu_on_enu.isometry.rotation;
+        assert!(flu_on_enu.isometry.translation.vector.norm() < 1e-9);
+        assert!((rotation * Vector3::x() - Vector3::y()).norm() < 1e-9);
+        assert!((rotation * Vector3::y() + Vector3::x()).norm() < 1e-9);
+        assert_eq!(flu_on_enu.from, Convention::Flu);
+        assert_eq!(flu_on_enu.to, Convention::Enu);
+        assert!(iso_close(
+            enu_on_flu.isometry,
+            flu_on_enu.isometry.inverse()
+        ));
     }
 }

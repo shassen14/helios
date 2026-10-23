@@ -20,6 +20,7 @@ use helios_runtime::channels::control;
 use helios_runtime::tf_service::TfService;
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, BodyCapabilities, BodyChannel, ChannelKey, HostDeclaration,
+    Placement,
 };
 
 use std::any::TypeId;
@@ -121,6 +122,22 @@ pub fn spawn_autonomy_pipeline(
                 let goal_channels = mission_goal_channels(pipeline.outside_inputs());
                 let teleop_controlled = reads_teleop_intent(pipeline.outside_inputs());
 
+                // Where each estimate's root sits: the viz draws only what
+                // the tree places in the world, so a free one is said here.
+                for placement in pipeline.frame_placements() {
+                    match placement.placement() {
+                        Placement::Anchored(_) => info!(
+                            "[spawn_autonomy_pipeline] Agent '{}': {placement}",
+                            agent_config.name()
+                        ),
+                        Placement::Free(_) => info!(
+                            "[spawn_autonomy_pipeline] Agent '{}': {placement}, so it is free \
+                             in the world and not drawn",
+                            agent_config.name()
+                        ),
+                    }
+                }
+
                 let mut cmds = commands.entity(agent_entity);
                 cmds.insert(AutonomyPipelineComponent(pipeline));
                 cmds.insert(TfServiceComponent(service));
@@ -158,22 +175,21 @@ pub fn spawn_autonomy_pipeline(
 
 /// The agent's estimated tf service, checked against `pipeline`.
 ///
-/// Holding each frame in the axes its owner gives in the pipeline's frame
-/// conventions, seeded with the static sensor mounts and draining the
-/// pipeline's `tf` channel, so its tree is fed only by the graph's own
-/// producers, never the sim's truth. Fails with every rejected seed (one
-/// tagged against its frame's owner among them), or with the mounts the
-/// pipeline reads that are not below `base_link` or that a node reads in
-/// other axes than the tree holds. No producer's declared edge is passed to
-/// the mount check yet: the one today, `odom → base_link`, lies above
-/// `base_link`, on no mount's way to it.
+/// The pipeline's service, seeded with the static sensor mounts besides its
+/// anchors, and draining the pipeline's `tf` channel, so its tree is fed only
+/// by the graph's own producers and the build's facts, never the sim's truth.
+/// Fails with every rejected seed (one tagged against its frame's owner among
+/// them), or with the mounts the pipeline reads that are not below
+/// `base_link` or that a node reads in other axes than the tree holds. No
+/// producer's declared edge is passed to the mount check yet: the one today,
+/// `odom → base_link`, lies above `base_link`, on no mount's way to it.
 fn estimated_tf_service(
     pipeline: &AutonomyPipeline,
     window: TfWindow,
     static_seeds: Vec<StampedTransform>,
     agent: &AgentId,
 ) -> Result<TfService, Vec<String>> {
-    let service = TfService::new(window, static_seeds, pipeline.frame_conventions())
+    let service = TfService::for_pipeline(window, static_seeds, pipeline)
         .map_err(|rejected| rejected.iter().map(ToString::to_string).collect::<Vec<_>>())?;
     service
         .check_read_mounts(
@@ -319,9 +335,16 @@ mod tests {
     use helios_core::control::actuators::{ActuatorId, SetpointKind};
     use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
     use helios_core::prelude::{AgentId, FrameId};
+    use helios_core::prelude::{MonotonicDuration, TfProvider};
     use helios_core::sensors::{gps::GpsModel, magnetometer::MagnetometerModel};
+    use helios_core::spatial::transforms::tf::buffer::TfQuery;
     use helios_runtime::channels::control::intent;
-    use helios_runtime::port::ChannelKey;
+    use helios_runtime::port::{
+        ChannelKey, Pinned, PortBus, PortDescriptor, PortDescriptorBuilder,
+    };
+    use helios_runtime::{PipelineBuilder, PipelineNode, TickContext};
+
+    use nalgebra::Isometry3;
 
     const TICK_RATE_HZ: f64 = 400.0;
     const GPS_RATE_HZ: f64 = 10.0;
@@ -530,5 +553,90 @@ mod tests {
 
         assert_eq!(gps.description(&datum()).reference(), Some(&datum()));
         assert_eq!(imu.description(&datum()).reference(), None);
+    }
+
+    /// An estimator defining `odom` and pinning its position through the
+    /// GPS, as the EKF's GPS aiding does.
+    struct GpsPinnedEstimator {
+        descriptor: PortDescriptor,
+    }
+
+    impl PipelineNode for GpsPinnedEstimator {
+        fn name(&self) -> &str {
+            "ekf"
+        }
+
+        fn port_descriptor(&self) -> &PortDescriptor {
+            &self.descriptor
+        }
+
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
+    }
+
+    /// The estimate's root reaches the datum in the estimated tree only
+    /// through the anchor the build placed it by.
+    #[test]
+    fn the_estimated_tree_is_seeded_with_each_anchor() {
+        let agent = AgentId::new("car");
+        let root = FrameId::odom(agent.clone());
+        let base_link = FrameId::base_link(agent.clone());
+        let antenna = FrameId::agent(agent.clone(), "gps");
+        let gps = SensorPublishChannel::new::<GpsPosition>(
+            "gps",
+            "gps",
+            antenna.clone(),
+            GPS_RATE_HZ,
+            GpsModel::WORLD_REFERENCED,
+        );
+        let estimator = GpsPinnedEstimator {
+            descriptor: PortDescriptorBuilder::algorithm()
+                .optional(gps.key().clone())
+                .defines_frame(root.clone(), Convention::Enu)
+                .pins(root.clone(), Pinned::Position, gps.key())
+                .build(),
+        };
+        let frames = HashMap::from([
+            (base_link.clone(), Convention::Flu),
+            (antenna.clone(), GpsModel::FRAME_CONVENTION),
+        ]);
+        let body = build_host_body_capabilities(
+            &agent,
+            &datum(),
+            vec![gps.description(&datum())],
+            frames,
+            &ActuationModel::default(),
+            TICK_RATE_HZ,
+        );
+        let pipeline = PipelineBuilder::new(agent.clone())
+            .add_node(Box::new(estimator))
+            .with_body_capabilities(body)
+            .with_host(host_declaration(TICK_RATE_HZ, &datum()))
+            .build()
+            .expect("an estimator pinned through a referenced GPS builds");
+        let mount = StampedTransform {
+            transform: ErasedTransform::new(
+                Isometry3::identity(),
+                EdgeEnds {
+                    child: GpsModel::FRAME_CONVENTION,
+                    parent: Convention::Flu,
+                },
+            ),
+            child: antenna,
+            parent: base_link,
+            stamp: MonotonicTime(0.0),
+        };
+        let window = TfWindow {
+            horizon: MonotonicDuration(1.0),
+            max_samples: 1,
+        };
+
+        let service = estimated_tf_service(&pipeline, window, vec![mount], &agent)
+            .expect("the seeds and the read mount agree");
+
+        let anchor = service
+            .buffer()
+            .lookup(&root, &datum(), TfQuery::Latest)
+            .expect("the root is anchored at the datum");
+        assert_eq!(anchor.isometry(), Isometry3::identity());
     }
 }

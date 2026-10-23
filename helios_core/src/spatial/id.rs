@@ -102,16 +102,6 @@ impl FrameId {
         }
     }
 
-    /// Whether this frame is an agent's `map` root, regardless of which agent.
-    pub fn is_map(&self) -> bool {
-        self.is_agent_leaf(MAP)
-    }
-
-    /// Whether this frame is an agent's `odom` origin, regardless of which agent.
-    pub fn is_odom(&self) -> bool {
-        self.is_agent_leaf(ODOM)
-    }
-
     /// Whether this frame is an agent's `base_link`, regardless of which agent.
     pub fn is_base_link(&self) -> bool {
         self.is_agent_leaf(BASE_LINK)
@@ -294,20 +284,12 @@ mod tests {
     }
 
     #[test]
-    fn role_predicates_match_only_their_own_leaf() {
-        assert!(FrameId::map(agent()).is_map());
-        assert!(FrameId::odom(agent()).is_odom());
+    fn the_base_link_predicate_matches_only_its_own_leaf() {
         assert!(FrameId::base_link(agent()).is_base_link());
-
-        let base_link = FrameId::base_link(agent());
-        assert!(!base_link.is_map());
-        assert!(!base_link.is_odom());
+        assert!(!FrameId::odom(agent()).is_base_link());
 
         // A sensor leaf is on the spine's agent scope but holds no spine role.
-        let sensor = FrameId::agent(agent(), "imu0");
-        assert!(!sensor.is_map());
-        assert!(!sensor.is_odom());
-        assert!(!sensor.is_base_link());
+        assert!(!FrameId::agent(agent(), "imu0").is_base_link());
     }
 
     #[test]
@@ -315,10 +297,7 @@ mod tests {
         // Spine roles belong to an agent; a datum or fixture that happens to be
         // named like one must not be read as an agent's root or body.
         for leaf in [MAP, ODOM, BASE_LINK] {
-            let frame = FrameId::global(leaf);
-            assert!(!frame.is_map());
-            assert!(!frame.is_odom());
-            assert!(!frame.is_base_link());
+            assert!(!FrameId::global(leaf).is_base_link());
         }
     }
 

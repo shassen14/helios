@@ -21,9 +21,9 @@ pub use crate::body::{BodyCapabilities, BodyChannel};
 pub use crate::host::HostDeclaration;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
-    AutonomyPipeline, ChannelUses, CycleEdge, FrameConventions, FrameOwner, InputMounts,
-    MountLookupError, MountRefusal, NodeConstructor, NodePlan, PinnedFrame, PipelineBuildError,
-    PipelineBuilder, ReadMount,
+    AutonomyPipeline, ChannelUses, CycleEdge, FrameConventions, FrameOwner, FramePlacement,
+    InputMounts, MountLookupError, MountRefusal, NodeConstructor, NodePlan, PipelineBuildError,
+    PipelineBuilder, Placement, ReadMount, Unanchored,
 };
 pub use crate::port::{
     ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, MountReading,

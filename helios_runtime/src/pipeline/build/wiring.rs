@@ -10,12 +10,13 @@
 //! one writer. These need only the declarations, not an order, so they run
 //! before the sort.
 
+use super::anchors::{place_frames, FramePlacement};
 use super::declaration::NodeDeclaration;
 use super::instances::check_instances;
 use super::kinds::check_kind_access;
 use super::mounts::{check_body_mounts, check_mount_rules};
 use super::owners::{check_frame_owners, FrameConventions};
-use super::references::{check_one_world, check_pins, check_references, PinnedFrame};
+use super::references::{check_one_world, check_pins, check_references};
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
@@ -52,14 +53,18 @@ use std::{
 /// the body and the host own, with their conventions.
 ///
 /// Also returns each owned frame's convention, as its owner gives it, and
-/// each pin whose input names a world frame, with that frame.
+/// where each frame a node defines sits in the world.
 pub(super) fn check_wiring(
     agent: &AgentId,
     nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
     body_frames: &HashMap<FrameId, Convention>,
     host_frames: &HashMap<FrameId, Convention>,
-) -> (Vec<PipelineBuildError>, FrameConventions, Vec<PinnedFrame>) {
+) -> (
+    Vec<PipelineBuildError>,
+    FrameConventions,
+    Vec<FramePlacement>,
+) {
     let mut errors = vec![];
     check_node_names(nodes, &mut errors);
     check_unit_names(descriptions, &mut errors);
@@ -67,6 +72,7 @@ pub(super) fn check_wiring(
     check_references(descriptions, host_frames, &mut errors);
     let pinned = check_pins(nodes, descriptions, host_frames, &mut errors);
     check_one_world(nodes, descriptions, &pinned, &mut errors);
+    let placements = place_frames(nodes, &pinned, host_frames);
     let conventions = check_frame_owners(
         agent,
         nodes,
@@ -82,7 +88,7 @@ pub(super) fn check_wiring(
     let supplier_of = map_suppliers(descriptions, &mut errors);
     check_instances(descriptions, &mut errors);
     check_inputs_supplied(nodes, &supplier_of, &refused_names, &mut errors);
-    (errors, conventions, pinned)
+    (errors, conventions, placements)
 }
 
 /// Errors, logs and the within-level order all identify a node by name, so a
