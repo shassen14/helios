@@ -5,7 +5,8 @@
 //! declares what the node can emit for watchers, each value an [`Observable`]
 //! record of leaf name, [`Determinism`] and [`ObservableValue`] (a number
 //! in its [`SiUnit`], or a channel's payload type), and the
-//! frames the node defines, and the [`NodeClass`] the node runs under.
+//! frames the node defines, each [`Pin`] placing one of them in the world an
+//! input names, and the [`NodeClass`] the node runs under.
 //!
 //! The build reads these declarations to allocate bus slots, order nodes, and
 //! check that every channel has exactly one producer and that the node's class
@@ -63,7 +64,9 @@ use std::{any::TypeId, sync::Arc};
 /// Each frame the node defines, one whose meaning it alone gives (the root an
 /// estimator holds its state in), is listed with its axis convention in
 /// [`defined_frames`](Self::defined_frames), so the build can refuse a frame
-/// with two owners and give each frame its owner's convention.
+/// with two owners and give each frame its owner's convention. Each input
+/// that places one of those frames in the world frame its values are
+/// relative to is declared as a [`Pin`], read with [`pins`](Self::pins).
 ///
 /// Each value the node can emit for watchers is declared as an [`Observable`],
 /// read with [`observables`](Self::observables). These never touch the bus:
@@ -86,6 +89,7 @@ pub struct PortDescriptor {
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
     defined_frames: Vec<(FrameId, Convention)>,
+    pins: Vec<Pin>,
     rate: Option<f64>,
 }
 
@@ -121,6 +125,7 @@ impl PortDescriptor {
             outputs: outputs.into_iter().map(OutputPort::undriven).collect(),
             observables: Vec::new(),
             defined_frames: Vec::new(),
+            pins: Vec::new(),
             rate,
         }
     }
@@ -169,6 +174,32 @@ impl PortDescriptor {
                 convention,
             });
         }
+        self
+    }
+
+    /// Records the inputs that pin the frames the node defines. For the
+    /// builder, after the inputs and the defined frames.
+    ///
+    /// # Panics
+    ///
+    /// If a pin names a frame the node doesn't define or a channel it doesn't
+    /// read: either is a bug in the node.
+    pub(crate) fn with_pins(mut self, pins: Vec<Pin>) -> Self {
+        for pin in &pins {
+            assert!(
+                self.defined_frames
+                    .iter()
+                    .any(|(frame, _)| *frame == pin.frame),
+                "{} is pinned, but the node does not define it",
+                pin.frame
+            );
+            assert!(
+                self.inputs().any(|input| input.channel == pin.channel),
+                "a pin is declared through {}, which the node does not read",
+                pin.channel
+            );
+        }
+        self.pins = pins;
         self
     }
 
@@ -251,6 +282,13 @@ impl PortDescriptor {
         &self.defined_frames
     }
 
+    /// The inputs that place a frame this node defines in the world frame
+    /// their values are relative to, in declaration order. Empty for a node
+    /// that pins nothing.
+    pub fn pins(&self) -> &[Pin] {
+        &self.pins
+    }
+
     /// Execution rate in Hz. `None` means every tick.
     pub fn rate(&self) -> Option<f64> {
         self.rate
@@ -314,6 +352,66 @@ impl MountReading {
     pub fn convention(&self) -> Convention {
         self.convention
     }
+}
+
+/// A node's statement that input `channel` places `what` of `frame`, a frame
+/// the node defines, in the world frame the input's values are relative to:
+/// a GPS fix pins the position of an estimator's root to the datum it is
+/// given in. On a keyed channel the pin reads one `instance`, whose values
+/// are expressed in that world frame. Only the descriptor builder creates
+/// records, for channels the node reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pin {
+    frame: FrameId,
+    what: Pinned,
+    channel: ChannelKey,
+    instance: Option<InstanceKey>,
+}
+
+impl Pin {
+    pub(crate) fn new(
+        frame: FrameId,
+        what: Pinned,
+        channel: ChannelKey,
+        instance: Option<InstanceKey>,
+    ) -> Self {
+        Self {
+            frame,
+            what,
+            channel,
+            instance,
+        }
+    }
+
+    /// The frame the node defines that the input places.
+    pub fn frame(&self) -> &FrameId {
+        &self.frame
+    }
+
+    /// What of the frame the input places.
+    pub fn what(&self) -> Pinned {
+        self.what
+    }
+
+    /// The input channel that places it.
+    pub fn channel(&self) -> &ChannelKey {
+        &self.channel
+    }
+
+    /// The instance read, on a keyed channel; `None` on a channel that holds
+    /// one value.
+    pub fn instance(&self) -> Option<&InstanceKey> {
+        self.instance.as_ref()
+    }
+}
+
+/// What of a frame an input pins in the world. A frame is anchored only when
+/// its position is pinned; a heading or an altitude alone leaves it free to
+/// move, so each is its own variant when its first model arrives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Pinned {
+    /// The frame's origin: a position measured relative to the world frame.
+    Position,
 }
 
 /// One declared output of a node: which channel it writes, the actuators its
@@ -647,6 +745,7 @@ mod tests {
             outputs: vec![],
             observables: vec![],
             defined_frames: vec![],
+            pins: vec![],
             rate: None,
         };
 

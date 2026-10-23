@@ -18,8 +18,10 @@
 //!    gives it, which it defines. Like any estimator it publishes no TF edge;
 //!    the estimate seam's relay does.
 //!
-//! The truth pose is relative to the world's datum, and the node writes it
-//! as the pose in its root, so its root sits at the datum.
+//! The truth pose is relative to the world frame its instance names as its
+//! parent, and the node writes it as the pose in its root, so its root sits
+//! at that frame. The descriptor declares this as a pin through the body's
+//! instance of `truth.tf`.
 //!
 //! ## Body capability requirement
 //!
@@ -42,7 +44,9 @@
 use crate::channels::estimate::estimator_output;
 use crate::channels::{truth_tf, truth_twist};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InstanceKey, PortBus, PortDescriptor, PortDescriptorBuilder};
+use crate::port::{
+    ChannelKey, InstanceKey, Pinned, PortBus, PortDescriptor, PortDescriptorBuilder,
+};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::carrier::kinematic_carrier_schema;
@@ -94,6 +98,12 @@ impl MockOracleEstimatorNode {
             .optional(truth_twist())
             .output(output.clone())
             .defines_frame(frames.root.clone(), root_convention)
+            .pins_by_instance::<StampedTransform>(
+                frames.root.clone(),
+                Pinned::Position,
+                &truth_tf(),
+                &frames.body,
+            )
             .build();
         Self {
             name,
@@ -251,6 +261,7 @@ mod tests {
 
     use super::*;
     use crate::body::{BodyCapabilities, BodyChannel};
+    use crate::host::HostDeclaration;
     use crate::pipeline::PipelineBuildError;
     use crate::pipeline::PipelineBuilder;
     use crate::port::Provenance;
@@ -265,6 +276,7 @@ mod tests {
     use helios_core::spatial::FrameId;
 
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
+    use std::collections::HashMap;
     use std::f64::consts::FRAC_PI_2;
 
     // --- Test fixtures ---
@@ -447,6 +459,25 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>(),
             vec![state_channel()]
+        );
+    }
+
+    /// The root sits where the body's truth instance is expressed, so the
+    /// node declares the pin through that instance.
+    #[test]
+    fn descriptor_pins_the_root_through_its_bodys_truth_instance() {
+        let node = mock();
+        let pins = node.port_descriptor().pins();
+
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0].frame(), &FrameId::odom(agent()));
+        assert_eq!(pins[0].what(), Pinned::Position);
+        assert_eq!(pins[0].channel(), &truth_tf());
+        assert_eq!(
+            pins[0].instance(),
+            Some(&InstanceKey::of::<StampedTransform>(&FrameId::base_link(
+                agent()
+            )))
         );
     }
 
@@ -642,14 +673,28 @@ mod tests {
         );
     }
 
+    /// The host declares the datum the truth is published in, so the pin
+    /// through it holds and places the root there.
     #[test]
     fn build_succeeds_when_body_publishes_truth_tf() {
+        const TICK_RATE_HZ: f64 = 100.0;
         let result = PipelineBuilder::new(agent())
             .add_node(Box::new(mock()))
             .with_body_capabilities(body_with_truth())
-            .build()
-            .map(|_| ());
+            .with_host(HostDeclaration {
+                tick_rate_hz: TICK_RATE_HZ,
+                world_frames: HashMap::from([(datum(), Convention::Enu)]),
+            })
+            .build();
 
-        assert!(result.is_ok(), "build should succeed: {result:?}");
+        let Ok(pipeline) = result else {
+            panic!("build should succeed: {:?}", result.err());
+        };
+        let placed: Vec<(&FrameId, &FrameId)> = pipeline
+            .pinned_frames()
+            .iter()
+            .map(|pinned| (pinned.pin().frame(), pinned.reference()))
+            .collect();
+        assert_eq!(placed, [(&FrameId::odom(agent()), &datum())]);
     }
 }

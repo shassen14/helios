@@ -22,12 +22,12 @@ pub use crate::host::HostDeclaration;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
     AutonomyPipeline, ChannelUses, CycleEdge, FrameConventions, FrameOwner, InputMounts,
-    MountLookupError, MountRefusal, NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
-    ReadMount,
+    MountLookupError, MountRefusal, NodeConstructor, NodePlan, PinnedFrame, PipelineBuildError,
+    PipelineBuilder, ReadMount,
 };
 pub use crate::port::{
     ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, MountReading,
-    MountRule, PortDescriptor, Provenance, SlotVersion, Writer,
+    MountRule, Pin, Pinned, PortDescriptor, Provenance, SlotVersion, Writer,
 };
 pub use crate::stamped::{Health, Stamped};
 
@@ -40,6 +40,6 @@ pub use crate::assembly::{
 };
 pub use crate::nodes::estimation::{
     AssembledInput, DeclaredInput, DynamicsComponent, EstimatorInputBuilder, FilterParts,
-    InputUnavailable, SeedPose,
+    InputUnavailable, MeasurementFacts, SeedPose,
 };
 pub use crate::tf_service::TfBufferConfig;

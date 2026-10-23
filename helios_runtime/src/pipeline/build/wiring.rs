@@ -1,6 +1,8 @@
 //! Wiring checks: node names are unique levels, the body's unit names are
 //! levels, the body's mounts are its own frames, its references are the
-//! host's world frames, every frame has one owner,
+//! host's world frames, every pin is through an input naming one, every node
+//! defining a frame reads inputs relative to one at most, every frame has one
+//! owner,
 //! output mount rules name inputs, each node reads and writes only the channel
 //! kinds its class may, channel names are well formed and each names one
 //! channel, each node's watchable leaves are well formed, distinct and
@@ -13,7 +15,7 @@ use super::instances::check_instances;
 use super::kinds::check_kind_access;
 use super::mounts::{check_body_mounts, check_mount_rules};
 use super::owners::{check_frame_owners, FrameConventions};
-use super::references::check_references;
+use super::references::{check_one_world, check_pins, check_references, PinnedFrame};
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
@@ -33,7 +35,10 @@ use std::{
 /// Checks the graph's wiring and returns every problem found. An empty list
 /// means each node name is unique and fits one part of a watcher path, every
 /// unit the body declares is one level, every mount the body states is a frame
-/// on `agent`'s body other than `base_link`, every frame the body, the host
+/// on `agent`'s body other than `base_link`, every reference the body states
+/// is a world frame of the host's, every pin a node declares is through an
+/// input naming one, every node that defines a frame reads inputs relative
+/// to one at most, every frame the body, the host
 /// or a node owns has one owner, every output mounted at an input's mount names a
 /// channel its node reads in the same tick, every node reads and writes only
 /// the channel kinds its class may, every channel name is well formed and
@@ -46,19 +51,22 @@ use std::{
 /// channel some writer declares; `body_frames` and `host_frames` the frames
 /// the body and the host own, with their conventions.
 ///
-/// Also returns each owned frame's convention, as its owner gives it.
+/// Also returns each owned frame's convention, as its owner gives it, and
+/// each pin whose input names a world frame, with that frame.
 pub(super) fn check_wiring(
     agent: &AgentId,
     nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
     body_frames: &HashMap<FrameId, Convention>,
     host_frames: &HashMap<FrameId, Convention>,
-) -> (Vec<PipelineBuildError>, FrameConventions) {
+) -> (Vec<PipelineBuildError>, FrameConventions, Vec<PinnedFrame>) {
     let mut errors = vec![];
     check_node_names(nodes, &mut errors);
     check_unit_names(descriptions, &mut errors);
     check_body_mounts(agent, descriptions, body_frames, &mut errors);
     check_references(descriptions, host_frames, &mut errors);
+    let pinned = check_pins(nodes, descriptions, host_frames, &mut errors);
+    check_one_world(nodes, descriptions, &pinned, &mut errors);
     let conventions = check_frame_owners(
         agent,
         nodes,
@@ -74,7 +82,7 @@ pub(super) fn check_wiring(
     let supplier_of = map_suppliers(descriptions, &mut errors);
     check_instances(descriptions, &mut errors);
     check_inputs_supplied(nodes, &supplier_of, &refused_names, &mut errors);
-    (errors, conventions)
+    (errors, conventions, pinned)
 }
 
 /// Errors, logs and the within-level order all identify a node by name, so a

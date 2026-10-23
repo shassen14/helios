@@ -165,6 +165,10 @@ impl PipelineBuilder {
     ///      channel at a frame it lists no convention for.
     ///    - [`PipelineBuildError::ReferenceNotWorldFrame`] — the body states
     ///      a reference that is not one of the host's world frames.
+    ///    - [`PipelineBuildError::PinWithoutReference`] — a node pins a frame
+    ///      it defines through an input whose writer names no world frame.
+    ///    - [`PipelineBuildError::ReferencesDisagree`] — a node that defines a
+    ///      frame reads inputs relative to two world frames.
     ///    - [`PipelineBuildError::FrameDefinedTwice`] — two nodes define one
     ///      frame, a node defines `base_link`, a frame the body mounts a
     ///      channel at or lists, or a host world frame, or the host and the
@@ -212,7 +216,7 @@ impl PipelineBuilder {
     /// at `0`, indexing into the pipeline's rate-timer array.
     pub fn build(self) -> Result<AutonomyPipeline, Vec<PipelineBuildError>> {
         let descriptions = self.describe_channels();
-        let (errors, frame_conventions) = check_wiring(
+        let (errors, frame_conventions, pinned_frames) = check_wiring(
             &self.agent,
             &self.nodes,
             &descriptions,
@@ -257,6 +261,7 @@ impl PipelineBuilder {
             host_writes,
             descriptions,
             frame_conventions,
+            pinned_frames,
             estimate_root: self.estimate_root,
         })
     }

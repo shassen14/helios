@@ -14,6 +14,9 @@
 //! - `kinds` checks every node reads and writes only the channel kinds its
 //!   class may;
 //! - `instances` checks every instance of a keyed channel has one writer;
+//! - `references` checks every reference the body states is a host world
+//!   frame and every pin is through an input naming one, resolving each
+//!   pin's world frame;
 //! - `builder` allocates bus slots from the declared ports, builds each plan
 //!   with the mounts of its inputs, adds rate timers, and hands back the
 //!   pipeline.
@@ -38,3 +41,4 @@ pub use declaration::{NodeConstructor, NodePlan};
 pub use error::{ChannelUses, CycleEdge, FrameOwner, MountRefusal, PipelineBuildError};
 pub use mounts::{InputMounts, MountLookupError};
 pub use owners::FrameConventions;
+pub use references::PinnedFrame;

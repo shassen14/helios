@@ -15,7 +15,7 @@ pub(crate) use reader::{Measurement, PayloadReader};
 
 use crate::assembly::BuildContext;
 use crate::nodes::estimation::EstimatorComponents;
-use crate::port::{ChannelKey, PortBus};
+use crate::port::{ChannelKey, Pinned, PortBus};
 
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::schema::MeasurementAgreementError;
@@ -134,12 +134,44 @@ impl<P: SensorPayload> MeasurementSource for TypedMeasurementSource<P> {
 pub(crate) type ReadingChannel = fn(&str) -> ChannelKey;
 
 /// What a measurement kind declares before its model is built: the channel
-/// it reads, and the axes its model reads that channel's mount in through
-/// the tf tree (`None` for a model that never resolves the mount).
+/// it reads, and the facts its model states about reading it.
 #[derive(Clone, Copy)]
 pub(crate) struct MeasurementDeclaration {
     pub(crate) channel: ReadingChannel,
+    pub(crate) facts: MeasurementFacts,
+}
+
+/// What a measurement model states about how it reads its sensor, beyond the
+/// payload: the axes it reads the sensor's mount in through the tf tree, and
+/// what of the root the state is held in its predictions pin to the world
+/// frame its channel is relative to.
+///
+/// A fact of the model, never of the payload type: one quantity can be about
+/// the body alone from one sensor and relative to the world from another.
+/// The default resolves no mount and pins nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MeasurementFacts {
     pub(crate) mount_convention: Option<Convention>,
+    pub(crate) pins: Option<Pinned>,
+}
+
+impl MeasurementFacts {
+    /// The model resolves its sensor's mount through the tf tree, reading the
+    /// frame in the axes `convention` names. The host refuses a mount the tree
+    /// holds in other axes before the first tick.
+    pub fn reads_mount_in(mut self, convention: Convention) -> Self {
+        self.mount_convention = Some(convention);
+        self
+    }
+
+    /// The model's predictions place `what` of its node's root in the world
+    /// frame its channel names: a position pins the root's origin. The build
+    /// refuses the model on a channel that names none, and one whose schema
+    /// disagrees.
+    pub fn pins(mut self, what: Pinned) -> Self {
+        self.pins = Some(what);
+        self
+    }
 }
 
 /// The typed channel readings of payload `P` arrive on, named `input`.
@@ -246,7 +278,12 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         registry
             .extension_mut::<EstimatorComponents>()
-            .register_measurement::<GpsPosition, _, _, _>(DUMMY_KIND, None, no_check, build_mocap)
+            .register_measurement::<GpsPosition, _, _, _>(
+                DUMMY_KIND,
+                MeasurementFacts::default(),
+                no_check,
+                build_mocap,
+            )
             .expect("not a built-in kind");
         registry
     }
@@ -294,7 +331,7 @@ mod tests {
             )
             .expect("the dummy model parses");
         assert_eq!((parsed.declared.channel)(INPUT), expected);
-        assert_eq!(parsed.declared.mount_convention, None);
+        assert_eq!(parsed.declared.facts, MeasurementFacts::default());
         assert_eq!(source.noise().nrows(), 3);
 
         // The source reads that channel end to end.
@@ -375,7 +412,7 @@ mod tests {
             .extension_mut::<EstimatorComponents>()
             .register_measurement::<MagneticField, _, _, _>(
                 "mocap_as_field",
-                None,
+                MeasurementFacts::default(),
                 no_check,
                 build_mocap,
             )
@@ -393,7 +430,7 @@ mod tests {
             .extension_mut::<EstimatorComponents>()
             .register_measurement::<GpsPosition, _, _, _>(
                 GPS_POSITION_KIND,
-                None,
+                MeasurementFacts::default(),
                 no_check,
                 build_mocap,
             )

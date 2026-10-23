@@ -48,7 +48,7 @@ use super::throttle::passes_warn_throttle;
 use crate::channels::estimate::estimator_output;
 use crate::nodes::estimation::{AssembledInput, EstimatorInputBuilder};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
+use crate::port::{ChannelKey, Pinned, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::{GaussianStateEstimator, PredictOutcome, PredictSkipReason};
@@ -84,29 +84,33 @@ pub(crate) struct RecursiveEstimatorNode {
 impl RecursiveEstimatorNode {
     /// The ports of the node named `name` predicting from an input builder
     /// that reads `input_required` and `input_optional`, and correcting from
-    /// each aiding entry, given by its name and the channel it reads: the
+    /// each aiding entry, given by its name, the channel it reads and what of
+    /// the root its model pins, if anything: the
     /// builder's channels as it declares them, each aiding channel optional,
     /// since the filter still predicts and publishes without it, each entry's
     /// leaves, its NIS and its drop count, and the state output on the
     /// channel named after the node. `mount_readings` are the channels whose
     /// mounts the builder and the aiding models resolve, each with the axes
     /// it is read in. The node defines `root`, the frame it holds its state
-    /// in, in the axes `root_convention`.
+    /// in, in the axes `root_convention`, which each pinning entry pins.
     pub(crate) fn declare_ports<'a>(
         name: &str,
         root: &FrameId,
         root_convention: Convention,
         input_required: &[ChannelKey],
         input_optional: &[ChannelKey],
-        aiding: impl IntoIterator<Item = (&'a str, &'a ChannelKey)>,
+        aiding: impl IntoIterator<Item = (&'a str, &'a ChannelKey, Option<Pinned>)>,
         mount_readings: impl IntoIterator<Item = (ChannelKey, Convention)>,
     ) -> PortDescriptor {
         let mut builder = PortDescriptorBuilder::algorithm()
             .inputs_from_slices(input_required, input_optional)
             .output(estimator_output(name))
             .defines_frame(root.clone(), root_convention);
-        for (entry, channel) in aiding {
+        for (entry, channel, pins) in aiding {
             builder = aiding_ports(builder, entry, channel);
+            if let Some(what) = pins {
+                builder = builder.pins(root.clone(), what, channel);
+            }
         }
         for (channel, convention) in mount_readings {
             builder = builder.reads_mount_in(&channel, convention);

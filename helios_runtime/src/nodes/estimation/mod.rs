@@ -28,6 +28,7 @@ pub use dynamics::{
     SeedPose,
 };
 pub use filter::FilterParts;
+pub use measurement::MeasurementFacts;
 
 #[cfg(test)]
 pub(crate) use measurement::PayloadReader;

@@ -103,6 +103,28 @@ pub enum PipelineBuildError {
         channel: ChannelKey,
         reference: FrameId,
     },
+    /// A node pins a frame it defines through an input whose writer states no
+    /// world frame its values are relative to: a node output (a mux, a
+    /// converter), a body channel about the body alone, or an instance
+    /// expressed in a frame that isn't one of the host's world frames
+    /// (`stated`). The frame would be placed nowhere. Reported once per pin
+    /// whose input has a writer.
+    PinWithoutReference {
+        node_name: String,
+        frame: FrameId,
+        channel: ChannelKey,
+        instance: Option<InstanceKey>,
+        writer: Writer,
+        stated: Option<FrameId>,
+    },
+    /// A node that defines a frame reads inputs relative to two or more
+    /// world frames, so the frame can't be placed in one. `references` names
+    /// each such input with its world frame, in input order. Reported once
+    /// per node.
+    ReferencesDisagree {
+        node_name: String,
+        references: Vec<(ChannelKey, FrameId)>,
+    },
     /// A frame has two owners: two nodes define it, a node defines one the
     /// body owns (its `base_link`, a frame it mounts a channel at, or another
     /// of its frames) or the host owns (a world frame), or the host and the
@@ -339,6 +361,46 @@ impl std::fmt::Display for PipelineBuildError {
                      {reference}, which is not one of the host's world frames; the host \
                      declares each frame its values name"
                 )
+            }
+            PipelineBuildError::PinWithoutReference {
+                node_name,
+                frame,
+                channel,
+                instance,
+                writer,
+                stated,
+            } => {
+                write!(f, "node \"{node_name}\" pins {frame} through ")?;
+                if let Some(instance) = instance {
+                    write!(f, "instance \"{instance}\" of ")?;
+                }
+                write!(f, "{channel}, but {writer} ")?;
+                match stated {
+                    Some(stated) => write!(
+                        f,
+                        "states its values relative to {stated}, which is not one of the \
+                         host's world frames"
+                    )?,
+                    None => write!(f, "states no world frame its values are relative to")?,
+                }
+                write!(
+                    f,
+                    "; a pinned frame is placed in the world frame its input names"
+                )
+            }
+            PipelineBuildError::ReferencesDisagree {
+                node_name,
+                references,
+            } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" defines a frame but reads inputs relative to \
+                     different world frames:"
+                )?;
+                for (channel, reference) in references {
+                    write!(f, " {channel} relative to {reference};")?;
+                }
+                write!(f, " a frame it defines is placed in one world frame")
             }
             PipelineBuildError::FrameDefinedTwice {
                 frame,

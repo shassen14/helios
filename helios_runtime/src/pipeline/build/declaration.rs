@@ -87,6 +87,10 @@ impl NodePlan {
 
 /// One node as the builder sees it before building the pipeline: built, or
 /// planned. Both answer the name and the ports, which is all the checks read.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per node, held only while the pipeline is built"
+)]
 pub(crate) enum NodeDeclaration {
     Built(Box<dyn PipelineNode>),
     Planned(NodePlan),

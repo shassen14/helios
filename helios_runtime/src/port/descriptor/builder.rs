@@ -25,14 +25,19 @@
 //! config-derived part (`aiding.<entry>.nis`) are formatted by the node as it
 //! builds its descriptor.
 //!
+//! A node that places a frame it defines in the world one of its inputs names
+//! declares it with [`pins`](PortDescriptorBuilder::pins), or
+//! [`pins_by_instance`](PortDescriptorBuilder::pins_by_instance) on a keyed
+//! channel.
+//!
 //! Every input the builder records is same-tick: [`input`](PortDescriptorBuilder::input)
 //! records a required input and [`optional`](PortDescriptorBuilder::optional)
 //! an optional one. There is no method for a previous-tick input until the
 //! pipeline can actually hand a reader the start-of-tick value.
 
 use crate::port::{
-    ChannelKey, ChannelKind, DeclaredInstances, Determinism, Keyed, MountRule, NodeClass,
-    Observable, OutputPort, PortDescriptor,
+    ChannelKey, ChannelKind, DeclaredInstances, Determinism, InstanceKey, Keyed, MountRule,
+    NodeClass, Observable, OutputPort, Pin, Pinned, PortDescriptor,
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
@@ -54,6 +59,7 @@ pub struct PortDescriptorBuilder {
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
     defined_frames: Vec<(FrameId, Convention)>,
+    pins: Vec<Pin>,
     rate: Option<f64>,
 }
 
@@ -221,6 +227,57 @@ impl PortDescriptorBuilder {
         self
     }
 
+    /// Declares that input `channel` places `what` of `frame`, a frame this
+    /// node defines, in the world frame the channel's values are relative to:
+    /// the position of an estimator's root, pinned by a GPS fix given in the
+    /// datum. The build
+    /// refuses a pin through a channel that names no world frame, and a node
+    /// whose inputs name two. Checked at [`build`](Self::build): `frame` must
+    /// be defined and `channel` read by then.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` is keyed: a pin reads one instance of a keyed channel,
+    /// declared with [`pins_by_instance`](Self::pins_by_instance).
+    pub fn pins(mut self, frame: FrameId, what: Pinned, channel: &ChannelKey) -> Self {
+        assert!(
+            !channel.is_keyed(),
+            "a pin through keyed channel {channel} names the instance it reads"
+        );
+        self.pins.push(Pin::new(frame, what, channel.clone(), None));
+        self
+    }
+
+    /// Declares that `instance` of keyed channel `channel` places `what` of
+    /// `frame`, as
+    /// [`pins`](Self::pins) does: the world frame is the one the instance's
+    /// values are expressed in, a transform's parent. The mock oracle pins its
+    /// root through its body's instance of the truth transforms.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` is not keyed or does not carry `T`.
+    pub fn pins_by_instance<T: Keyed>(
+        mut self,
+        frame: FrameId,
+        what: Pinned,
+        channel: &ChannelKey,
+        instance: &T::Instance,
+    ) -> Self {
+        assert!(
+            channel.is_keyed() && channel.type_id() == TypeId::of::<T>(),
+            "a pin by instance must be through a keyed channel of {}, got {channel}",
+            std::any::type_name::<T>()
+        );
+        self.pins.push(Pin::new(
+            frame,
+            what,
+            channel.clone(),
+            Some(InstanceKey::of::<T>(instance)),
+        ));
+        self
+    }
+
     /// Gates execution to `hz`. Without it the node fires every tick.
     pub fn rate_hz(mut self, hz: f64) -> Self {
         self.rate = Some(hz);
@@ -232,7 +289,8 @@ impl PortDescriptorBuilder {
     /// # Panics
     ///
     /// If [`reads_mount_in`](Self::reads_mount_in) named a channel that is
-    /// not a declared input.
+    /// not a declared input, or a pin names a frame the node doesn't define or
+    /// a channel it doesn't read.
     pub fn build(self) -> PortDescriptor {
         PortDescriptor::new(
             self.required_inputs,
@@ -245,6 +303,7 @@ impl PortDescriptorBuilder {
         .with_outputs(self.outputs)
         .with_observables(self.observables)
         .with_defined_frames(self.defined_frames)
+        .with_pins(self.pins)
     }
 }
 
@@ -457,6 +516,73 @@ mod tests {
         let _ = PortDescriptorBuilder::algorithm()
             .reads_mount_in(&ChannelKey::measurement::<Reading>("gps"), Convention::Flu)
             .build();
+    }
+
+    fn root() -> FrameId {
+        FrameId::global("root")
+    }
+
+    #[test]
+    fn pins_are_kept_with_the_instance_they_read() {
+        let gps = ChannelKey::measurement::<Reading>("gps");
+        let d = PortDescriptorBuilder::algorithm()
+            .optional(gps.clone())
+            .input(edges())
+            .defines_frame(root(), Convention::Enu)
+            .pins(root(), Pinned::Position, &gps)
+            .pins_by_instance::<Edge>(root(), Pinned::Position, &edges(), &"base".to_string())
+            .build();
+
+        let pins: Vec<(&FrameId, &ChannelKey, Option<&InstanceKey>)> = d
+            .pins()
+            .iter()
+            .map(|pin| (pin.frame(), pin.channel(), pin.instance()))
+            .collect();
+        let base = InstanceKey::of::<Edge>(&"base".to_string());
+        assert_eq!(
+            pins,
+            [(&root(), &gps, None), (&root(), &edges(), Some(&base))]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the node does not define it")]
+    fn a_pin_of_a_frame_the_node_does_not_define_panics() {
+        let gps = ChannelKey::measurement::<Reading>("gps");
+        let _ = PortDescriptorBuilder::algorithm()
+            .optional(gps.clone())
+            .pins(root(), Pinned::Position, &gps)
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "which the node does not read")]
+    fn a_pin_through_a_channel_not_read_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .defines_frame(root(), Convention::Enu)
+            .pins(
+                root(),
+                Pinned::Position,
+                &ChannelKey::measurement::<Reading>("gps"),
+            )
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "names the instance it reads")]
+    fn a_pin_through_a_keyed_channel_without_an_instance_panics() {
+        let _ = PortDescriptorBuilder::algorithm().pins(root(), Pinned::Position, &edges());
+    }
+
+    #[test]
+    #[should_panic(expected = "a pin by instance must be through a keyed channel")]
+    fn a_pin_by_instance_on_a_single_value_channel_panics() {
+        let _ = PortDescriptorBuilder::algorithm().pins_by_instance::<Edge>(
+            root(),
+            Pinned::Position,
+            &ChannelKey::internal::<Edge>("edges"),
+            &"base".to_string(),
+        );
     }
 
     #[test]

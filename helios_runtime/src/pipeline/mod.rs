@@ -25,6 +25,6 @@ pub use autonomy_pipeline::{AutonomyPipeline, ReadMount};
 pub(crate) use build::NodeDeclaration;
 pub use build::{
     ChannelUses, CycleEdge, FrameConventions, FrameOwner, InputMounts, MountLookupError,
-    MountRefusal, NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
+    MountRefusal, NodeConstructor, NodePlan, PinnedFrame, PipelineBuildError, PipelineBuilder,
 };
 pub use node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};

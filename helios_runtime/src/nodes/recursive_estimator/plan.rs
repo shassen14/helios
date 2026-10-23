@@ -17,16 +17,17 @@ use crate::nodes::estimation::{
     DynamicsComponent, FilterParts, MeasurementSource, MeasurementWiring,
 };
 use crate::pipeline::{node::PipelineNode, InputMounts};
-use crate::port::{ChannelKey, PortDescriptor};
+use crate::port::{ChannelKey, Pinned, PortDescriptor};
 
 use helios_core::estimation::augmentation::AugmentationSpec;
 use helios_core::estimation::schema::{
-    check_measurement_state_agreement, StateSchema, StateSchemaBlock,
+    check_measurement_state_agreement, MeasurementSchema, StateSchema, StateSchemaBlock,
 };
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::prelude::AgentId;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
+use helios_core::spatial::state::Quantity;
 use helios_core::spatial::transforms::{Convention, Transform};
 use helios_core::spatial::{FrameAwareState, FrameId};
 
@@ -82,6 +83,12 @@ impl EstimatorPlan {
             };
             let source = entry.model.build(&ctx, wiring)?;
             check_source_channel(&entry.name, &entry.channel, source.channel())?;
+            check_source_pin(
+                &entry.name,
+                entry.pins,
+                &source.model().schema(),
+                &ctx.frames().root,
+            )?;
             sources.push(source);
             entry_windows.push((entry.name, entry.nis_window));
         }
@@ -108,13 +115,15 @@ impl EstimatorPlan {
 }
 
 /// One aiding entry as declared: the channel its model's kind reads, named
-/// `input` in config, the axes the model reads that channel's mount in, its
-/// NIS window, its R, and the source still to build.
+/// `input` in config, the axes the model reads that channel's mount in,
+/// what of the root the model pins to that channel's world frame, if anything,
+/// its NIS window, its R, and the source still to build.
 pub(super) struct AidingPlan {
     pub(super) name: String,
     pub(super) input: String,
     pub(super) channel: ChannelKey,
     pub(super) mount_convention: Option<Convention>,
+    pub(super) pins: Option<Pinned>,
     pub(super) nis_window: Option<NisWindow>,
     pub(super) noise: DMatrix<f64>,
     pub(super) model: DeferredComponent<MeasurementWiring, Box<dyn MeasurementSource>>,
@@ -142,6 +151,36 @@ fn check_source_channel(
         ));
     }
     Ok(())
+}
+
+/// Fails unless aiding entry `name`'s built model pins what its kind
+/// `declared`: a model whose schema holds the position of `root` pins it, and
+/// one whose schema doesn't pins nothing. The node's ports carry the declared
+/// pin, so a model disagreeing would leave the root unanchored where its
+/// predictions place it, or anchor it where they don't.
+fn check_source_pin(
+    name: &str,
+    declared: Option<Pinned>,
+    schema: &MeasurementSchema,
+    root: &FrameId,
+) -> Result<(), String> {
+    let position = Quantity::Position(root.clone());
+    let predicted = schema
+        .blocks()
+        .iter()
+        .any(|block| block.quantity() == &position)
+        .then_some(Pinned::Position);
+    match (declared, predicted) {
+        (Some(Pinned::Position), Some(Pinned::Position)) | (None, None) => Ok(()),
+        (Some(Pinned::Position), None) => Err(format!(
+            "{AIDING_KEY}.{name}: its kind registered that it pins the position of {root}, \
+             but the model predicts none"
+        )),
+        (None, Some(Pinned::Position)) => Err(format!(
+            "{AIDING_KEY}.{name}: the model predicts the position of {root}, which pins it, \
+             but its kind registered no pin"
+        )),
+    }
 }
 
 /// The mount of `channel`, one of the node's inputs, or why it has none.
@@ -263,6 +302,7 @@ mod tests {
 
     use crate::port::ChannelKey;
 
+    use helios_core::estimation::schema::MeasurementSchemaBlock;
     use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
 
@@ -276,5 +316,49 @@ mod tests {
         assert!(check_source_channel("gps", &declared, &declared).is_ok());
         let err = check_source_channel("gps", &declared, &built).expect_err("channels differ");
         assert!(err.starts_with("aiding.gps:"), "{err}");
+    }
+
+    fn root() -> FrameId {
+        FrameId::odom(AgentId::new("car"))
+    }
+
+    /// A schema predicting `quantity`, in ENU.
+    fn predicting(quantity: Quantity) -> MeasurementSchema {
+        MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(quantity, Convention::Enu)])
+    }
+
+    /// A model predicting the root's position pins it, so its kind must say
+    /// so, and one predicting anything else must not.
+    #[test]
+    fn a_model_pins_what_its_kind_registered() {
+        let position = predicting(Quantity::Position(root()));
+        let elsewhere = predicting(Quantity::Position(FrameId::global("datum")));
+
+        assert!(check_source_pin("gps", Some(Pinned::Position), &position, &root()).is_ok());
+        assert!(check_source_pin("mocap", None, &elsewhere, &root()).is_ok());
+    }
+
+    /// A kind that forgets the pin would leave the root unanchored where its
+    /// model places it; one that claims a pin would anchor it where its model
+    /// doesn't. Both are refused, naming the entry.
+    #[test]
+    fn a_model_disagreeing_with_its_kinds_pin_is_refused() {
+        let position = predicting(Quantity::Position(root()));
+        let elsewhere = predicting(Quantity::Position(FrameId::global("datum")));
+
+        let unregistered =
+            check_source_pin("gps", None, &position, &root()).expect_err("pin unregistered");
+        assert_eq!(
+            unregistered,
+            "aiding.gps: the model predicts the position of agent.car.odom, which pins it, \
+             but its kind registered no pin"
+        );
+        let unpredicted = check_source_pin("gps", Some(Pinned::Position), &elsewhere, &root())
+            .expect_err("pin unpredicted");
+        assert_eq!(
+            unpredicted,
+            "aiding.gps: its kind registered that it pins the position of agent.car.odom, \
+             but the model predicts none"
+        );
     }
 }

@@ -13,11 +13,17 @@ use std::collections::HashMap;
 /// How often the hosts these tests stand in for tick.
 pub const TICK_RATE_HZ: f64 = 100.0;
 
-/// A host ticking at [`TICK_RATE_HZ`] that names no world frame.
+/// The world frame the hosts these tests stand in for publish truth in.
+pub fn datum() -> FrameId {
+    FrameId::global("datum")
+}
+
+/// A host ticking at [`TICK_RATE_HZ`] whose one world frame is [`datum`], in
+/// ENU.
 pub fn host() -> HostDeclaration {
     HostDeclaration {
         tick_rate_hz: TICK_RATE_HZ,
-        world_frames: HashMap::new(),
+        world_frames: HashMap::from([(datum(), Convention::Enu)]),
     }
 }
 

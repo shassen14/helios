@@ -88,7 +88,7 @@ fn build(
         input.optional_channels(),
         aiding
             .iter()
-            .map(|entry| (entry.name.as_str(), &entry.channel)),
+            .map(|entry| (entry.name.as_str(), &entry.channel, entry.pins)),
         input
             .mount_readings()
             .iter()
@@ -123,8 +123,8 @@ fn build(
 }
 
 /// Declares aiding entry `name`: its NIS window, its R, the channel its
-/// model's kind reads and the axes it reads that channel's mount in, and the
-/// source still to build. Returns it with its model's resolved sub-table.
+/// model's kind reads, the axes it reads that channel's mount in and what of
+/// the root it pins, and the source still to build. Returns it with its model's resolved sub-table.
 fn declare_aiding(
     components: &EstimatorComponents,
     name: String,
@@ -140,7 +140,8 @@ fn declare_aiding(
         name,
         input: entry.input,
         channel,
-        mount_convention: parsed.declared.mount_convention,
+        mount_convention: parsed.declared.facts.mount_convention,
+        pins: parsed.declared.facts.pins,
         nis_window,
         noise: DMatrix::from_diagonal(&DVector::from_vec(entry.r_diag)),
         model: parsed.deferred,
@@ -210,11 +211,11 @@ mod tests {
 
     use crate::assembly::{no_check, NoParams};
     use crate::channels::estimate::estimator_output;
-    use crate::nodes::estimation::{DeclaredInput, DynamicsComponent};
+    use crate::nodes::estimation::{DeclaredInput, DynamicsComponent, MeasurementFacts};
     use crate::pipeline::node::{PipelineNode, TickContext};
     use crate::pipeline::NodeDeclaration;
     use crate::port::{
-        ChannelDescription, ChannelKey, InputPort, PortBus, PortDescriptor, Provenance,
+        ChannelDescription, ChannelKey, InputPort, Pinned, PortBus, PortDescriptor, Provenance,
     };
     use crate::BodyChannel;
 
@@ -477,7 +478,7 @@ mod tests {
         components
             .register_measurement::<GpsPosition, _, _, _>(
                 "test_odom_position",
-                None,
+                MeasurementFacts::default().pins(Pinned::Position),
                 no_check,
                 |_: NoParams, _: &BuildContext<'_>, _: &FrameId| {
                     Ok(Box::new(OdomPositionModel) as Box<dyn MeasurementModel>)
@@ -487,7 +488,7 @@ mod tests {
         components
             .register_measurement::<GpsPosition, _, _, _>(
                 "test_world_position",
-                None,
+                MeasurementFacts::default(),
                 no_check,
                 |_: NoParams, _: &BuildContext<'_>, _: &FrameId| {
                     Ok(Box::new(WorldPositionModel) as Box<dyn MeasurementModel>)
@@ -542,6 +543,22 @@ mod tests {
                 ("gps".to_string(), GpsPositionModel::MOUNT_CONVENTION),
             ]
         );
+    }
+
+    /// A GPS position model pins the root it holds the state in to the world
+    /// frame its channel names; the IMU input builder's channels pin nothing.
+    #[test]
+    fn the_gps_aiding_entry_pins_the_root() {
+        let (node, _) = build_section(&format!("{BASE}{GPS}"));
+
+        let pins: Vec<(&FrameId, String)> = node
+            .port_descriptor()
+            .pins()
+            .iter()
+            .map(|pin| (pin.frame(), pin.channel().name().to_string()))
+            .collect();
+
+        assert_eq!(pins, [(&FrameId::odom(agent()), "gps".to_string())]);
     }
 
     /// The resolved section carries each component's resolved sub-table, so

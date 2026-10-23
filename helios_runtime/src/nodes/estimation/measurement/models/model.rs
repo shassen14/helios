@@ -3,7 +3,8 @@
 use super::config::{AccelerometerConfig, MagnetometerConfig};
 
 use crate::assembly::{no_check, BuildContext, NoParams};
-use crate::nodes::estimation::EstimatorComponents;
+use crate::nodes::estimation::{EstimatorComponents, MeasurementFacts};
+use crate::port::Pinned;
 
 use helios_core::estimation::measurement::{
     accelerometer::SpecificForceModel, gps::GpsPositionModel, gyroscope::AngularRateModel,
@@ -30,7 +31,9 @@ pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponent
     components
         .register_measurement::<GpsPosition, _, _, _>(
             GPS_POSITION_KIND,
-            Some(GpsPositionModel::MOUNT_CONVENTION),
+            MeasurementFacts::default()
+                .reads_mount_in(GpsPositionModel::MOUNT_CONVENTION)
+                .pins(Pinned::Position),
             no_check,
             build_gps_position,
         )
@@ -38,7 +41,7 @@ pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponent
     components
         .register_measurement::<Acceleration, _, _, _>(
             ACCELEROMETER_KIND,
-            Some(SpecificForceModel::MOUNT_CONVENTION),
+            MeasurementFacts::default().reads_mount_in(SpecificForceModel::MOUNT_CONVENTION),
             no_check,
             build_accelerometer,
         )
@@ -46,7 +49,7 @@ pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponent
     components
         .register_measurement::<AngularRate, _, _, _>(
             GYROSCOPE_KIND,
-            Some(AngularRateModel::MOUNT_CONVENTION),
+            MeasurementFacts::default().reads_mount_in(AngularRateModel::MOUNT_CONVENTION),
             no_check,
             build_gyroscope,
         )
@@ -54,7 +57,7 @@ pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponent
     components
         .register_measurement::<MagneticField, _, _, _>(
             MAGNETOMETER_KIND,
-            Some(MagneticFieldModel::MOUNT_CONVENTION),
+            MeasurementFacts::default().reads_mount_in(MagneticFieldModel::MOUNT_CONVENTION),
             no_check,
             build_magnetometer,
         )

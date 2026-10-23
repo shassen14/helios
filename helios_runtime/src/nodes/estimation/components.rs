@@ -4,7 +4,8 @@
 use super::dynamics::DynamicsComponent;
 use super::filter::FilterParts;
 use super::measurement::{
-    reading_channel, source_factory, MeasurementDeclaration, MeasurementSource, MeasurementWiring,
+    reading_channel, source_factory, MeasurementDeclaration, MeasurementFacts, MeasurementSource,
+    MeasurementWiring,
 };
 
 use crate::assembly::{
@@ -15,7 +16,6 @@ use crate::assembly::{
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::interchange::measurement::sensor::SensorPayload;
-use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -73,8 +73,8 @@ impl EstimatorComponents {
 
     /// Parses the measurement model described by `section`, the sub-table at
     /// `path` in node `ctx.node_name()`'s section, and runs its kind's check.
-    /// Its kind declares the channel it reads and the axes it reads that
-    /// channel's mount in; the source is built later, from
+    /// Its kind declares the channel it reads and the facts its model states
+    /// about reading it; the source is built later, from
     /// the [`MeasurementWiring`] naming that channel and R.
     pub(crate) fn parse_measurement(
         &self,
@@ -163,10 +163,9 @@ impl EstimatorComponents {
 
     /// Registers a measurement kind under `kind`, reading payload type `P`.
     ///
-    /// `mount_convention` is the axes the model reads its sensor's mount in
-    /// through the tf tree, `None` for a model that never resolves the mount;
-    /// the host refuses a mount the tree holds in other axes before the first
-    /// tick. `check` refuses a config that is unusable on its own, when the
+    /// `facts` is what the model states about how it reads its sensor: the
+    /// axes it reads the mount in, and whether it pins its node's root to the
+    /// world frame its channel is relative to. `check` refuses a config that is unusable on its own, when the
     /// node is declared; pass [`no_check`] when parsing is check enough. The
     /// kind declares the channel it reads from `P`, so `check` states nothing
     /// else. `build` takes the kind's own typed config, which `check`
@@ -186,7 +185,7 @@ impl EstimatorComponents {
     pub fn register_measurement<P, C, K, F>(
         &mut self,
         kind: impl Into<String>,
-        mount_convention: Option<Convention>,
+        facts: MeasurementFacts,
         check: K,
         build: F,
     ) -> Result<(), DuplicateComponentKind>
@@ -205,7 +204,7 @@ impl EstimatorComponents {
                 check(config)?;
                 Ok(MeasurementDeclaration {
                     channel: reading_channel::<P>(),
-                    mount_convention,
+                    facts,
                 })
             },
             source_factory::<P, C, F>(build),
