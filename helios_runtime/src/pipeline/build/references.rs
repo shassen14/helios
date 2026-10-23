@@ -17,12 +17,12 @@ use std::collections::HashMap;
 
 /// A pin the build resolved: node `node_name` places what `pin` names of a
 /// frame it defines in `reference`, the world frame the pin's input is
-/// relative to, or nowhere when no writer supplies that input.
+/// relative to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PinnedFrame {
     pub(super) node_name: String,
     pub(super) pin: Pin,
-    pub(super) reference: Option<FrameId>,
+    pub(super) reference: FrameId,
 }
 
 /// Every reference a body channel states must be one of the host's world
@@ -57,8 +57,7 @@ pub(super) fn check_references(
 /// node outputs carry a reference. One error per pin. A pin through an input
 /// no writer supplies is the supplier check's to report.
 ///
-/// Returns each pin that names a world frame, with it, and each pin no writer
-/// supplies, with none.
+/// Returns each pin that names a world frame, with it.
 pub(super) fn check_pins(
     nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
@@ -72,7 +71,7 @@ pub(super) fn check_pins(
                 PinReference::World(reference) => pinned.push(PinnedFrame {
                     node_name: node.name().to_string(),
                     pin: pin.clone(),
-                    reference: Some(reference.clone()),
+                    reference: reference.clone(),
                 }),
                 PinReference::Missing { writer, stated } => {
                     errors.push(PipelineBuildError::PinWithoutReference {
@@ -84,11 +83,7 @@ pub(super) fn check_pins(
                         stated: stated.cloned(),
                     })
                 }
-                PinReference::Unwritten => pinned.push(PinnedFrame {
-                    node_name: node.name().to_string(),
-                    pin: pin.clone(),
-                    reference: None,
-                }),
+                PinReference::Unwritten => {}
             }
         }
     }
@@ -97,7 +92,7 @@ pub(super) fn check_pins(
 
 /// A node that defines a frame places it in one world frame, so the world
 /// frames its inputs are relative to, its single-value inputs' references
-/// and its written pins' frames from `pinned`, must agree. One error per node, naming
+/// and its pins' frames from `pinned`, must agree. One error per node, naming
 /// each input with its world frame. A second datum then needs the host to
 /// declare the static relating the two, which no host does yet.
 pub(super) fn check_one_world(
@@ -119,7 +114,7 @@ pub(super) fn check_one_world(
         let pins = pinned
             .iter()
             .filter(|pinned| pinned.node_name == node.name())
-            .filter_map(|pinned| Some((pinned.pin.channel(), pinned.reference.as_ref()?)));
+            .map(|pinned| (pinned.pin.channel(), &pinned.reference));
         for (channel, reference) in read.chain(pins) {
             if !references.iter().any(|(seen, _)| seen == channel) {
                 references.push((channel.clone(), reference.clone()));
@@ -310,7 +305,7 @@ mod tests {
     }
 
     /// The node, frame, what and world frame of each resolved pin.
-    fn placed(pinned: &[PinnedFrame]) -> Vec<(&str, &FrameId, Pinned, Option<&FrameId>)> {
+    fn placed(pinned: &[PinnedFrame]) -> Vec<(&str, &FrameId, Pinned, &FrameId)> {
         pinned
             .iter()
             .map(|pinned| {
@@ -318,7 +313,7 @@ mod tests {
                     pinned.node_name.as_str(),
                     pinned.pin.frame(),
                     pinned.pin.what(),
-                    pinned.reference.as_ref(),
+                    &pinned.reference,
                 )
             })
             .collect()
@@ -379,7 +374,7 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(
             placed(&pinned),
-            [("ekf", &root(), Pinned::Position, Some(&datum()))]
+            [("ekf", &root(), Pinned::Position, &datum())]
         );
     }
 
@@ -417,14 +412,10 @@ mod tests {
             .contains("but node \"mux\" states no world frame"));
     }
 
-    /// A pin no writer supplies is the supplier check's to report, and
-    /// places its frame nowhere.
+    /// A pin no writer supplies is the supplier check's to report.
     #[test]
     fn a_pin_through_an_unwritten_input_is_left_to_the_supplier_check() {
-        let (pinned, errors) = anchoring(&[pinning(&sensor("gps"))], &[]);
-
-        assert!(errors.is_empty(), "{errors:?}");
-        assert_eq!(placed(&pinned), [("ekf", &root(), Pinned::Position, None)]);
+        assert!(anchoring_errors(&[pinning(&sensor("gps"))], &[]).is_empty());
     }
 
     #[test]
@@ -434,7 +425,7 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(
             placed(&pinned),
-            [("ekf", &root(), Pinned::Position, Some(&datum()))]
+            [("ekf", &root(), Pinned::Position, &datum())]
         );
     }
 

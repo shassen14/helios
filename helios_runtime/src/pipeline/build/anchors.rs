@@ -5,7 +5,7 @@
 use super::declaration::NodeDeclaration;
 use super::references::PinnedFrame;
 
-use crate::port::{ChannelKey, InstanceKey, Pinned};
+use crate::port::Pinned;
 
 use helios_core::prelude::MonotonicTime;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
@@ -57,16 +57,6 @@ impl Display for FramePlacement {
                 f,
                 "node \"{node_name}\" reads no input that pins the position of {frame}"
             ),
-            Placement::Free(Unanchored::Unwritten { channel, instance }) => {
-                write!(
-                    f,
-                    "node \"{node_name}\" pins the position of {frame} through "
-                )?;
-                if let Some(instance) = instance {
-                    write!(f, "instance \"{instance}\" of ")?;
-                }
-                write!(f, "{}, which nothing writes", channel.name())
-            }
         }
     }
 }
@@ -83,26 +73,20 @@ pub enum Placement {
     Free(Unanchored),
 }
 
-/// Why a defined frame is free in the world.
+/// Why a defined frame is free in the world. A pin through an input no
+/// writer supplies is no reason: the build refuses that input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unanchored {
     /// Its node pins its position through no input.
     NoPin,
-    /// Its node pins its position through an input, the instance `instance`
-    /// of `channel` on a keyed channel, that no writer supplies.
-    Unwritten {
-        channel: ChannelKey,
-        instance: Option<InstanceKey>,
-    },
 }
 
 /// Places every frame a node in `nodes` defines, in node and declaration
-/// order: anchored at the world frame of its node's first written pin of its
-/// position in `pinned`, or free. A pin through an unwritten input names the
-/// reason when no written one anchors it. `host_frames` gives each world
-/// frame's axes; one a pin names but the host doesn't own is already refused
-/// by the reference check, and the build stops on that, so its frame is left
-/// free here.
+/// order: anchored at the world frame of its node's first pin of its
+/// position in `pinned`, or free. `host_frames` gives each world frame's
+/// axes; one a pin names but the host doesn't own is already refused by the
+/// reference check, and the build stops on that, so its frame is left free
+/// here.
 pub(super) fn place_frames(
     nodes: &[NodeDeclaration],
     pinned: &[PinnedFrame],
@@ -143,15 +127,8 @@ fn place<'a>(
     pins: impl Iterator<Item = &'a PinnedFrame>,
     host_frames: &HashMap<FrameId, Convention>,
 ) -> Placement {
-    let mut unwritten = None;
     for pinned in pins {
-        let Some(reference) = &pinned.reference else {
-            unwritten.get_or_insert_with(|| Unanchored::Unwritten {
-                channel: pinned.pin.channel().clone(),
-                instance: pinned.pin.instance().cloned(),
-            });
-            continue;
-        };
+        let reference = &pinned.reference;
         let Some(reference_convention) = host_frames.get(reference) else {
             continue;
         };
@@ -166,7 +143,7 @@ fn place<'a>(
             stamp: MonotonicTime(0.0),
         });
     }
-    Placement::Free(unwritten.unwrap_or(Unanchored::NoPin))
+    Placement::Free(Unanchored::NoPin)
 }
 
 #[cfg(test)]
@@ -177,7 +154,7 @@ mod tests {
     use super::super::NodePlan;
 
     use crate::channels::truth_tf;
-    use crate::port::{ChannelDescription, PortDescriptorBuilder, Provenance};
+    use crate::port::{ChannelDescription, ChannelKey, PortDescriptorBuilder, Provenance};
     use crate::BodyChannel;
 
     use helios_core::prelude::AgentId;
@@ -292,22 +269,6 @@ mod tests {
         );
     }
 
-    /// A body without a GPS, under a stack that still reads one.
-    #[test]
-    fn a_root_pinned_through_an_unwritten_input_is_free_naming_it() {
-        let placements = placements(&[pinning_gps("ekf", root())], &[]);
-
-        assert_eq!(placements.len(), 1);
-        assert!(matches!(
-            placements[0].placement(),
-            Placement::Free(Unanchored::Unwritten { channel, instance: None }) if *channel == gps()
-        ));
-        assert_eq!(
-            placements[0].to_string(),
-            "node \"ekf\" pins the position of agent.car.odom through gps, which nothing writes"
-        );
-    }
-
     /// A shadow estimator in its own root is anchored beside the
     /// authoritative one, so each can be graded.
     #[test]
@@ -338,30 +299,21 @@ mod tests {
     }
 
     /// The mock oracle's root sits at the parent of the truth instance it
-    /// reads, and is free, naming the instance, when nothing writes it.
+    /// reads.
     #[test]
     fn a_root_pinned_by_instance_is_anchored_at_the_instances_parent() {
-        let mock = || {
-            let ports = PortDescriptorBuilder::mock()
-                .input(truth_tf())
-                .pins_by_instance::<StampedTransform>(
-                    root(),
-                    Pinned::Position,
-                    &truth_tf(),
-                    &FrameId::base_link(agent()),
-                );
-            estimator("mock", root(), ports)
-        };
+        let ports = PortDescriptorBuilder::mock()
+            .input(truth_tf())
+            .pins_by_instance::<StampedTransform>(
+                root(),
+                Pinned::Position,
+                &truth_tf(),
+                &FrameId::base_link(agent()),
+            );
+        let mock = estimator("mock", root(), ports);
 
-        let written = placements(&[mock()], &[truth()]);
-        assert_eq!(written.len(), 1);
-        assert_eq!(anchor(&written[0]).parent, datum());
-
-        let unwritten = placements(&[mock()], &[]);
-        assert_eq!(
-            unwritten[0].to_string(),
-            "node \"mock\" pins the position of agent.car.odom through instance \
-             \"agent.car.base_link\" of truth.tf, which nothing writes"
-        );
+        let placements = placements(&[mock], &[truth()]);
+        assert_eq!(placements.len(), 1);
+        assert_eq!(anchor(&placements[0]).parent, datum());
     }
 }
