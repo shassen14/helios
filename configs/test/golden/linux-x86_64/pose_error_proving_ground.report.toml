@@ -11,14 +11,14 @@ kind = "time_budget"
 name = "position_held"
 target = "eval.inline.est.position"
 unit = "m"
-samples = 21982
+samples = 21962
 max_gap_secs = 0.0025000000000048317
 window_secs = [
-    5.047499999999999,
+    5.097499999999999,
     60.0,
 ]
 status = "passed"
-actual = 0.011640647027277613
+actual = 0.012048277081542666
 
 [assertions.window.start]
 after = "agent.ProvingCar.node.primary.aiding.gps.nis"
@@ -32,12 +32,12 @@ name = "position_rms"
 target = "eval.inline.est.position"
 reduce = "rms"
 covered = true
-value = 0.026354341532186083
+value = 0.02708524326837714
 unit = "m"
-samples = 21982
+samples = 21962
 max_gap_secs = 0.0025000000000048317
 window_secs = [
-    5.047499999999999,
+    5.097499999999999,
     60.0,
 ]
 
@@ -50,12 +50,12 @@ name = "position_max"
 target = "eval.inline.est.position"
 reduce = "max"
 covered = true
-value = 0.07326805336804335
+value = 0.0881384423644085
 unit = "m"
-samples = 21982
+samples = 21962
 max_gap_secs = 0.0025000000000048317
 window_secs = [
-    5.047499999999999,
+    5.097499999999999,
     60.0,
 ]
 
@@ -68,13 +68,13 @@ name = "position_final"
 target = "eval.inline.est.position"
 reduce = "final"
 covered = true
-value = 0.011640647027277613
+value = 0.012048277081542666
 unit = "m"
-samples = 21982
+samples = 21962
 max_gap_secs = 0.0025000000000048317
 final_age_secs = 0.0
 window_secs = [
-    5.047499999999999,
+    5.097499999999999,
     60.0,
 ]
 
@@ -87,12 +87,12 @@ name = "z_rms"
 target = "eval.inline.est.z"
 reduce = "rms"
 covered = true
-value = 0.021853016917813578
+value = 0.02212307249960746
 unit = "m"
-samples = 21982
+samples = 21962
 max_gap_secs = 0.0025000000000048317
 window_secs = [
-    5.047499999999999,
+    5.097499999999999,
     60.0,
 ]
 
@@ -105,12 +105,12 @@ name = "rotation_rms"
 target = "eval.inline.est.rotation"
 reduce = "rms"
 covered = true
-value = 0.0026928256402664317
+value = 0.0037687240865700517
 unit = "rad"
-samples = 21982
+samples = 21962
 max_gap_secs = 0.0025000000000048317
 window_secs = [
-    5.047499999999999,
+    5.097499999999999,
     60.0,
 ]
 
@@ -123,12 +123,12 @@ name = "rotation_max"
 target = "eval.inline.est.rotation"
 reduce = "max"
 covered = true
-value = 0.010740876461136846
+value = 0.012266855948476789
 unit = "rad"
-samples = 21982
+samples = 21962
 max_gap_secs = 0.0025000000000048317
 window_secs = [
-    5.047499999999999,
+    5.097499999999999,
     60.0,
 ]
 

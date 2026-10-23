@@ -14,7 +14,7 @@ unit = "dimensionless"
 samples = 600
 max_gap_secs = 0.10000000000000142
 status = "passed"
-actual = 0.22921206977862377
+actual = 0.22947163117978167
 
 [assertions.condition]
 less_than = 25.0
@@ -23,10 +23,10 @@ less_than = 25.0
 name = "mag_nis_never_extreme"
 target = "agent.ProvingCar.node.primary.aiding.mag.nis"
 unit = "dimensionless"
-samples = 6001
+samples = 6000
 max_gap_secs = 0.010000000000005116
 status = "passed"
-actual = 1.25681535640938
+actual = 0.3835222604734729
 
 [assertions.condition]
 less_than = 25.0
@@ -38,9 +38,9 @@ reduce = "final"
 unit = "dimensionless"
 samples = 600
 max_gap_secs = 0.10000000000000142
-final_age_secs = 0.05250000000000199
+final_age_secs = 0.0024999999999977263
 status = "passed"
-actual = 0.22921206977862377
+actual = 0.22947163117978167
 
 [assertions.condition]
 less_than = 7.0
@@ -50,11 +50,11 @@ name = "mag_nis_final"
 target = "agent.ProvingCar.node.primary.aiding.mag.nis"
 reduce = "final"
 unit = "dimensionless"
-samples = 6001
+samples = 6000
 max_gap_secs = 0.010000000000005116
-final_age_secs = 0.0025000000000048317
+final_age_secs = 0.0024999999999977263
 status = "passed"
-actual = 1.25681535640938
+actual = 0.3835222604734729
 
 [assertions.condition]
 less_than = 7.0
