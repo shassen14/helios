@@ -6,11 +6,12 @@
 use super::*;
 use crate::config::structs::{BodyKind, DatumConfig, ObjectPlacement, ObjectPrefab, WorldLayout};
 use crate::config::LoadedWorldLayout;
+use crate::core::physics_step::PhysicsStepPlugin;
 use crate::world::layout::AssetNode;
 
 use helios_core::interchange::perception::semantic_class::SemanticTaxonomy;
 
-use avian3d::prelude::{Gravity, LinearVelocity, PhysicsPlugins, SpatialQuery, SpatialQueryFilter};
+use avian3d::prelude::{Gravity, LinearVelocity, SpatialQuery, SpatialQueryFilter};
 use bevy::ecs::system::RunSystemOnce;
 use bevy::time::TimeUpdateStrategy;
 use figment::{
@@ -128,7 +129,7 @@ fn physics_app(layout: ResolvedWorldLayout) -> App {
         TransformPlugin,
         AssetPlugin::default(),
         bevy::mesh::MeshPlugin,
-        PhysicsPlugins::default(),
+        PhysicsStepPlugin,
     ))
     .insert_resource(TimeUpdateStrategy::ManualDuration(STEP))
     .insert_resource(Gravity(Vec3::NEG_Y * GRAVITY_M_S2));

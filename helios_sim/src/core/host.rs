@@ -22,13 +22,12 @@
 
 use crate::{
     asset_root, brain_bridge::ObservationSinkAppExt, cli::Cli, config::ConfigPlugin,
-    core::app_state::AppState, HeliosSimulationPlugin,
+    core::app_state::AppState, core::physics_step::PhysicsStepPlugin, HeliosSimulationPlugin,
 };
 
 use helios_core::prelude::MonotonicDuration;
 use helios_runtime::observe::sinks::stats::StatsSink;
 
-use avian3d::prelude::PhysicsPlugins;
 use bevy::app::{PluginGroupBuilder, ScheduleRunnerPlugin};
 use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
@@ -146,7 +145,7 @@ impl Plugin for HeliosHost {
         // app's first update. `Cli` is inserted for `ConfigPlugin`, which reads
         // it when it loads and resolves the scenario at startup.
         app.add_plugins(group);
-        app.add_plugins(PhysicsPlugins::default());
+        app.add_plugins(PhysicsStepPlugin);
 
         app.insert_resource(self.cli.clone());
         app.init_state::<AppState>();
@@ -211,7 +210,10 @@ pub enum Presentation {
 ///
 /// No variant changes what a run *computes*. The fixed timestep is identical
 /// under all three, so the sim takes the same steps and produces the same
-/// numbers; only the delay before you see them differs.
+/// numbers; only the delay before you see them differs. That holds because
+/// physics and transform propagation run inside each fixed step, so nothing
+/// depends on how many steps a frame runs; `helios_test`'s golden check
+/// guards it (`steps_per_update_change_no_report`).
 // `Eq` is absent on purpose: `Scaled` carries an `f32`.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub enum TimePolicy {

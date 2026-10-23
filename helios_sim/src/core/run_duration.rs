@@ -84,6 +84,7 @@ mod tests {
 
     use crate::core::run_clock::RunClockPlugin;
 
+    use avian3d::prelude::Physics;
     use bevy::ecs::system::RunSystemOnce;
     use bevy::state::app::StatesPlugin;
 
@@ -97,6 +98,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((StatesPlugin, RunClockPlugin));
         app.init_state::<AppState>();
+        app.init_resource::<Time<Physics>>();
 
         let mut time = Time::<Fixed>::default();
         time.advance_by(LOADING);

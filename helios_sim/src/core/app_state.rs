@@ -89,14 +89,26 @@ pub enum SimulationSet {
     /// here yet. Runs first.
     Precomputation,
 
-    /// Simulate raw physical sensors (IMU, GPS, LiDAR, …) and publish
-    /// `SensorReading` batches to the pipeline bus.
+    /// Apply the command the brain decided last step as physical forces
+    /// (vehicle plugin → Avian3D `ConstantForce` / `ConstantTorque`). Physics
+    /// runs right after, carrying the world from the last step's instant to
+    /// this one's.
+    Actuation,
+
+    /// Sync ground truth from Avian3D after the physics step and transform
+    /// propagation, setting `GroundTruthState::at` to the step's instant, and
+    /// publish the truth channels stamped with it.
+    StateSync,
+
+    /// Simulate raw physical sensors (IMU, GPS, LiDAR, …) on the post-step
+    /// world and publish `SensorReading` batches to the pipeline bus, stamped
+    /// with their agent's `GroundTruthState::at`.
     Sensors,
 
     /// The whole-brain tick: `run_pipeline_tick` fires every DAG node (estimator,
     /// mapper, planner, path-follower, controller) in topological order, each
-    /// gated by its own `RateTimer`. This is the entire autonomy pipeline for
-    /// every agent, not just estimation.
+    /// gated by its own `RateTimer`, at `now = GroundTruthState::at`. This is
+    /// the entire autonomy pipeline for every agent, not just estimation.
     BrainTick,
 
     /// Host → pipeline input glue: feeds the pipeline's mission-goal slot
@@ -106,23 +118,16 @@ pub enum SimulationSet {
     BrainInput,
 
     /// Pipeline → host output glue: copies `pipeline.read_actuators()` into
-    /// `ActuatorCommandComponent` for the vehicle plugin to apply.
+    /// `ActuatorCommandComponent` for the next step's `Actuation` to apply.
     BrainOutput,
 
-    /// Apply the actuator command as physical forces (vehicle plugin → Avian3D
-    /// `ExternalForce` / `ExternalTorque`).
-    Actuation,
-
-    /// Sync ground-truth state back from Avian3D after the physics step.
-    StateSync,
-
-    /// Hand the tick's observation batch to every registered sink. After
-    /// `StateSync` and before `Validation`, so a per-tick check reads sinks
-    /// that already hold the tick.
+    /// Hand the tick's observation batch to every registered sink. Before
+    /// `Validation`, so a per-tick check reads sinks that already hold the
+    /// tick.
     Observation,
 
-    /// Post-`StateSync` observation slot: runs last, once ground-truth state and
-    /// the oracle channels are fresh. External harnesses, data logging, and
+    /// The step's last slot: runs once ground truth, the brain's tick and the
+    /// oracle channels all describe the step's instant. External harnesses, data logging, and
     /// per-tick checks read the buses here. Empty within this crate itself —
     /// it exists so downstream consumers have a set that provably runs after
     /// everything else in the tick.

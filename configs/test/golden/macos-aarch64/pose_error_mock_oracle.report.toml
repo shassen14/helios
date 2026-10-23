@@ -18,7 +18,7 @@ window_secs = [
     60.0,
 ]
 status = "passed"
-actual = 0.0000002457562461863554
+actual = 0.0
 
 [assertions.window]
 start = 5.0
@@ -31,9 +31,9 @@ name = "position_rms"
 target = "eval.inline.est.position"
 reduce = "rms"
 covered = true
-value = 0.003114752962870834
+value = 0.0
 unit = "m"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -41,9 +41,9 @@ name = "position_max"
 target = "eval.inline.est.position"
 reduce = "max"
 covered = true
-value = 0.025176764943396157
+value = 0.0
 unit = "m"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -51,9 +51,9 @@ name = "position_final"
 target = "eval.inline.est.position"
 reduce = "final"
 covered = true
-value = 0.0000002457562461863554
+value = 0.0
 unit = "m"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 final_age_secs = 0.0
 
@@ -62,9 +62,9 @@ name = "z_rms"
 target = "eval.inline.est.z"
 reduce = "rms"
 covered = true
-value = 0.0003713506949168208
+value = 0.0
 unit = "m"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -72,9 +72,9 @@ name = "rotation_rms"
 target = "eval.inline.est.rotation"
 reduce = "rms"
 covered = true
-value = 0.00014991475308425141
+value = 0.0000000000000000032897404134600064
 unit = "rad"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -82,9 +82,9 @@ name = "rotation_max"
 target = "eval.inline.est.rotation"
 reduce = "max"
 covered = true
-value = 0.0032626974518538965
+value = 0.00000000000000002776933648978544
 unit = "rad"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -92,9 +92,9 @@ name = "horizontal_rms"
 target = "eval.inline.est.horizontal"
 reduce = "rms"
 covered = true
-value = 0.0030925369328590776
+value = 0.0
 unit = "m"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -102,9 +102,9 @@ name = "vertical_rms"
 target = "eval.inline.est.vertical"
 reduce = "rms"
 covered = true
-value = 0.0003713506949168208
+value = 0.0
 unit = "m"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -112,9 +112,9 @@ name = "along_rms"
 target = "eval.inline.est.along"
 reduce = "rms"
 covered = true
-value = 0.003086267411323398
+value = 0.0
 unit = "m"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -122,9 +122,9 @@ name = "cross_rms"
 target = "eval.inline.est.cross"
 reduce = "rms"
 covered = true
-value = 0.0001970067771666361
+value = 0.0
 unit = "m"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[measures]]
@@ -132,15 +132,15 @@ name = "heading_rms"
 target = "eval.inline.est.heading"
 reduce = "rms"
 covered = true
-value = 0.0001476097026453469
+value = 0.000000000000000014683979899534826
 unit = "rad"
-samples = 24000
+samples = 24001
 max_gap_secs = 0.0025000000000048317
 
 [[evaluations]]
 name = "est"
 kind = "pose_error"
-samples = 24000
+samples = 24001
 uncovered = 0
 
 [evaluations.params]
@@ -185,17 +185,17 @@ after_last = 0
 [[evaluations.metrics]]
 path = "eval.inline.est.position"
 unit = "m"
-samples = 24000
+samples = 24001
 
 [[evaluations.metrics]]
 path = "eval.inline.est.horizontal"
 unit = "m"
-samples = 24000
+samples = 24001
 
 [[evaluations.metrics]]
 path = "eval.inline.est.vertical"
 unit = "m"
-samples = 24000
+samples = 24001
 
 [[evaluations.metrics]]
 path = "eval.inline.est.x"
@@ -208,24 +208,24 @@ unit = "m"
 [[evaluations.metrics]]
 path = "eval.inline.est.z"
 unit = "m"
-samples = 24000
+samples = 24001
 
 [[evaluations.metrics]]
 path = "eval.inline.est.along"
 unit = "m"
-samples = 24000
+samples = 24001
 
 [[evaluations.metrics]]
 path = "eval.inline.est.cross"
 unit = "m"
-samples = 24000
+samples = 24001
 
 [[evaluations.metrics]]
 path = "eval.inline.est.rotation"
 unit = "rad"
-samples = 24000
+samples = 24001
 
 [[evaluations.metrics]]
 path = "eval.inline.est.heading"
 unit = "rad"
-samples = 24000
+samples = 24001

@@ -32,8 +32,9 @@
 //! locally, CI uploads that folder; replacing `configs/test/golden/<platform>/`
 //! with it blesses that platform.
 //!
-//! Beside it, one run file is run twice, once with loading held for extra
-//! updates: how long loading lasts must change no report.
+//! Beside it, one run file is run again with loading held for extra updates,
+//! and again one fixed step per update: neither how long loading lasts nor
+//! how many steps a frame runs may change a report.
 
 #![cfg(feature = "sim")]
 
@@ -58,10 +59,10 @@ const NEGATIVE: &str = "negative";
 /// Set to rewrite the golden files instead of comparing.
 const BLESS: &str = "HELIOS_BLESS";
 
-/// The run file the loading guard runs twice: a minute of closed loop
+/// The run file the time guards run twice each: a minute of closed loop
 /// through the GPS EKF, where a last-bit difference in any stamp reaches the
 /// reported numbers.
-const LOADING_GUARD_RUN: &str = "pose_error_proving_ground.toml";
+const TIME_GUARD_RUN: &str = "pose_error_proving_ground.toml";
 /// Under `OUTPUT`, the loading guard's reports.
 const LOADING: &str = "loading";
 /// `helios_test_sim`'s hidden flag holding loading for extra updates, and the
@@ -69,6 +70,14 @@ const LOADING: &str = "loading";
 /// pose-error number of the guard's run.
 const HOLD_LOADING: &str = "--hold-loading";
 const HELD_UPDATES: &str = "40";
+/// Under `OUTPUT`, the batch guard's reports.
+const BATCH: &str = "batch";
+/// `helios_test_sim`'s hidden flag fixing the steps each update runs, and
+/// the batch the guard runs at, against the derived batch (20 at 400 Hz).
+/// Before truth and sensors read one post-step world, the batch moved truth
+/// by a step on all but its first step.
+const STEPS_PER_UPDATE: &str = "--steps-per-update";
+const SINGLE_STEP: &str = "1";
 
 /// The one report line that differs between identical runs.
 const WALL_TIME_KEY: &str = "wall_duration_secs = ";
@@ -213,7 +222,7 @@ fn every_run_matches_its_golden_file() {
 #[test]
 #[ignore = "runs one run file through the sim twice; needs --features sim"]
 fn loading_time_changes_no_report() {
-    let run = Path::new(LOADING_GUARD_RUN);
+    let run = Path::new(TIME_GUARD_RUN);
     let reports = output().join(LOADING);
     let prompt = execute_into(run, &reports.join("prompt"), &[]);
     let held = execute_into(run, &reports.join("held"), &[HOLD_LOADING, HELD_UPDATES]);
@@ -225,6 +234,32 @@ fn loading_time_changes_no_report() {
         panic!(
             "{}: holding loading for {HELD_UPDATES} updates changed the report, \
              so a stamp still counts loading time: {difference}",
+            run.display()
+        );
+    }
+}
+
+#[test]
+#[ignore = "runs one run file through the sim twice; needs --features sim"]
+fn steps_per_update_change_no_report() {
+    let run = Path::new(TIME_GUARD_RUN);
+    let reports = output().join(BATCH);
+    let batched = execute_into(run, &reports.join("batched"), &[]);
+    let single = execute_into(
+        run,
+        &reports.join("single"),
+        &[STEPS_PER_UPDATE, SINGLE_STEP],
+    );
+
+    assert_eq!(batched.exit, single.exit, "{}: exit differs", run.display());
+    let difference = first_labelled_difference(
+        ("batched", &batched.golden.text),
+        ("single", &single.golden.text),
+    );
+    if let Some(difference) = difference {
+        panic!(
+            "{}: running {SINGLE_STEP} step per update changed the report, \
+             so a value depends on where a frame ends: {difference}",
             run.display()
         );
     }

@@ -61,6 +61,7 @@ mod tests {
     use crate::core::run_clock::RunClockPlugin;
     use crate::viz::interaction::{inspector::model::SubsystemPath, selection::Selected};
 
+    use avian3d::prelude::Physics;
     use std::sync::Arc;
 
     /// Tier 3: the plugin must register `begin → gather_identity → gather_pose →
@@ -76,6 +77,7 @@ mod tests {
         app.insert_state(AppState::Running);
         app.init_resource::<Time>();
         app.init_resource::<Time<Fixed>>();
+        app.init_resource::<Time<Physics>>();
         app.add_plugins((RunClockPlugin, InspectorPlugin));
         app.world_mut().spawn((
             Name::new("robot_3"),

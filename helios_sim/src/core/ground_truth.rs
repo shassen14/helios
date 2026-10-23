@@ -33,10 +33,13 @@ type DatumAxes = Enu;
 /// The axis convention of the world's datum, as the host declares it.
 pub const DATUM_CONVENTION: Convention = DatumAxes::CONVENTION;
 
-/// Mirrors Avian3D physics state into [`GroundTruthState`] each tick:
-/// pose (world ENU), linear/angular velocity (world ENU), and derived
-/// linear acceleration (world ENU, finite-difference). Runs in
-/// [`SimulationSet::StateSync`](crate::core::app_state::SimulationSet::StateSync) after physics has stepped.
+/// Mirrors Avian3D physics state into [`GroundTruthState`] each tick, at
+/// the step's instant: pose (world ENU), linear/angular velocity (world
+/// ENU), and derived accelerations (world ENU, finite-difference, the mean
+/// over the step). Runs in
+/// [`SimulationSet::StateSync`](crate::core::app_state::SimulationSet::StateSync),
+/// after physics has stepped and transforms are propagated, only while
+/// `Running`: physics is paused before, so the spawn state stands.
 pub fn ground_truth_sync_system(
     mut query: Query<(
         &GlobalTransform,
@@ -44,19 +47,19 @@ pub fn ground_truth_sync_system(
         &AngularVelocity,
         &mut GroundTruthState,
     )>,
-    time: Res<Time>,
+    clock: RunClock,
+    fixed: Res<Time<Fixed>>,
 ) {
-    // Guard the very first tick (and any pathological zero-dt frame): the
-    // finite-difference acceleration below divides by dt. Skipping the
-    // whole sync is fine — `last_linear_velocity` simply stays at its
-    // default zero, and the next non-degenerate tick produces a valid
-    // acceleration.
-    let dt = time.delta_secs_f64();
-    if dt < 1e-6 {
+    // Runs only while `Running`, when the clock has started.
+    let Some(now) = clock.now() else {
         return;
-    }
+    };
+    // The step the velocities differ over, never zero.
+    let dt = fixed.timestep().as_secs_f64();
 
     for (transform, lin_vel, ang_vel, mut ground_truth) in &mut query {
+        ground_truth.at = now;
+
         let world: CoreTransform<Flu, Enu> =
             bevy_transform_to_transform_bevy(transform.compute_transform()).from_bevy();
         ground_truth.pose = world.into_inner();
@@ -118,9 +121,10 @@ pub fn truth_body_channels(
 ///   in `base_link`, rotated out of [`GroundTruthState`]'s world axes by the
 ///   same pose.
 ///
-/// Stamped from the [`RunClock`], as is the `now` the host passes into
-/// `pipeline.tick` in the autonomy tick, so `read_fresh(max_age)`
-/// comparisons across systems work without skew.
+/// Stamped with the instant truth describes, [`GroundTruthState::at`], as
+/// are the agent's sensor readings and the `now` the host passes into
+/// `pipeline.tick`, so `read_fresh(max_age)` comparisons across systems work
+/// without skew.
 ///
 /// The body declares both channels, so each write has a slot whether or not
 /// a node reads it. A refused write (an undeclared channel or instance, a
@@ -132,16 +136,10 @@ pub fn publish_truth_channels_system(
         &AutonomyPipelineComponent,
     )>,
     tf_tree: Res<TfTree>,
-    clock: RunClock,
     mut has_logged_first_tick: Local<bool>,
     mut has_warned_no_datum: Local<bool>,
     mut warned_refused: Local<HashSet<(AgentId, ChannelKey)>>,
 ) {
-    // Runs only while `Running`, when the clock has started.
-    let Some(now) = clock.now() else {
-        return;
-    };
-
     // One-shot verification trace: fires exactly once the first time this
     // system actually executes. Used to confirm the schedule wiring is
     // correct (system is in StateSync, run_if(Running) is satisfied) — a
@@ -168,7 +166,8 @@ pub fn publish_truth_channels_system(
     };
 
     for (ground_truth, agent, autonomy_pipeline) in query {
-        let (pose, twist) = truth_messages(ground_truth, &agent.0, datum, now);
+        let now = ground_truth.at;
+        let (pose, twist) = truth_messages(ground_truth, &agent.0, datum);
 
         // Each key is named once, so the warning names the key written.
         let bus = autonomy_pipeline.0.bus();
@@ -182,15 +181,15 @@ pub fn publish_truth_channels_system(
     }
 }
 
-/// `agent`'s truth at `now` as the two messages the truth channels carry:
-/// `base_link`'s pose in `datum`, and its velocity relative to `datum`
-/// expressed in `base_link`.
+/// `agent`'s truth as the two messages the truth channels carry, stamped
+/// with the instant it describes: `base_link`'s pose in `datum`, and its
+/// velocity relative to `datum` expressed in `base_link`.
 fn truth_messages(
     ground_truth: &GroundTruthState,
     agent: &AgentId,
     datum: &FrameId,
-    now: MonotonicTime,
 ) -> (StampedTransform, StampedTwist<Flu>) {
+    let now = ground_truth.at;
     let base_link = FrameId::base_link(agent.clone());
     let body_to_datum = CoreTransform::<Flu, DatumAxes>::from_isometry(ground_truth.pose);
     let datum_to_body = body_to_datum.inverse();
@@ -256,6 +255,7 @@ mod tests {
         let agent = AgentId::new("car");
         let datum = FrameId::global("datum");
         let ground_truth = GroundTruthState {
+            at: MonotonicTime(1.0),
             pose: Isometry3::from_parts(
                 Translation3::new(3.0, 4.0, 0.0),
                 UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2),
@@ -265,7 +265,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (pose, twist) = truth_messages(&ground_truth, &agent, &datum, MonotonicTime(1.0));
+        let (pose, twist) = truth_messages(&ground_truth, &agent, &datum);
 
         let base_link = FrameId::base_link(agent);
         assert_eq!((&pose.parent, &pose.child), (&datum, &base_link));
@@ -277,6 +277,10 @@ mod tests {
             (Convention::Flu, Convention::Enu)
         );
         assert_eq!(pose.transform.isometry(), ground_truth.pose);
+        assert_eq!(
+            (pose.stamp, twist.stamp),
+            (ground_truth.at, ground_truth.at)
+        );
 
         assert_eq!(
             (&twist.moving, &twist.relative_to, &twist.expressed_in),

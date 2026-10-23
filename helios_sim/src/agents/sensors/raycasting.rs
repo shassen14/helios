@@ -15,6 +15,7 @@ use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::quantities::FreeVector;
 
 use avian3d::prelude::{ColliderOf, SpatialQuery, SpatialQueryFilter};
+use std::collections::HashSet;
 use std::time::Duration;
 
 // =========================================================================
@@ -162,14 +163,24 @@ fn spawn_raycasting_sensors(
 // =========================================================================
 
 /// Casts each sensor's rays when its timer fires and publishes the scan.
-/// Nothing scans before the run starts, since a scan is stamped with
-/// [`RunClock`]'s instant: each sensor's timer starts with the run.
+///
+/// A scan is stamped with the instant its agent's truth describes,
+/// [`GroundTruthState::at`]: this step's, since the rays are cast into the
+/// world physics has just moved. Nothing scans before the run starts, when
+/// there is no run time: each sensor's timer starts with the run. A sensor
+/// whose agent has no truth can never be stamped, a scene-wiring bug, so it
+/// is skipped with a warning, once per sensor.
+// Bevy systems declare their dependencies as parameters, so the count exceeds
+// clippy's default threshold; that's idiomatic here, not a smell.
+#[allow(clippy::too_many_arguments)]
 fn raycasting_sensor_system(
     time: Res<Time>,
     clock: RunClock,
     spatial_query: SpatialQuery,
     collider_bodies: Query<&ColliderOf>,
+    truth_query: Query<&GroundTruthState>,
     mut sensor_query: Query<(
+        Entity,
         &mut RaycastingSensor,
         &mut SensorRng,
         &mut LastCapturePose,
@@ -178,27 +189,47 @@ fn raycasting_sensor_system(
         &ChildOf,
     )>,
     mut publisher: SensorPublisher,
+    mut warned_missing_truth: Local<HashSet<Entity>>,
 ) {
     let _span = tracing::trace_span!("sim.sensor.publish", sensor = "raycasting").entered();
-    let Some(capture_time) = clock.now() else {
+    if clock.now().is_none() {
         return;
-    };
+    }
     let dt = time.delta();
 
-    for (mut sensor, mut rng, mut capture, sensor_publish_channel, sensor_transform, parent) in
-        &mut sensor_query
+    for (
+        entity,
+        mut sensor,
+        mut rng,
+        mut capture,
+        sensor_publish_channel,
+        sensor_transform,
+        parent,
+    ) in &mut sensor_query
     {
         sensor.timer.tick(dt);
         if !sensor.timer.just_finished() {
             continue;
         }
 
+        let agent = parent.parent();
+        let Ok(truth) = truth_query.get(agent) else {
+            if warned_missing_truth.insert(entity) {
+                warn!(
+                    "Sensor '{}' skipped: its agent {agent:?} has no GroundTruthState, \
+                     so the sensor will never publish.",
+                    sensor_publish_channel.mount()
+                );
+            }
+            continue;
+        };
+        let capture_time = truth.at;
+
         let local_rays = sensor.model.generate_rays(&mut rng.0);
         let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
         let sensor_origin = sensor_transform.translation();
         let sensor_rotation = sensor_transform.rotation();
         let max_toi = sensor.model.get_max_range();
-        let agent = parent.parent();
 
         // Checked on the first scan, not at spawn: only now has the sensor's
         // world transform been propagated from its mount.
@@ -279,7 +310,7 @@ mod tests {
 
     use crate::core::run_clock::start_run_clock_now;
 
-    use helios_core::prelude::{AgentId, TfProvider};
+    use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
     use helios_core::spatial::transforms::Convention;
     use helios_core::spatial::FrameId;
     use helios_runtime::port::PortDescriptorBuilder;
@@ -308,6 +339,8 @@ mod tests {
     /// A zero sweep period: every beam shares the reading's instant.
     const FLASH_SWEEP_PERIOD: f64 = 0.0;
     const SEED: u64 = 7;
+    /// The instant the agent's truth describes, apart from the clock's.
+    const TRUTH_AT: MonotonicTime = MonotonicTime(7.5);
 
     type FieldBatch = Vec<SensorReading<RangeField<Flu>>>;
 
@@ -392,7 +425,15 @@ mod tests {
             })
             .build()
             .expect("a single-node pipeline builds");
-        let agent = world.spawn(AutonomyPipelineComponent(pipeline)).id();
+        let agent = world
+            .spawn((
+                AutonomyPipelineComponent(pipeline),
+                GroundTruthState {
+                    at: TRUTH_AT,
+                    ..Default::default()
+                },
+            ))
+            .id();
 
         let sensor = world
             .spawn((
@@ -442,9 +483,10 @@ mod tests {
     }
 
     /// The header names the channel's mount, the installation's frame; the
-    /// occupancy grid looks the sensor up in the tf tree by it.
+    /// occupancy grid looks the sensor up in the tf tree by it. The stamp is
+    /// the instant the agent's truth describes.
     #[test]
-    fn a_scan_is_stamped_with_its_channels_mount() {
+    fn a_scan_is_stamped_with_its_channels_mount_and_its_truths_instant() {
         let (mut world, _) = world_with_lidar(GlobalTransform::IDENTITY, period());
 
         world
@@ -454,6 +496,7 @@ mod tests {
         let batch = agent_bus_field(&mut world).expect("the scan was published");
         let reading = batch.value.last().expect("one reading in the batch");
         assert_eq!(reading.sensor, mount());
+        assert_eq!(reading.timestamp, TRUTH_AT);
     }
 
     /// The component holds the *newest* capture: a second scan replaces the
@@ -472,6 +515,9 @@ mod tests {
         let moved_pose = GlobalTransform::from_translation(Vec3::new(1.0, 0.0, 4.0));
         world.resource_mut::<Time>().advance_by(period());
         world.resource_mut::<Time<Fixed>>().advance_by(period());
+        let agent = world.get::<ChildOf>(sensor).unwrap().parent();
+        world.get_mut::<GroundTruthState>(agent).unwrap().at =
+            MonotonicTime(TRUTH_AT.0 + period().as_secs_f64());
         *world
             .get_mut::<GlobalTransform>(sensor)
             .expect("the sensor has a transform") = moved_pose;

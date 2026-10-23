@@ -1,7 +1,10 @@
-use bevy::prelude::*;
+use crate::core::run_clock::RunClock;
+
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::interchange::perception::semantic_class::SemanticClass;
-use helios_core::prelude::PlannerGoal;
+use helios_core::prelude::{MonotonicTime, PlannerGoal};
+
+use bevy::prelude::*;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
 
@@ -29,10 +32,19 @@ pub enum ControllerStateSource {
 /// the ground-truth (oracle) publisher.
 #[derive(Component, Clone, Debug, Serialize)]
 pub struct GroundTruthState {
+    /// The run instant this state describes. Truth, sensors and the brain's
+    /// tick are stamped with it, so the instant travels with the data rather
+    /// than with which set read the clock.
+    pub at: MonotonicTime,
     pub pose: Isometry3<f64>,
     pub linear_velocity: Vector3<f64>,
     pub angular_velocity: Vector3<f64>,
+    /// The mean over the step that ended at `at`, a backward difference of
+    /// velocity, so it lags `at` by half a step. Under explicit force
+    /// integration the acceleration at `at` isn't known until the next
+    /// step's forces are.
     pub linear_acceleration: Vector3<f64>,
+    /// The mean over the step that ended at `at`, as `linear_acceleration`.
     pub angular_acceleration: Vector3<f64>,
     pub last_linear_velocity: Vector3<f64>,
     pub last_angular_velocity: Vector3<f64>,
@@ -41,6 +53,7 @@ pub struct GroundTruthState {
 impl Default for GroundTruthState {
     fn default() -> Self {
         Self {
+            at: RunClock::START,
             pose: Isometry3::identity(),
             linear_velocity: Vector3::zeros(),
             angular_velocity: Vector3::zeros(),

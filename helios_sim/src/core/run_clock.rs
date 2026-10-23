@@ -9,26 +9,37 @@
 //!
 //! Reading Bevy's elapsed time anywhere else in the crate is refused by
 //! clippy (`disallowed-methods` in the workspace `clippy.toml`).
+//!
+//! The run's start is also when physics starts. Before it, bodies spawned
+//! while the scene builds would fall for however many fixed steps the frame
+//! that spawns them runs, so the state a run starts from would depend on the
+//! frame. Physics is paused from startup and unpaused with the clock, so
+//! `t = 0` is the spawn state.
 
 use crate::prelude::*;
 
+use avian3d::prelude::{Physics, PhysicsTime};
 use bevy::ecs::system::SystemParam;
 use std::time::Duration;
 
-/// Starts the run's clock as the app enters [`AppState::Running`].
+/// Starts the run's clock, and physics with it, as the app enters
+/// [`AppState::Running`].
 pub struct RunClockPlugin;
 
 impl Plugin for RunClockPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Running), start_run_clock);
+        app.add_systems(Startup, pause_physics);
+        app.add_systems(OnEnter(AppState::Running), (start_run_clock, start_physics));
     }
 }
 
 /// The run's simulated time.
 ///
 /// In `FixedUpdate` it is the step being run: the run's `k`-th step reads
-/// exactly `k` timesteps. Elsewhere it is the last step the frame ran.
-/// Before the run starts there is no run time, so both reads give `None`.
+/// exactly `k` timesteps, and physics has already moved the world to it.
+/// Elsewhere it is the last step the frame ran, which is also the brain's
+/// newest tick. Before the run starts there is no run time, so both reads
+/// give `None`.
 #[derive(SystemParam)]
 pub struct RunClock<'w> {
     start: Option<Res<'w, RunStart>>,
@@ -68,6 +79,16 @@ fn start_run_clock(mut commands: Commands, fixed: Res<Time<Fixed>>) {
     commands.insert_resource(RunStart(start));
 }
 
+/// Runs at startup, before any fixed step, whatever order plugins were added
+/// in.
+fn pause_physics(mut physics: ResMut<Time<Physics>>) {
+    physics.pause();
+}
+
+fn start_physics(mut physics: ResMut<Time<Physics>>) {
+    physics.unpause();
+}
+
 /// Starts the run's clock at the fixed clock's current instant, for a test
 /// world that has no state machine.
 #[cfg(test)]
@@ -98,6 +119,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((StatesPlugin, RunClockPlugin));
         app.init_state::<AppState>();
+        app.init_resource::<Time<Physics>>();
 
         let mut fixed = Time::<Fixed>::from_duration(STEP);
         fixed.advance_by(origin);

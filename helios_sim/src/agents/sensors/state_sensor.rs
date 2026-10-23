@@ -96,8 +96,10 @@ pub trait StateSensor: Component<Mutability = Mutable> {
 /// under its installation's frame entity when one installation carries several
 /// sensors (an IMU).
 ///
-/// Nothing samples before the run starts, since a reading is stamped with
-/// [`RunClock`]'s instant: each sensor's timer starts with the run.
+/// A reading is stamped with the instant its agent's truth describes,
+/// [`GroundTruthState::at`]: this step's, since the sensor samples the world
+/// physics has just moved. Nothing samples before the run starts, when there
+/// is no run time: each sensor's timer starts with the run.
 ///
 /// Noise is drawn from the entity's own [`SensorRng`], so a sensor's readings
 /// depend only on its own name, its own tick count, and the run's master seed.
@@ -127,9 +129,9 @@ pub fn publish_state_sensor<S: StateSensor>(
     mut publisher: SensorPublisher,
     mut warned_missing_truth: Local<HashSet<Entity>>,
 ) {
-    let Some(now) = clock.now() else {
+    if clock.now().is_none() {
         return;
-    };
+    }
     let dt = time.delta();
 
     for (entity, mut sensor, mut timer, mut rng, transform, channel) in &mut sensor_query {
@@ -162,7 +164,7 @@ pub fn publish_state_sensor<S: StateSensor>(
 
         let reading = SensorReading {
             sensor: channel.mount().clone(),
-            timestamp: now,
+            timestamp: truth.at,
             data: payload,
         };
 
@@ -178,7 +180,7 @@ mod tests {
     use crate::prelude::AutonomyPipelineComponent;
 
     use helios_core::interchange::measurement::sensor::GpsPosition;
-    use helios_core::prelude::{AgentId, TfProvider};
+    use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
     use helios_core::spatial::{transforms::Convention, FrameId};
     use helios_runtime::port::{ChannelKey, PortBus, PortDescriptorBuilder};
     use helios_runtime::{
@@ -387,11 +389,14 @@ mod tests {
 
     /// Nothing downstream of the estimator reads a state sensor's header, so
     /// a wrong one would pass every run: it must name the channel's mount,
-    /// the installation's frame, never the channel.
+    /// the installation's frame, never the channel. Its stamp is the instant
+    /// the truth it sampled describes, which here is apart from the clock's.
     #[test]
-    fn a_reading_is_stamped_with_its_channels_mount() {
+    fn a_reading_is_stamped_with_its_channels_mount_and_its_truths_instant() {
+        const TRUTH_AT: MonotonicTime = MonotonicTime(7.5);
         let (mut world, sensor) = world_with_sensor(true);
         let agent = world.get::<ChildOf>(sensor).unwrap().parent();
+        world.get_mut::<GroundTruthState>(agent).unwrap().at = TRUTH_AT;
         let channel = world.get::<SensorPublishChannel>(sensor).unwrap().clone();
         let consumer = FakeGpsConsumer {
             descriptor: PortDescriptorBuilder::algorithm()
@@ -422,6 +427,7 @@ mod tests {
             .expect("the reading was published");
         let reading = batch.value.last().expect("one reading in the batch");
         assert_eq!(reading.sensor, test_mount());
+        assert_eq!(reading.timestamp, TRUTH_AT);
     }
 
     // ==================================================================

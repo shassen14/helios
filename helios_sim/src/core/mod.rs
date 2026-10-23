@@ -17,6 +17,7 @@ pub mod components;
 pub mod events;
 pub mod ground_truth;
 pub mod host;
+pub mod physics_step;
 pub mod prng;
 pub mod run_clock;
 pub mod run_duration;

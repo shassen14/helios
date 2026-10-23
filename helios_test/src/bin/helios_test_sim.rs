@@ -13,6 +13,7 @@
 //! pass/fail into the exit code (`run()` empties the App, so the world can't be
 //! read afterward).
 
+use helios_sim::core::simulation_setup::StepsPerUpdate;
 use helios_sim::prelude::*;
 use helios_sim::world::LoadingHold;
 use helios_test::{
@@ -69,6 +70,12 @@ struct SimCli {
     /// computes, and this varies it on purpose.
     #[arg(long, hide = true)]
     pub hold_loading: Option<u32>,
+
+    /// Run this many fixed steps per update instead of the derived batch.
+    /// A test hook: how many steps a frame runs must change nothing a run
+    /// computes, and this varies it on purpose.
+    #[arg(long, hide = true)]
+    pub steps_per_update: Option<u32>,
 }
 
 fn main() {
@@ -149,6 +156,9 @@ fn main() {
         app.insert_resource(RunSeed::new(seed));
         if let Some(updates) = args.hold_loading {
             app.insert_resource(LoadingHold(updates));
+        }
+        if let Some(steps) = args.steps_per_update {
+            app.insert_resource(StepsPerUpdate(steps));
         }
 
         // Fresh runner per run: `Runner::new` re-validates and allocates fresh
