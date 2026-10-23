@@ -17,6 +17,7 @@
 use crate::port::{ChannelKey, DeclaredInstances, InstanceKey, Keyed, Provenance};
 
 use helios_core::control::actuation_model::ActuationModel;
+use helios_core::spatial::id::FrameScope;
 use helios_core::spatial::{transforms::Convention, FrameId};
 
 use std::{any::TypeId, collections::HashMap};
@@ -68,6 +69,12 @@ pub struct BodyCapabilities {
 /// as a battery voltage or the oracle's pose (whose value names its own
 /// frame), has none.
 ///
+/// The reference is the world frame the channel's values are expressed in,
+/// or relative to, such as a GPS fix in the datum's axes or a magnetometer's
+/// field measured from the datum's north. The host fills it from its own
+/// world frames, never a fit, and the build refuses a reference that isn't
+/// one of them. A value about the body alone, such as an IMU's, has none.
+///
 /// A keyed channel also states the instances the unit writes, such as the
 /// edges a truth rig publishes the transforms of. The build refuses a keyed
 /// body channel that states none, and an instance another writer also
@@ -88,6 +95,7 @@ pub struct BodyChannel {
     unit: String,
     provenance: Provenance,
     mount: Option<FrameId>,
+    reference: Option<FrameId>,
     instances: DeclaredInstances,
     rate_hz: Option<f64>,
 }
@@ -103,6 +111,7 @@ impl BodyChannel {
             unit: unit.into(),
             provenance,
             mount: None,
+            reference: None,
             instances: DeclaredInstances::default(),
             rate_hz: None,
         }
@@ -112,6 +121,23 @@ impl BodyChannel {
     /// refuses a mount that is not one of this agent's frames off its spine.
     pub fn with_mount(mut self, mount: FrameId) -> Self {
         self.mount = Some(mount);
+        self
+    }
+
+    /// States the world frame the channel's values are expressed in or
+    /// relative to.
+    ///
+    /// # Panics
+    ///
+    /// If `reference` belongs to an agent: a reference is a frame no agent
+    /// owns, so this is a host bug, caught when the host describes its body.
+    pub fn with_reference(mut self, reference: FrameId) -> Self {
+        assert!(
+            matches!(reference.scope(), FrameScope::Global),
+            "a reference must be a global frame, got {reference} for {}",
+            self.key
+        );
+        self.reference = Some(reference);
         self
     }
 
@@ -168,6 +194,12 @@ impl BodyChannel {
 
     pub fn mount(&self) -> Option<&FrameId> {
         self.mount.as_ref()
+    }
+
+    /// The world frame the channel's values are expressed in or relative
+    /// to. `None` for a value about the body alone.
+    pub fn reference(&self) -> Option<&FrameId> {
+        self.reference.as_ref()
     }
 
     /// The instances of its keyed channel the unit writes. Empty for a
@@ -229,6 +261,25 @@ mod tests {
         let channel =
             BodyChannel::new(edges(), "rig", Provenance::Exact).with_instances::<Edge>(["base"]);
         assert_eq!(channel.instances(), [InstanceKey::of::<Edge>(&"base")]);
+    }
+
+    #[test]
+    fn a_channel_keeps_its_reference() {
+        let datum = FrameId::global("datum");
+        let channel =
+            BodyChannel::new(edges(), "gps", Provenance::Simulated).with_reference(datum.clone());
+        assert_eq!(channel.reference(), Some(&datum));
+        assert_eq!(
+            BodyChannel::new(edges(), "imu", Provenance::Simulated).reference(),
+            None
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "global frame")]
+    fn a_reference_on_an_agent_frame_panics() {
+        let odom = FrameId::odom(helios_core::prelude::AgentId::new("car"));
+        let _ = BodyChannel::new(edges(), "gps", Provenance::Simulated).with_reference(odom);
     }
 
     #[test]

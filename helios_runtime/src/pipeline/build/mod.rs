@@ -29,6 +29,7 @@ mod kinds;
 mod mounts;
 mod ordering;
 mod owners;
+mod references;
 mod wiring;
 
 pub use builder::PipelineBuilder;

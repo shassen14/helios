@@ -144,7 +144,8 @@ impl PipelineBuilder {
     /// collected:
     /// 1. Wiring. Node names are unique and one level each, the body's unit
     ///    names are one level each, every mount the body states is a frame on
-    ///    this agent's body other than `base_link`, every frame has one owner
+    ///    this agent's body other than `base_link`, every reference the body
+    ///    states is a host world frame, every frame has one owner
     ///    (the body, or the one node that defines it), every output mounted at an input's
     ///    mount names a channel its node reads in the same tick, channel names
     ///    are well formed and each names one channel, each node's watchable
@@ -162,6 +163,8 @@ impl PipelineBuilder {
     ///      mount off its own body, at `base_link`, or with a malformed leaf.
     ///    - [`PipelineBuildError::FrameWithoutConvention`] — the body mounts a
     ///      channel at a frame it lists no convention for.
+    ///    - [`PipelineBuildError::ReferenceNotWorldFrame`] — the body states
+    ///      a reference that is not one of the host's world frames.
     ///    - [`PipelineBuildError::FrameDefinedTwice`] — two nodes define one
     ///      frame, a node defines `base_link`, a frame the body mounts a
     ///      channel at or lists, or a host world frame, or the host and the

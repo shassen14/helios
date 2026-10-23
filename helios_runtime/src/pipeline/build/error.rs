@@ -95,6 +95,14 @@ pub enum PipelineBuildError {
         mount: FrameId,
         refusal: MountRefusal,
     },
+    /// A body channel states a reference that is not one of the host's
+    /// world frames. A reference is a world frame, and only the host knows
+    /// where its world is. Reported once per channel.
+    ReferenceNotWorldFrame {
+        unit: String,
+        channel: ChannelKey,
+        reference: FrameId,
+    },
     /// A frame has two owners: two nodes define it, a node defines one the
     /// body owns (its `base_link`, a frame it mounts a channel at, or another
     /// of its frames) or the host owns (a world frame), or the host and the
@@ -318,6 +326,18 @@ impl std::fmt::Display for PipelineBuildError {
                 write!(
                     f,
                     "unit \"{unit}\" states channel {channel} is mounted at {mount}, {refusal}"
+                )
+            }
+            PipelineBuildError::ReferenceNotWorldFrame {
+                unit,
+                channel,
+                reference,
+            } => {
+                write!(
+                    f,
+                    "unit \"{unit}\" states channel {channel} is expressed relative to \
+                     {reference}, which is not one of the host's world frames; the host \
+                     declares each frame its values name"
                 )
             }
             PipelineBuildError::FrameDefinedTwice {

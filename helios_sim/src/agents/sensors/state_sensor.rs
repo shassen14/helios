@@ -224,6 +224,10 @@ mod tests {
     const TEST_AGENT: &str = "test_agent";
     const TEST_CHANNEL: &str = "test.channel";
     const TEST_UNIT: &str = "test_unit";
+    /// These tests publish and stamp readings, which a reference doesn't
+    /// change, so their channels state none and their pipelines declare no
+    /// world frame.
+    const UNREFERENCED: bool = false;
 
     /// The test sensor's mount: its installation's frame, named apart from
     /// its channel so a header stamped from the wrong one shows.
@@ -251,6 +255,7 @@ mod tests {
                     TEST_UNIT,
                     test_mount(),
                     RATE_HZ,
+                    UNREFERENCED,
                 ),
                 ChildOf(agent),
             ))
@@ -383,7 +388,7 @@ mod tests {
         let pipeline = PipelineBuilder::new(AgentId::new(TEST_AGENT))
             .add_node(Box::new(consumer))
             .with_body_capabilities(BodyCapabilities {
-                publishes: vec![channel.description().clone()],
+                publishes: vec![channel.description(&FrameId::global("datum"))],
                 frames: HashMap::from([(test_mount(), Convention::Flu)]),
                 ..Default::default()
             })
@@ -465,6 +470,7 @@ mod tests {
                         "test_unit",
                         FrameId::agent(AgentId::new("car_1"), *name),
                         RATE_HZ,
+                        UNREFERENCED,
                     ),
                     ChildOf(agent),
                 ))

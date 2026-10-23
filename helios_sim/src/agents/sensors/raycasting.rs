@@ -136,6 +136,7 @@ fn spawn_raycasting_sensors(
                         sensor_name,
                         frame.id.clone(),
                         lidar_config.get_rate(),
+                        LidarModel::WORLD_REFERENCED,
                     ),
                     RaycastingSensor {
                         timer: Timer::new(
@@ -361,7 +362,13 @@ mod tests {
     /// clock advanced by `advance`. Returns the world and the sensor entity.
     fn world_with_lidar(sensor_pose: GlobalTransform, advance: Duration) -> (World, Entity) {
         let mut world = World::new();
-        let channel = SensorPublishChannel::new::<RangeField<Flu>>(CHANNEL, UNIT, mount(), RATE_HZ);
+        let channel = SensorPublishChannel::new::<RangeField<Flu>>(
+            CHANNEL,
+            UNIT,
+            mount(),
+            RATE_HZ,
+            LidarModel::WORLD_REFERENCED,
+        );
 
         let mut time = Time::<()>::default();
         time.advance_by(advance);
@@ -371,7 +378,7 @@ mod tests {
         let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(Box::new(FakeScanConsumer::new()))
             .with_body_capabilities(BodyCapabilities {
-                publishes: vec![channel.description().clone()],
+                publishes: vec![channel.description(&FrameId::global("datum"))],
                 frames: HashMap::from([(mount(), Convention::Flu)]),
                 ..Default::default()
             })

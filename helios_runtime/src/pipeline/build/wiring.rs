@@ -1,5 +1,6 @@
 //! Wiring checks: node names are unique levels, the body's unit names are
-//! levels, the body's mounts are its own frames, every frame has one owner,
+//! levels, the body's mounts are its own frames, its references are the
+//! host's world frames, every frame has one owner,
 //! output mount rules name inputs, each node reads and writes only the channel
 //! kinds its class may, channel names are well formed and each names one
 //! channel, each node's watchable leaves are well formed, distinct and
@@ -12,6 +13,7 @@ use super::instances::check_instances;
 use super::kinds::check_kind_access;
 use super::mounts::{check_body_mounts, check_mount_rules};
 use super::owners::{check_frame_owners, FrameConventions};
+use super::references::check_references;
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
@@ -56,6 +58,7 @@ pub(super) fn check_wiring(
     check_node_names(nodes, &mut errors);
     check_unit_names(descriptions, &mut errors);
     check_body_mounts(agent, descriptions, body_frames, &mut errors);
+    check_references(descriptions, host_frames, &mut errors);
     let conventions = check_frame_owners(
         agent,
         nodes,

@@ -58,6 +58,10 @@ impl LidarModel {
     /// frame its installation names.
     pub const FRAME_CONVENTION: Convention = Flu::CONVENTION;
 
+    /// Whether this model's output is expressed in, or relative to, the world
+    /// frame its truth is given in. Ranges are measured from the sensor.
+    pub const WORLD_REFERENCED: bool = false;
+
     /// Builds the model around a beam `geometry`, or returns `None` for a
     /// negative or non-finite `sweep_period`, or range limits that are
     /// negative, non-finite, or leave no span (`range_min >= range_max`).

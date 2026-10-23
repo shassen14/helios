@@ -25,6 +25,11 @@ impl MagnetometerModel {
     /// frame its installation names.
     pub const FRAME_CONVENTION: Convention = Flu::CONVENTION;
 
+    /// Whether this model's output is expressed in, or relative to, the world
+    /// frame its truth is given in. The field is the world's, its north that
+    /// frame's.
+    pub const WORLD_REFERENCED: bool = true;
+
     /// Builds the model from the local geomagnetic reference. `declination` is
     /// the angle from true north toward east and `inclination` the downward dip
     /// below horizontal, both in radians; `magnitude` is the field strength.

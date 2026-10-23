@@ -15,6 +15,10 @@
 //! [`MountRule`](crate::port::MountRule), which the builder resolves once the
 //! graph is ordered. An outside input has none.
 //!
+//! A body channel also carries its reference, the world frame its values
+//! are expressed in or relative to, as the host stated it. A node output and
+//! an outside input have none.
+//!
 //! A writer of a keyed channel also states the instances it writes: the body
 //! with the channel, a node on its output port. Several writers may share a keyed channel, each
 //! described with its own instances. An instance whose values are expressed
@@ -39,6 +43,7 @@ pub struct ChannelDescription {
     key: ChannelKey,
     writer: Writer,
     mount: Option<FrameId>,
+    reference: Option<FrameId>,
     instances: DeclaredInstances,
     rate_hz: Option<f64>,
 }
@@ -53,6 +58,7 @@ impl ChannelDescription {
                 provenance: channel.provenance(),
             },
             mount: channel.mount().cloned(),
+            reference: channel.reference().cloned(),
             instances: channel.declared_instances().clone(),
             rate_hz: channel.rate_hz(),
         }
@@ -65,6 +71,7 @@ impl ChannelDescription {
             key,
             writer: Writer::Outside,
             mount: None,
+            reference: None,
             instances: DeclaredInstances::default(),
             rate_hz: None,
         }
@@ -78,6 +85,7 @@ impl ChannelDescription {
             key,
             writer: Writer::Node { node: node.into() },
             mount: None,
+            reference: None,
             instances: DeclaredInstances::default(),
             rate_hz: None,
         }
@@ -118,6 +126,13 @@ impl ChannelDescription {
     /// its writer states one.
     pub fn mount(&self) -> Option<&FrameId> {
         self.mount.as_ref()
+    }
+
+    /// The world frame the channel's values are expressed in or relative
+    /// to, as the body's host stated it. `None` for a node output, an outside
+    /// input, and a body channel about the body alone.
+    pub fn reference(&self) -> Option<&FrameId> {
+        self.reference.as_ref()
     }
 
     /// The instances of its keyed channel this writer writes. Empty for a
@@ -236,6 +251,21 @@ mod tests {
         assert_eq!(ChannelDescription::body(&unmounted).mount(), None);
         assert_eq!(ChannelDescription::outside(key()).mount(), None);
         assert_eq!(ChannelDescription::node(key(), "ekf").mount(), None);
+    }
+
+    /// A body channel's description carries the reference the host stated;
+    /// an outside input and a node output have none.
+    #[test]
+    fn a_body_channel_keeps_its_reference() {
+        let datum = FrameId::global("datum");
+        let gps =
+            BodyChannel::new(key(), "gps", Provenance::Simulated).with_reference(datum.clone());
+        assert_eq!(ChannelDescription::body(&gps).reference(), Some(&datum));
+
+        let imu = BodyChannel::new(key(), "imu", Provenance::Simulated);
+        assert_eq!(ChannelDescription::body(&imu).reference(), None);
+        assert_eq!(ChannelDescription::outside(key()).reference(), None);
+        assert_eq!(ChannelDescription::node(key(), "ekf").reference(), None);
     }
 
     /// A body channel's description carries the rate the host stated; an

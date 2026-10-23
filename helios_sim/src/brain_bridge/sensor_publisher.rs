@@ -72,7 +72,7 @@ impl SensorPublisher<'_, '_> {
             producer: HOST_PRODUCER_ID,
         };
 
-        let channel_key = channel.description().key();
+        let channel_key = channel.key();
         let write_result = pipeline
             .0
             .bus()
@@ -101,6 +101,7 @@ mod tests {
     use bevy::ecs::system::SystemState;
     use helios_core::interchange::measurement::sensor::GpsPosition;
     use helios_core::prelude::AgentId;
+    use helios_core::sensors::gps::GpsModel;
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::FrameId;
     use nalgebra::Vector3;
@@ -123,6 +124,7 @@ mod tests {
             "gps",
             FrameId::agent(AgentId::new("test_agent"), "gps.primary"),
             GPS_RATE_HZ,
+            GpsModel::WORLD_REFERENCED,
         )
     }
 

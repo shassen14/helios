@@ -67,32 +67,40 @@ pub struct PipelineBuildFailed {
 
 /// The channel a sensor publishes on, described as the body publishes it:
 /// typed by the sensor's payload, from the installation the sensor belongs to,
-/// simulated, and mounted at the sensor's frame.
+/// simulated, mounted at the sensor's frame, and, when its forward model says
+/// its values are world-referenced, expressed relative to the world's datum.
 ///
 /// Attached to every sensor entity at spawn, where the payload type, the
-/// installation, the channel name from the fit and the sensor's frame are all
-/// known. Read twice:
+/// installation, the channel name from the fit, the sensor's frame and its
+/// forward model are all known. Read twice:
 /// `spawn_autonomy_pipeline` collects each agent's into the body it builds the
-/// pipeline against, and [`SensorPublisher`](super::SensorPublisher) writes to
-/// its key. One description serves both, so the channel the build checked is
-/// the channel written.
+/// pipeline against, with the datum it declares as its world frame, and
+/// [`SensorPublisher`](super::SensorPublisher) writes to its key. One
+/// description serves both, so the channel the build checked is the channel
+/// written.
 #[derive(Component, Clone)]
 pub struct SensorPublishChannel {
     description: BodyChannel,
     /// The description's mount, held unwrapped: every measurement channel has one,
     /// and each reading's header names it.
     mount: FrameId,
+    /// Whether the sensor's values are expressed in or relative to the world,
+    /// as its forward model declares. The datum is the host's, so it joins
+    /// the description where the host declares it.
+    world_referenced: bool,
 }
 
 impl SensorPublishChannel {
     /// Channel `name` of installation `unit`, carrying batches of `P` readings
     /// as [`SensorPublisher`](super::SensorPublisher) writes them, measured in
     /// `mount`, the installation's frame, at its device's `rate_hz`.
+    /// `world_referenced` is its forward model's `WORLD_REFERENCED`.
     pub fn new<P: Send + Sync + 'static>(
         name: &str,
         unit: &str,
         mount: FrameId,
         rate_hz: f64,
+        world_referenced: bool,
     ) -> Self {
         Self {
             description: BodyChannel::new(
@@ -103,11 +111,24 @@ impl SensorPublishChannel {
             .with_mount(mount.clone())
             .with_rate(rate_hz),
             mount,
+            world_referenced,
         }
     }
 
-    pub fn description(&self) -> &BodyChannel {
-        &self.description
+    /// The channel as the body declares it in a world whose datum is
+    /// `datum`: expressed relative to it when the sensor's values are
+    /// world-referenced.
+    pub fn description(&self, datum: &FrameId) -> BodyChannel {
+        if self.world_referenced {
+            self.description.clone().with_reference(datum.clone())
+        } else {
+            self.description.clone()
+        }
+    }
+
+    /// The key the sensor's readings are written to.
+    pub fn key(&self) -> &ChannelKey {
+        self.description.key()
     }
 
     /// The frame the channel's readings are measured in.

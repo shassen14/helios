@@ -74,11 +74,11 @@ pub fn spawn_autonomy_pipeline(
         let agent = agent_id.0.clone();
 
         // Every channel this agent's sensors publish, as their spawners
-        // described them.
+        // described them, each world-referenced one relative to the datum.
         let sensor_channels: Vec<BodyChannel> = children
             .iter_descendants(agent_entity)
             .filter_map(|descendant| channel_query.get(descendant).ok())
-            .map(|channel| channel.description().clone())
+            .map(|channel| channel.description(datum))
             .collect();
 
         // Every frame of the body, as its spawners tracked it: `base_link` on
@@ -319,6 +319,7 @@ mod tests {
     use helios_core::control::actuators::{ActuatorId, SetpointKind};
     use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
     use helios_core::prelude::{AgentId, FrameId};
+    use helios_core::sensors::{gps::GpsModel, magnetometer::MagnetometerModel};
     use helios_runtime::channels::control::intent;
     use helios_runtime::port::ChannelKey;
 
@@ -480,14 +481,16 @@ mod tests {
             "gps",
             FrameId::agent(agent.clone(), "gps"),
             GPS_RATE_HZ,
+            GpsModel::WORLD_REFERENCED,
         );
         let mag = SensorPublishChannel::new::<MagneticField>(
             "mag",
             "mag",
             FrameId::agent(agent.clone(), "mag"),
             MAG_RATE_HZ,
+            MagnetometerModel::WORLD_REFERENCED,
         );
-        let sensors = vec![gps.description().clone(), mag.description().clone()];
+        let sensors = vec![gps.description(&datum()), mag.description(&datum())];
 
         let caps = build_host_body_capabilities(
             &agent,
@@ -503,5 +506,29 @@ mod tests {
             .chain(sensors)
             .collect();
         assert_eq!(caps.publishes, expected);
+    }
+
+    /// A sensor whose forward model is world-referenced is described relative
+    /// to the datum the host declares; one about the body alone names none.
+    #[test]
+    fn a_world_referenced_sensor_is_described_relative_to_the_datum() {
+        let agent = AgentId::new("car");
+        let gps = SensorPublishChannel::new::<GpsPosition>(
+            "gps",
+            "gps",
+            FrameId::agent(agent.clone(), "gps"),
+            GPS_RATE_HZ,
+            true,
+        );
+        let imu = SensorPublishChannel::new::<GpsPosition>(
+            "imu",
+            "imu",
+            FrameId::agent(agent, "imu"),
+            GPS_RATE_HZ,
+            false,
+        );
+
+        assert_eq!(gps.description(&datum()).reference(), Some(&datum()));
+        assert_eq!(imu.description(&datum()).reference(), None);
     }
 }

@@ -20,6 +20,11 @@ impl GyroscopeModel {
     /// frame its installation names.
     pub const FRAME_CONVENTION: Convention = Flu::CONVENTION;
 
+    /// Whether this model's output is expressed in, or relative to, the world
+    /// frame its truth is given in. Angular rate is inertial, about the body
+    /// alone.
+    pub const WORLD_REFERENCED: bool = false;
+
     /// Builds the model. Returns `None` if any component of `stddev` is not
     /// strictly positive.
     pub fn new(bias: Vector3<f64>, stddev: Vector3<f64>) -> Option<Self> {

@@ -118,6 +118,7 @@ fn spawn_gps_sensors(
                             sensor_name,
                             frame.id.clone(),
                             gps_config.rate,
+                            GpsModel::WORLD_REFERENCED,
                         ),
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),

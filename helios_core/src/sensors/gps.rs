@@ -20,6 +20,10 @@ impl GpsModel {
     /// and uses none of its axes, but the frame still joins the tree.
     pub const FRAME_CONVENTION: Convention = Flu::CONVENTION;
 
+    /// Whether this model's output is expressed in, or relative to, the world
+    /// frame its truth is given in. A fix is a position in that frame.
+    pub const WORLD_REFERENCED: bool = true;
+
     /// Builds the model. Returns `None` if any component of `stddev` is not
     /// strictly positive.
     pub fn new(bias: Vector3<f64>, stddev: Vector3<f64>) -> Option<Self> {
