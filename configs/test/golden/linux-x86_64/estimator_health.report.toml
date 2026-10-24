@@ -14,7 +14,7 @@ unit = "dimensionless"
 samples = 600
 max_gap_secs = 0.10000000000000142
 status = "passed"
-actual = 0.22947163112299832
+actual = 0.22942246049261383
 
 [assertions.condition]
 less_than = 25.0
@@ -26,7 +26,7 @@ unit = "dimensionless"
 samples = 6000
 max_gap_secs = 0.010000000000005116
 status = "passed"
-actual = 0.3835222604753667
+actual = 0.38084564952056543
 
 [assertions.condition]
 less_than = 25.0
@@ -40,7 +40,7 @@ samples = 600
 max_gap_secs = 0.10000000000000142
 final_age_secs = 0.0024999999999977263
 status = "passed"
-actual = 0.22947163112299832
+actual = 0.22942246049261383
 
 [assertions.condition]
 less_than = 7.0
@@ -54,7 +54,7 @@ samples = 6000
 max_gap_secs = 0.010000000000005116
 final_age_secs = 0.0024999999999977263
 status = "passed"
-actual = 0.3835222604753667
+actual = 0.38084564952056543
 
 [assertions.condition]
 less_than = 7.0
