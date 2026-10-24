@@ -123,6 +123,80 @@ unit = "rad/s"
 samples = 11922
 max_gap_secs = 0.1975
 
+[[measures]]
+name = "contact_episodes"
+target = "eval.agent.*.contacts.contacts.contact_episodes"
+agent = "NorthCar"
+reduce = "final"
+covered = true
+value = 0.0
+unit = "dimensionless"
+samples = 12001
+max_gap_secs = 0.002500000000001279
+final_age_secs = 0.0
+
+[[measures]]
+name = "contact_episodes"
+target = "eval.agent.*.contacts.contacts.contact_episodes"
+agent = "SouthCar"
+reduce = "final"
+covered = true
+value = 0.0
+unit = "dimensionless"
+samples = 12001
+max_gap_secs = 0.002500000000001279
+final_age_secs = 0.0
+
+[[measures]]
+name = "collisions"
+target = "eval.agent.*.contacts.contacts.collisions"
+agent = "NorthCar"
+reduce = "final"
+covered = true
+value = 0.0
+unit = "dimensionless"
+samples = 12001
+max_gap_secs = 0.002500000000001279
+final_age_secs = 0.0
+
+[[measures]]
+name = "collisions"
+target = "eval.agent.*.contacts.contacts.collisions"
+agent = "SouthCar"
+reduce = "final"
+covered = true
+value = 0.0
+unit = "dimensionless"
+samples = 12001
+max_gap_secs = 0.002500000000001279
+final_age_secs = 0.0
+
+[[measures]]
+name = "contact_time"
+target = "eval.agent.*.contacts.contacts.in_contact"
+agent = "NorthCar"
+covered = true
+value = 0.0
+unit = "s"
+samples = 12001
+max_gap_secs = 0.002500000000001279
+
+[measures.reduce]
+time_above = 0.5
+
+[[measures]]
+name = "contact_time"
+target = "eval.agent.*.contacts.contacts.in_contact"
+agent = "SouthCar"
+covered = true
+value = 0.0
+unit = "s"
+samples = 12001
+max_gap_secs = 0.002500000000001279
+
+[measures.reduce]
+time_above = 0.5
+
 [[evaluations]]
 name = "agent.NorthCar.tracking.twist"
 application = "tracking"
@@ -268,3 +342,87 @@ unit = "m/s"
 [[evaluations.metrics]]
 path = "eval.agent.SouthCar.tracking.twist.velocity"
 unit = "m/s"
+
+[[evaluations]]
+name = "agent.NorthCar.contacts.contacts"
+application = "contacts"
+agent = "NorthCar"
+kind = "contacts"
+samples = 12001
+uncovered = 0
+
+[evaluations.params]
+merge_gap = 1.0
+
+[[evaluations.inputs]]
+role = "contacts"
+series = "truth.contacts"
+instance = "agent.NorthCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.NorthCar.channel.truth.contacts"
+instance = "agent.NorthCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.contacts.contacts.collisions"
+unit = "dimensionless"
+samples = 12001
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.contacts.contacts.in_contact"
+unit = "dimensionless"
+samples = 12001
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.contacts.contacts.contact_episodes"
+unit = "dimensionless"
+samples = 12001
+
+[[evaluations]]
+name = "agent.SouthCar.contacts.contacts"
+application = "contacts"
+agent = "SouthCar"
+kind = "contacts"
+samples = 12001
+uncovered = 0
+
+[evaluations.params]
+merge_gap = 1.0
+
+[[evaluations.inputs]]
+role = "contacts"
+series = "truth.contacts"
+instance = "agent.SouthCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.SouthCar.channel.truth.contacts"
+instance = "agent.SouthCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.contacts.contacts.collisions"
+unit = "dimensionless"
+samples = 12001
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.contacts.contacts.in_contact"
+unit = "dimensionless"
+samples = 12001
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.contacts.contacts.contact_episodes"
+unit = "dimensionless"
+samples = 12001

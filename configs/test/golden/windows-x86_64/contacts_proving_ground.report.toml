@@ -1,0 +1,85 @@
+schema_version = "2.0"
+run_name = "contacts_proving_ground"
+scenario = "sim/scenarios/01_proving_ground.toml"
+status = "passed"
+simulated_duration_secs = 60.0
+assertions = []
+
+[terminated_by]
+kind = "time_budget"
+
+[[measures]]
+name = "contact_episodes"
+target = "eval.agent.ProvingCar.contacts.contacts.contact_episodes"
+reduce = "final"
+covered = true
+value = 1.0
+unit = "dimensionless"
+samples = 24001
+max_gap_secs = 0.0025000000000048317
+final_age_secs = 0.0
+
+[[measures]]
+name = "collisions"
+target = "eval.agent.ProvingCar.contacts.contacts.collisions"
+reduce = "final"
+covered = true
+value = 1.0
+unit = "dimensionless"
+samples = 24001
+max_gap_secs = 0.0025000000000048317
+final_age_secs = 0.0
+
+[[measures]]
+name = "contact_time"
+target = "eval.agent.ProvingCar.contacts.contacts.in_contact"
+covered = true
+value = 54.86750000000003
+unit = "s"
+samples = 24001
+max_gap_secs = 0.0025000000000048317
+
+[measures.reduce]
+time_above = 0.5
+
+[[evaluations]]
+name = "agent.ProvingCar.contacts.contacts"
+application = "contacts"
+agent = "ProvingCar"
+kind = "contacts"
+samples = 24001
+uncovered = 0
+
+[evaluations.params]
+merge_gap = 1.0
+
+[[evaluations.inputs]]
+role = "contacts"
+series = "truth.contacts"
+instance = "agent.ProvingCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.ProvingCar.channel.truth.contacts"
+instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.metrics]]
+path = "eval.agent.ProvingCar.contacts.contacts.collisions"
+unit = "dimensionless"
+samples = 24001
+
+[[evaluations.metrics]]
+path = "eval.agent.ProvingCar.contacts.contacts.in_contact"
+unit = "dimensionless"
+samples = 24001
+
+[[evaluations.metrics]]
+path = "eval.agent.ProvingCar.contacts.contacts.contact_episodes"
+unit = "dimensionless"
+samples = 24001
