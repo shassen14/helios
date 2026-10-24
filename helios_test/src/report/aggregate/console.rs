@@ -78,6 +78,7 @@ fn measure_line(report: &AggregateReport, row: &MeasureAggregate) -> String {
     let missing: Vec<String> = [
         (row.not_covered, "not covered"),
         (row.no_value, "no value"),
+        (row.unusable, "unusable"),
         (row.not_numbers, "not a number"),
         (row.absent, "absent"),
         (row.no_report, "no report"),
@@ -108,6 +109,7 @@ fn assertion_line(row: &AssertionAggregate) -> String {
     for (count, why) in [
         (row.failed, "failed"),
         (row.unjudged, "unjudged"),
+        (row.unusable, "unusable"),
         (row.absent, "absent"),
         (row.no_report, "no report"),
     ] {

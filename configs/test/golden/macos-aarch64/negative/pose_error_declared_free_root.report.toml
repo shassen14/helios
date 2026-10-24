@@ -1,13 +1,15 @@
-schema_version = "2.0"
+schema_version = "3.0"
 run_name = "pose_error_declared_free_root"
 scenario = "test/scenarios/dead_reckoning.toml"
-status = "failed"
-setup_failures = ["""on_pipeline_built failed: the run can't use these evaluations, assertions and measures: evaluation 'est': the estimate's root 'agent.DeadReckoningCar.odom' is not placed in 'global.open_field': node "primary" reads no input that pins the position of agent.DeadReckoningCar.odom; 'position_rms' on 'eval.inline.est.position': its evaluation can't run"""]
+status = "aborted"
 simulated_duration_secs = 0.0
 assertions = []
 
 [terminated_by]
 kind = "aborted"
+
+[[terminated_by.causes]]
+kind = "unusable_entries"
 
 [[measures]]
 name = "position_rms"
@@ -15,3 +17,11 @@ target = "eval.inline.est.position"
 reduce = "rms"
 covered = false
 samples = 0
+status = "unusable"
+problems = ["its evaluation can't run"]
+
+[[evaluations]]
+name = "est"
+kind = "pose_error"
+status = "unusable"
+problems = ["""the estimate's root 'agent.DeadReckoningCar.odom' is not placed in 'global.open_field': node "primary" reads no input that pins the position of agent.DeadReckoningCar.odom"""]

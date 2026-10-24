@@ -1,12 +1,19 @@
 use super::{
-    resolve::{resolve, RunEvaluations, Unusable},
-    Phase, Runner,
+    resolve::{resolve, RunEvaluations, Unresolved, Unusable},
+    Abort, Phase, Runner,
 };
-use crate::collector::ObservationCollector;
+use crate::{collector::ObservationCollector, report::HostFault};
 use helios_core::prelude::AgentId;
 use helios_runtime::AutonomyPipeline;
 
+use std::fmt::{self, Display};
 use thiserror::Error;
+
+/// Between the agents a refusal lists.
+const AGENT_SEPARATOR: &str = ", ";
+
+/// Between the unbuilt agents and the unusable entries in a refusal.
+const REFUSAL_SEPARATOR: &str = "; ";
 
 impl Runner {
     /// Check, before the first tick, that the run can build every
@@ -14,7 +21,9 @@ impl Runner {
     /// `pipelines` report and what `collector` requests, bind each one's
     /// series and inputs in `collector`, and keep what the check found for
     /// every tick. The run is then ready, or, if any can't be, aborted with
-    /// the reasons.
+    /// the reasons. An agent in `unbuilt` aborts the run, and every entry
+    /// and evaluation on it is refused for that, beside every other
+    /// refusal, so one run shows every problem.
     ///
     /// Called once, before the host asks `collector` what to record: the
     /// request is what setup binds. A second call, or one after setup
@@ -24,13 +33,14 @@ impl Runner {
     pub fn on_pipeline_built(
         &mut self,
         pipelines: &[(AgentId, &AutonomyPipeline)],
+        unbuilt: &[UnbuiltPipeline],
         collector: &mut ObservationCollector,
     ) -> Result<(), SetupError> {
         if self.phase != Phase::AwaitingPipelines {
             return Err(SetupError::AlreadySetUp);
         }
         if collector.was_asked() {
-            self.phase = Phase::Aborted;
+            self.phase = Phase::Aborted(Abort::fault(HostFault::AskedBeforeSetup));
             return Err(SetupError::AskedBeforeSetup);
         }
 
@@ -39,32 +49,56 @@ impl Runner {
             defaults: self.run.evaluation_defaults(),
             suites: self.run.suites(),
         };
-        match resolve(
+        let unbuilt_agents: Vec<AgentId> = unbuilt
+            .iter()
+            .map(|unbuilt| unbuilt.agent.clone())
+            .collect();
+        let resolved = resolve(
             evaluations,
             self.run.assertions(),
             self.run.measures(),
             &self.evaluators,
             pipelines,
+            &unbuilt_agents,
             collector,
-        ) {
-            Ok(plan) => {
+        );
+        let (bound, unusable) = match resolved {
+            Ok(plan) if unbuilt.is_empty() => {
                 self.phase = Phase::Ready(plan);
-                Ok(())
+                return Ok(());
             }
-            Err(unusable) => {
-                self.phase = Phase::Aborted;
-                Err(SetupError::Unusable(unusable))
-            }
-        }
+            Ok(plan) => (plan.into_evaluations(), Unusable::default()),
+            Err(Unresolved { bound, unusable }) => (bound, unusable),
+        };
+        self.phase = Phase::Aborted(Abort {
+            unbuilt: unbuilt.to_vec(),
+            unusable: unusable.clone(),
+            bound,
+            fault: None,
+        });
+        Err(SetupError::Refused(Refusal {
+            unbuilt: unbuilt_agents,
+            unusable,
+        }))
     }
+}
+
+/// _Pre-step._ An agent whose pipeline the host couldn't build, with every
+/// error it reported.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnbuiltPipeline {
+    pub agent: AgentId,
+    /// As the host rendered them.
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum SetupError {
-    /// Evaluations, assertions and measures the run can't evaluate, each
-    /// with its reasons, so the operator sees every one to fix at once.
-    #[error("the run can't use these evaluations, assertions and measures: {0}")]
-    Unusable(Unusable),
+    /// Agents whose pipeline wasn't built, and evaluations, assertions and
+    /// measures the run can't evaluate, each with its reasons, so the
+    /// operator sees every one to fix at once.
+    #[error("{0}")]
+    Refused(Refusal),
     /// `on_pipeline_built` was called after the run's setup was decided.
     #[error("the run's setup is already decided")]
     AlreadySetUp,
@@ -77,6 +111,34 @@ pub enum SetupError {
     AskedBeforeSetup,
 }
 
+/// _Pre-step._ Why setup refused a run: the agents whose pipeline wasn't
+/// built, and what it can't evaluate. One or both is never empty.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Refusal {
+    pub unbuilt: Vec<AgentId>,
+    pub unusable: Unusable,
+}
+
+impl Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts = Vec::new();
+        if !self.unbuilt.is_empty() {
+            let agents: Vec<&str> = self.unbuilt.iter().map(AgentId::as_str).collect();
+            parts.push(format!(
+                "these agents' pipelines weren't built: {}",
+                agents.join(AGENT_SEPARATOR)
+            ));
+        }
+        if !self.unusable.is_empty() {
+            parts.push(format!(
+                "the run can't use these evaluations, assertions and measures: {}",
+                self.unusable
+            ));
+        }
+        f.write_str(&parts.join(REFUSAL_SEPARATOR))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,8 +147,8 @@ mod tests {
         assertion::{AssertionTarget, EntryName},
         runner::{
             fixtures::{
-                lag, lag_target, pipeline, ready, run, run_evaluating, set_up, speed_target,
-                speed_term, term, CAR, TRUCK,
+                lag, lag_target, pipeline, ready, run, run_evaluating, set_up, set_up_unbuilt,
+                speed_target, speed_term, term, CAR, TRUCK,
             },
             resolve::evaluations::EvaluationProblem,
             resolve::{TargetProblem, UnusableEntry},
@@ -115,7 +177,7 @@ mod tests {
         // A pure smoke run: nothing to resolve, so nothing can fail.
         let mut r = Runner::new(run("max_simulated_seconds = 5.0", &[])).expect("valid run");
         let mut collector = r.collector();
-        assert_eq!(r.on_pipeline_built(&[], &mut collector), Ok(()));
+        assert_eq!(r.on_pipeline_built(&[], &[], &mut collector), Ok(()));
     }
 
     #[test]
@@ -136,25 +198,75 @@ mod tests {
         let pipeline = empty_pipeline();
         let mut r = Runner::new(run("max_simulated_seconds = 5.0", &[a, b])).expect("valid run");
         let mut collector = r.collector();
+        let unusable = Unusable {
+            evaluations: vec![],
+            entries: vec![
+                UnusableEntry {
+                    name: EntryName::parse("a").expect("valid name"),
+                    target: target("agent.car.node.estimator.a"),
+                    problems: vec![TargetProblem::Unreported],
+                },
+                UnusableEntry {
+                    name: EntryName::parse("b").expect("valid name"),
+                    target: target("agent.car.node.estimator.b"),
+                    problems: vec![TargetProblem::Unreported],
+                },
+            ],
+        };
         assert_eq!(
-            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector),
-            Err(SetupError::Unusable(Unusable {
-                evaluations: vec![],
-                entries: vec![
-                    UnusableEntry {
-                        name: EntryName::parse("a").expect("valid name"),
-                        target: target("agent.car.node.estimator.a"),
-                        problems: vec![TargetProblem::Unreported],
-                    },
-                    UnusableEntry {
-                        name: EntryName::parse("b").expect("valid name"),
-                        target: target("agent.car.node.estimator.b"),
-                        problems: vec![TargetProblem::Unreported],
-                    },
-                ],
+            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &[], &mut collector),
+            Err(SetupError::Refused(Refusal {
+                unbuilt: vec![],
+                unusable: unusable.clone(),
             }))
         );
-        assert_eq!(r.phase, Phase::Aborted);
+        assert_eq!(
+            r.phase,
+            Phase::Aborted(Abort {
+                unusable,
+                ..Abort::default()
+            })
+        );
+    }
+
+    #[test]
+    fn an_unbuilt_agent_aborts_the_run_and_refuses_what_reads_it() {
+        let (r, _, setup) = set_up_unbuilt(
+            run("max_simulated_seconds = 5.0", &[&term("a", TRUCK, 5.0)]),
+            &[CAR],
+            &[TRUCK],
+        );
+
+        let Err(SetupError::Refused(refusal)) = setup else {
+            panic!("the run is refused: {setup:?}");
+        };
+        assert_eq!(refusal.unbuilt, [AgentId::new(TRUCK)]);
+        assert_eq!(
+            refusal.unusable.entries[0].problems,
+            [TargetProblem::PipelineNotBuilt]
+        );
+        assert!(
+            refusal
+                .to_string()
+                .starts_with("these agents' pipelines weren't built: truck; the run can't use"),
+            "{refusal}"
+        );
+        assert!(r.is_aborted());
+    }
+
+    #[test]
+    fn an_unbuilt_agent_aborts_a_run_that_reads_nothing_of_it() {
+        let (r, _, setup) =
+            set_up_unbuilt(run("max_simulated_seconds = 5.0", &[]), &[CAR], &[TRUCK]);
+
+        assert_eq!(
+            setup,
+            Err(SetupError::Refused(Refusal {
+                unbuilt: vec![AgentId::new(TRUCK)],
+                unusable: Unusable::default(),
+            }))
+        );
+        assert!(r.is_aborted());
     }
 
     #[test]
@@ -166,7 +278,7 @@ mod tests {
         let pipeline = pipeline();
 
         assert_eq!(
-            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector),
+            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &[], &mut collector),
             Err(SetupError::AlreadySetUp)
         );
         assert!(matches!(r.phase, Phase::Ready(_)));
@@ -181,10 +293,13 @@ mod tests {
         collector.request();
 
         assert_eq!(
-            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector),
+            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &[], &mut collector),
             Err(SetupError::AskedBeforeSetup)
         );
-        assert_eq!(r.phase, Phase::Aborted);
+        assert_eq!(
+            r.phase,
+            Phase::Aborted(Abort::fault(HostFault::AskedBeforeSetup))
+        );
     }
 
     #[test]
@@ -218,7 +333,7 @@ mod tests {
     fn refused(evaluations: &[&str], measures: &[&str]) -> Unusable {
         let run = run_evaluating("max_simulated_seconds = 5.0", &[], measures, evaluations);
         match set_up(run, &[CAR, TRUCK]).2 {
-            Err(SetupError::Unusable(unusable)) => unusable,
+            Err(SetupError::Refused(refusal)) => refusal.unusable,
             other => panic!("expected setup to refuse the run, got {other:?}"),
         }
     }
@@ -325,7 +440,11 @@ mod tests {
             unusable.entries[0].problems,
             [TargetProblem::EvaluationUnusable]
         );
-        let message = SetupError::Unusable(unusable).to_string();
+        let message = SetupError::Refused(Refusal {
+            unbuilt: vec![],
+            unusable,
+        })
+        .to_string();
         assert!(
             message.contains("evaluation 'slow': lag compares one agent's speeds; 'm'"),
             "{message}"

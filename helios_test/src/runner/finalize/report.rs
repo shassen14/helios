@@ -6,7 +6,7 @@ use super::reached::Reached;
 use crate::{
     collector::ObservationCollector,
     evaluation::derived::Derived,
-    report::{Report, TerminatedBy},
+    report::{DroppedValues, HostFault, Report, RunEnd, RunEntries, RunIdentity, RunStop},
     run::termination::TerminationReason,
     runner::{Phase, Runner},
 };
@@ -38,15 +38,24 @@ impl Runner {
     /// that is how a dropped signal looks; in a run that ran out, one whose
     /// anchor never occurred fails too.
     ///
-    /// The run is `Passed` only if every assertion passed, setup didn't fail,
-    /// no agent's bus refused a write ([`HostFacts::refused_writes`]) and the
+    /// A run the runner stopped untested is aborted, for each cause it
+    /// found: setup's, a host fault it met while ticking, and those found
+    /// here. A host that finalizes a run it never set up, or with another
+    /// run's collector, or a ready run with no tick, or after ticking without
+    /// having been told to stop, aborts it here as `tick` would have; the
+    /// stop reason it gives is then lost, and the cause says where it was
+    /// found.
+    ///
+    /// Otherwise, the run is `Passed` only if every assertion passed, no
+    /// agent's bus refused a write ([`HostFacts::refused_writes`]) and the
     /// recording dropped nothing: no requested value arrived under an
     /// unbound key ([`ObservationCollector::unbound_arrivals`]), no measure's
     /// series turned a value away and no evaluation refused an input's
     /// value or a sample. Values the wiring or the recording dropped leave
     /// the entries describing another run than the one configured. Only a
     /// run that was set up reports the recording's drops; in one aborted at
-    /// setup, a refused entry's key is unbound by design.
+    /// setup, a refused entry's key is unbound by design. Each entry and
+    /// evaluation setup refused is `unusable`, with its problems.
     ///
     /// Takes `&self`, not `&mut`: the latches are only read, nothing is
     /// recorded. Everything else the report needs comes from the host as
@@ -68,16 +77,36 @@ impl Runner {
             .map_or(MonotonicTime(f64::NEG_INFINITY), |span| span.latest);
         let derived: Option<Vec<Derived>> = match &self.phase {
             Phase::Ready(plan) => plan.derive(collector, until),
-            Phase::AwaitingPipelines | Phase::Aborted => None,
+            Phase::AwaitingPipelines | Phase::Aborted(_) => None,
         };
-        let (reached, failure) = Reached::new(self, collector, derived.as_deref());
-        let mut setup_failures = self.setup_failures.clone();
-        setup_failures.extend(failure.map(str::to_owned));
+        let (reached, fault) = Reached::new(self, collector, derived.as_deref());
+        let (unbuilt, mut faults) = match &self.phase {
+            Phase::Aborted(abort) => (
+                abort.unbuilt_agents(),
+                abort.fault.iter().cloned().collect(),
+            ),
+            Phase::AwaitingPipelines | Phase::Ready(_) => (Vec::new(), Vec::new()),
+        };
+        faults.extend(fault);
+        if matches!(self.phase, Phase::Ready(_)) {
+            match (self.ticks, &terminated_by_reason) {
+                (None, _) => faults.push(HostFault::NeverTicked),
+                (Some(_), None) => faults.push(HostFault::StoppedUnasked),
+                (Some(_), Some(_)) => {}
+            }
+        }
+        // Every way the host stops without a reason is a fault above.
+        let stop = match terminated_by_reason {
+            Some(reason) if faults.is_empty() && !self.is_aborted() => RunStop::Ended(reason),
+            _ => RunStop::Aborted { unbuilt, faults },
+        };
 
-        let assertions = reached.assertions();
+        let entries = RunEntries {
+            assertions: reached.assertions(),
+            measures: reached.measures(),
+            evaluations: reached.evaluations(),
+        };
         let recording = reached.recording();
-        let measures = reached.measures();
-        let evaluations = reached.evaluations();
 
         let refused_writes: Vec<String> = refused_writes
             .into_iter()
@@ -93,18 +122,21 @@ impl Runner {
         };
 
         Report::new(
-            run_name,
-            self.run.scenario().path().to_string(),
-            master_seed,
-            setup_failures,
-            refused_writes,
-            recording,
-            simulated_duration_secs,
-            wall_duration_secs,
-            TerminatedBy::from(&terminated_by_reason),
-            assertions,
-            measures,
-            evaluations,
+            RunIdentity {
+                run_name,
+                scenario: self.run.scenario().path().to_string(),
+                master_seed,
+            },
+            RunEnd {
+                simulated_duration_secs,
+                wall_duration_secs,
+                stop,
+            },
+            DroppedValues {
+                refused_writes,
+                recording,
+            },
+            entries,
         )
     }
 }
@@ -117,9 +149,11 @@ pub struct HostFacts {
     pub sim_now: MonotonicTime,
     pub wall_duration_secs: f64,
     pub run_name: String,
-    /// Why the host stopped ticking. It only labels the report; whether the
-    /// run covered its windows is read from the runner's own clock.
-    pub terminated_by_reason: TerminationReason,
+    /// Why the host stopped ticking, as the runner told it: `None` when the
+    /// runner never did, having aborted the run or never been asked. It only
+    /// labels the report; whether the run covered its windows is read from
+    /// the runner's own clock.
+    pub terminated_by_reason: Option<TerminationReason>,
     /// `None` for an unseeded run, whose real seed is chosen inside the sim
     /// and unknown here.
     pub master_seed: Option<u64>,
@@ -131,90 +165,319 @@ pub struct HostFacts {
 mod tests {
     use crate::{
         assertion::AssertionValue,
-        report::{AssertionStatus, ReportStatus, ReportedUnit},
+        report::{
+            AbortCause, AssertionStatus, EvaluationOutcome, FaultStep, HostFault, Report,
+            ReportStatus, ReportedUnit, TerminatedBy, Verdict,
+        },
         run::termination::TerminationReason,
         runner::{
             finalize::fixtures::{
-                budget, by_instance, failed_first, finalize, finalize_stopped_by, host_facts,
-                run_out, statuses, BUDGET_SECS,
+                budget, by_instance, failed_first, finalize, finalize_stopped_by,
+                finalize_unstopped, host_facts, lagging, run_out, statuses, BUDGET_SECS,
             },
             fixtures::{
-                at, cont, each_wheel, measure, pipeline, ready, reduced_below, refused_write,
-                report, report_speed, report_unbound, report_wheel, run, run_measuring, speed_term,
-                term, CAR, TRUCK,
+                at, cont, each_wheel, lag, lag_target, measure, ready, reduced_below,
+                refused_write, report, report_speed, report_unbound, report_wheel, run,
+                run_evaluating, run_measuring, set_up, set_up_unbuilt, speed_term, term,
+                BUILD_ERROR, CAR, TRUCK,
             },
-            Runner, TickAction, FOREIGN_COLLECTOR, NEVER_SET_UP,
+            Runner, TickAction,
         },
     };
 
     use helios_core::kernel::si_unit::SiUnit;
-    use helios_core::prelude::AgentId;
+
+    /// The run aborted for `causes` alone.
+    fn aborted(causes: Vec<AbortCause>) -> TerminatedBy {
+        TerminatedBy::Aborted { causes }
+    }
+
+    fn fault(fault: HostFault) -> AbortCause {
+        AbortCause::HostFault(fault)
+    }
+
+    /// Each evaluation's name and status, in report order.
+    fn outcomes(report: &Report) -> Vec<(&str, &'static str)> {
+        report
+            .evaluations()
+            .iter()
+            .map(|evaluation| {
+                let status = match evaluation.outcome {
+                    EvaluationOutcome::Derived(_) => "derived",
+                    EvaluationOutcome::Underived(_) => "underived",
+                    EvaluationOutcome::Unusable { .. } => "unusable",
+                };
+                (evaluation.name.as_str(), status)
+            })
+            .collect()
+    }
+
+    /// The truck's pipeline wasn't built, for [`BUILD_ERROR`].
+    fn truck_unbuilt() -> AbortCause {
+        AbortCause::PipelineNotBuilt {
+            agent: TRUCK.to_owned(),
+            errors: vec![BUILD_ERROR.to_owned()],
+        }
+    }
 
     #[test]
-    fn finalizing_with_another_runs_collector_fails_the_run() {
+    fn finalizing_with_another_runs_collector_aborts_the_run_and_loses_its_stop() {
+        // The run reached its budget, but the report can't say what it
+        // judged there: the cause says the stop was lost at finalize.
         let (mut r, mut own) = ready(run(&budget(), &[&term("x17", CAR, 5.0)]), &[CAR]);
         report(&mut own, CAR, 0.5, 5.0);
-        r.tick(at(1.0), &own);
+        run_out(&mut r, &own);
         let other = r.collector();
 
         let report = finalize(&r, &other);
 
-        assert_eq!(report.status(), &ReportStatus::Failed);
-        assert_eq!(report.setup_failures(), [FOREIGN_COLLECTOR]);
+        assert_eq!(report.status(), &ReportStatus::Aborted);
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![fault(HostFault::ForeignCollector {
+                at: FaultStep::Finalize,
+            })])
+        );
         assert_eq!(statuses(&report), [AssertionStatus::Unjudged]);
     }
 
     #[test]
-    fn finalizing_a_run_never_set_up_fails_it() {
-        // With no assertions there is nothing else to fail it: it would
+    fn finalizing_a_run_never_set_up_aborts_it() {
+        // With no assertions there is nothing else to stop it: it would
         // otherwise report a pass for a run that never ran.
         let r = Runner::new(run(&budget(), &[])).expect("valid run");
         let collector = r.collector();
 
-        let report = finalize(&r, &collector);
+        let report = finalize_unstopped(&r, &collector);
 
-        assert_eq!(report.status(), &ReportStatus::Failed);
-        assert_eq!(report.setup_failures(), [NEVER_SET_UP]);
+        assert_eq!(report.status(), &ReportStatus::Aborted);
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![fault(HostFault::NeverSetUp)])
+        );
     }
 
     #[test]
-    fn a_setup_failure_fails_a_run_with_no_assertions() {
+    fn a_run_set_up_and_finalized_with_no_tick_is_aborted_for_it() {
+        let (r, collector) = ready(run(&budget(), &[]), &[]);
+
+        let report = finalize_unstopped(&r, &collector);
+
+        assert_eq!(report.status(), &ReportStatus::Aborted);
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![fault(HostFault::NeverTicked)])
+        );
+    }
+
+    #[test]
+    fn a_run_the_host_stopped_unasked_is_aborted_for_it() {
+        let (mut r, collector) = ready(run(&budget(), &[]), &[]);
+        r.tick(at(0.0), &collector);
+
+        let report = finalize_unstopped(&r, &collector);
+
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![fault(HostFault::StoppedUnasked)])
+        );
+    }
+
+    #[test]
+    fn a_run_aborted_at_a_tick_names_the_tick() {
+        let (mut r, own) = ready(run(&budget(), &[&term("x23", CAR, 5.0)]), &[CAR]);
+        r.tick(at(1.0), &own);
+        let other = r.collector();
+        assert_eq!(r.tick(at(2.0), &other), TickAction::Abort);
+
+        let report = finalize_unstopped(&r, &other);
+
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![fault(HostFault::ForeignCollector {
+                at: FaultStep::Tick { at_secs: 1.0 },
+            })])
+        );
+    }
+
+    #[test]
+    fn an_unbuilt_pipeline_aborts_a_run_with_no_assertions() {
         // The regression this guards: a scenario whose agent has no pipeline
         // usually has no assertion naming it either. Judged on assertions
         // alone, an empty set is a vacuous pass and the run reports success
         // for a scene that could never have been tested.
-        let mut r = Runner::new(run(&budget(), &[])).expect("valid run");
-        let collector = r.collector();
-        r.fail_setup("agent 'car' has no autonomy pipeline".to_string());
+        let (r, collector, setup) = set_up_unbuilt(run(&budget(), &[]), &[CAR], &[TRUCK]);
+        assert!(setup.is_err());
 
-        let report = finalize(&r, &collector);
+        let report = finalize_unstopped(&r, &collector);
 
-        assert_eq!(report.status(), &ReportStatus::Failed);
+        assert_eq!(report.status(), &ReportStatus::Aborted);
+        assert_eq!(report.terminated_by(), &aborted(vec![truck_unbuilt()]));
         assert!(report.assertions().is_empty());
     }
 
     #[test]
-    fn a_setup_failure_is_reported_with_its_reason() {
-        // status alone tells CI a run failed; without the reason there is
-        // nothing in the report to say why, since no assertion failed.
-        let mut r = Runner::new(run(&budget(), &[])).expect("valid run");
-        let collector = r.collector();
-        r.fail_setup("first".to_string());
-        r.fail_setup("second".to_string());
+    fn an_entry_on_an_unbuilt_agent_is_unusable_for_that() {
+        let (r, collector, _) = set_up_unbuilt(
+            run(&budget(), &[&term("x21", TRUCK, 5.0)]),
+            &[CAR],
+            &[TRUCK],
+        );
 
-        let report = finalize(&r, &collector);
+        let report = finalize_unstopped(&r, &collector);
 
-        assert_eq!(report.setup_failures(), ["first", "second"]);
+        assert_eq!(
+            report.assertions()[0].verdict(),
+            &Verdict::Unusable {
+                problems: vec!["its agent's pipeline wasn't built".to_owned()],
+            }
+        );
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![truck_unbuilt(), AbortCause::UnusableEntries])
+        );
     }
 
     #[test]
-    fn a_clean_run_records_no_setup_failures() {
-        let (r, collector) = ready(run(&budget(), &[]), &[]);
+    fn an_unbuilt_pipeline_and_an_unusable_entry_are_reported_in_one_run() {
+        let (r, collector, _) = set_up_unbuilt(
+            run(&budget(), &[&term("x22", "nobody", 5.0)]),
+            &[CAR],
+            &[TRUCK],
+        );
+
+        let report = finalize_unstopped(&r, &collector);
+
+        assert_eq!(
+            report.assertions()[0].verdict(),
+            &Verdict::Unusable {
+                problems: vec!["no agent by that name has a pipeline".to_owned()],
+            }
+        );
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![truck_unbuilt(), AbortCause::UnusableEntries])
+        );
+    }
+
+    #[test]
+    fn a_refused_evaluation_has_its_own_entry_and_an_entry_on_it_is_unusable() {
+        // Bound to the truck, the evaluation reads the car's speeds.
+        let truck_lag = lag("slow", CAR).replacen("agent.car.", "agent.truck.", 1);
+        let mean = format!(
+            "name = \"mean_shortfall\"\ntarget = \"{}\"\nreduce = \"mean\"",
+            lag_target("slow")
+        );
+        let (r, collector, setup) = set_up(
+            run_evaluating(&budget(), &[], &[&mean], &[&truck_lag]),
+            &[CAR, TRUCK],
+        );
+        assert!(setup.is_err());
+
+        let report = finalize_unstopped(&r, &collector);
+
+        let [slow] = report.evaluations() else {
+            panic!("one evaluation: {:?}", report.evaluations());
+        };
+        assert!(slow.is_unusable());
+        assert_eq!((slow.name.as_str(), slow.kind.as_str()), ("slow", "lag"));
+        assert!(report.measures()[0].is_unusable());
+        assert_eq!(
+            report.measures()[0].problems(),
+            ["its evaluation can't run"]
+        );
+        assert_eq!(report.status(), &ReportStatus::Aborted);
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![AbortCause::UnusableEntries])
+        );
+    }
+
+    #[test]
+    fn a_run_refused_at_setup_still_reports_each_evaluation_it_bound() {
+        // Listing only the refused one would read as a run that asked for
+        // one evaluation.
+        let truck_lag = lag("fast", CAR).replacen("agent.car.", "agent.truck.", 1);
+        let (r, collector, setup) = set_up(
+            run_evaluating(&budget(), &[], &[], &[&lag("slow", CAR), &truck_lag]),
+            &[CAR, TRUCK],
+        );
+        assert!(setup.is_err());
+
+        let report = finalize_unstopped(&r, &collector);
+
+        assert_eq!(
+            outcomes(&report),
+            [("slow", "underived"), ("fast", "unusable")]
+        );
+        let EvaluationOutcome::Underived(slow) = &report.evaluations()[0].outcome else {
+            unreachable!("checked above");
+        };
+        assert_eq!(slow.inputs[1].instance.as_deref(), Some("front"));
+        assert_eq!(slow.inputs[1].coverage, None);
+        assert_eq!(slow.metrics[0].samples, None);
+    }
+
+    #[test]
+    fn a_run_with_an_unbuilt_agent_reports_each_evaluation_bound_on_the_others() {
+        let (r, collector, _) = set_up_unbuilt(
+            run_evaluating(&budget(), &[], &[], &[&lag("slow", CAR)]),
+            &[CAR],
+            &[TRUCK],
+        );
+
+        let report = finalize_unstopped(&r, &collector);
+
+        assert_eq!(outcomes(&report), [("slow", "underived")]);
+        assert_eq!(report.terminated_by(), &aborted(vec![truck_unbuilt()]));
+    }
+
+    #[test]
+    fn a_run_aborted_at_a_tick_reports_each_evaluation_it_bound() {
+        // A tick finds another run's collector through a recorded series.
+        let (mut r, own) = ready(
+            run_evaluating(
+                &budget(),
+                &[&cont("a", CAR, 5.0)],
+                &[],
+                &[&lag("slow", CAR)],
+            ),
+            &[CAR],
+        );
+        let other = r.collector();
+        assert_eq!(r.tick(at(1.0), &other), TickAction::Abort);
+
+        let report = finalize_unstopped(&r, &own);
+
+        assert_eq!(outcomes(&report), [("slow", "underived")]);
+        assert_eq!(
+            report.terminated_by(),
+            &aborted(vec![fault(HostFault::ForeignCollector {
+                at: FaultStep::Tick { at_secs: 0.0 },
+            })])
+        );
+    }
+
+    #[test]
+    fn finalizing_with_another_runs_collector_derives_no_evaluation() {
+        let (mut r, own) = ready(lagging(), &[CAR]);
+        run_out(&mut r, &own);
+        let other = r.collector();
+
+        let report = finalize(&r, &other);
+
+        assert_eq!(outcomes(&report), [("slow", "underived")]);
+    }
+
+    #[test]
+    fn a_clean_run_is_stopped_by_its_budget() {
+        let (mut r, collector) = ready(run(&budget(), &[]), &[]);
+        run_out(&mut r, &collector);
 
         let report = finalize(&r, &collector);
 
         assert_eq!(report.status(), &ReportStatus::Passed);
-        assert!(report.setup_failures().is_empty());
+        assert_eq!(report.terminated_by(), &TerminatedBy::TimeBudget);
     }
 
     #[test]
@@ -272,17 +535,13 @@ mod tests {
     fn a_run_aborted_at_setup_reports_no_unbound_values() {
         // The truck's assertion is refused, so its key is never bound; values
         // under its path say nothing beyond the setup failure.
-        let mut r = Runner::new(run(&budget(), &[&term("x20", TRUCK, 5.0)])).expect("valid run");
-        let mut collector = r.collector();
-        let pipeline = pipeline();
-        assert!(r
-            .on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector)
-            .is_err());
+        let (r, mut collector, setup) = set_up(run(&budget(), &[&term("x20", TRUCK, 5.0)]), &[CAR]);
+        assert!(setup.is_err());
         report(&mut collector, TRUCK, 0.5, 5.0);
 
-        let report = finalize(&r, &collector);
+        let report = finalize_unstopped(&r, &collector);
 
-        assert_eq!(report.status(), &ReportStatus::Failed);
+        assert_eq!(report.status(), &ReportStatus::Aborted);
         assert!(report.recording().is_empty());
     }
 
@@ -344,7 +603,7 @@ mod tests {
         let r = Runner::new(run(&budget(), &[&each])).expect("valid run");
         let collector = r.collector();
 
-        let report = finalize(&r, &collector);
+        let report = finalize_unstopped(&r, &collector);
 
         assert_eq!(by_instance(&report), [(None, AssertionStatus::Unjudged)]);
     }

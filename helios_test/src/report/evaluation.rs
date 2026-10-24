@@ -1,5 +1,6 @@
-//! _Post-step._ [`EvaluationReportEntry`]: what one evaluation derived over
-//! a run, and from what.
+//! _Post-step._ [`EvaluationReport`]: what one evaluation derived over a
+//! run, and from what; what it was bound to, in a run aborted before it
+//! derived; or why the run refused it.
 
 use crate::{
     assertion::AssertionTarget,
@@ -11,12 +12,10 @@ use helios_runtime::port::{Provenance, Writer};
 
 use serde::Serialize;
 
-/// _Post-step._ One evaluation's report: its kind and the parameters it was
-/// given, the series each role read and who wrote it, how many base values
-/// the run gave, how many some input didn't cover and how many it couldn't
-/// compute, and every metric it offers, with the series of each one read.
+/// _Post-step._ One evaluation's line in the report: which it is, and what
+/// became of it under `status`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct EvaluationReportEntry {
+pub struct EvaluationReport {
     /// The evaluation's name: an inline entry's own, or a suite's entry as
     /// `agent.<agent>.<application>.<entry>`, so it is unique in the report.
     pub name: String,
@@ -27,7 +26,46 @@ pub struct EvaluationReportEntry {
     /// The agent a suite's entry was bound to; `None` for an inline entry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    /// The kind its entry names.
     pub kind: String,
+    #[serde(flatten)]
+    pub outcome: EvaluationOutcome,
+}
+
+impl EvaluationReport {
+    /// What it derived; `None` for one the run didn't derive.
+    pub fn derived(&self) -> Option<&DerivedEvaluation> {
+        match &self.outcome {
+            EvaluationOutcome::Derived(derived) => Some(derived),
+            EvaluationOutcome::Underived(_) | EvaluationOutcome::Unusable { .. } => None,
+        }
+    }
+
+    /// Whether the run refused it.
+    pub fn is_unusable(&self) -> bool {
+        matches!(self.outcome, EvaluationOutcome::Unusable { .. })
+    }
+}
+
+/// _Post-step._ What became of an evaluation: written as its `status`
+/// beside what it holds.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum EvaluationOutcome {
+    /// Derived over the run.
+    Derived(DerivedEvaluation),
+    /// Bound at setup, in a run aborted before it derived anything: what it
+    /// would have read and offered, and no count, since none was taken.
+    Underived(BoundEvaluation),
+    /// Refused at setup, for every reason why.
+    Unusable { problems: Vec<String> },
+}
+
+/// _Post-step._ What an evaluation derived: how many base values the run
+/// gave, how many some input didn't cover and how many it couldn't compute,
+/// beside what it read, with each metric's series' samples.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DerivedEvaluation {
     /// Base values stamped within the run, one sample of every metric each
     /// unless uncovered.
     pub samples: usize,
@@ -39,6 +77,15 @@ pub struct EvaluationReportEntry {
     /// Base values some input had no value for, each input's by where they
     /// fell under [`InputReport`]. Reported, never failed.
     pub uncovered: usize,
+    #[serde(flatten)]
+    pub bound: BoundEvaluation,
+}
+
+/// _Post-step._ What setup bound an evaluation to: the parameters it was
+/// given, the series each role reads and who writes it, and every metric it
+/// offers.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct BoundEvaluation {
     /// The entry's `[evaluate.params]`, as the run file gave them: what
     /// shaped the numbers, such as a frame policy.
     #[serde(skip_serializing_if = "toml::Table::is_empty")]
@@ -107,7 +154,8 @@ impl InputReport {
 pub struct MetricReport {
     pub path: String,
     pub unit: ReportedUnit,
-    /// `None` for a metric nothing read, which was not derived.
+    /// `None` for a metric not derived: one nothing read, or any in a run
+    /// that derived nothing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub samples: Option<usize>,
 }

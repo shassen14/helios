@@ -1,4 +1,4 @@
-schema_version = "2.0"
+schema_version = "3.0"
 run_name = "pose_error_mock_oracle"
 scenario = "sim/scenarios/dev_mock_oracle.toml"
 status = "passed"
@@ -140,6 +140,7 @@ max_gap_secs = 0.0025000000000048317
 [[evaluations]]
 name = "est"
 kind = "pose_error"
+status = "derived"
 samples = 24001
 uncovered = 0
 

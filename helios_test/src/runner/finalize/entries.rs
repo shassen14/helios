@@ -10,8 +10,8 @@ use crate::{
         path::DerivedName,
     },
     report::{
-        EvaluationReportEntry, FailureReason, InputReport, MeasureReportEntry, MetricReport,
-        ReportedUnit, SeriesSummary,
+        BoundEvaluation, DerivedEvaluation, EvaluationOutcome, EvaluationReport, FailureReason,
+        InputReport, MeasureReportEntry, MetricReport, ReportedUnit, SeriesSummary,
     },
     runner::{
         resolve::{evaluations::PlannedEvaluation, EntryView},
@@ -66,13 +66,13 @@ pub(super) fn report_measure(
     )
 }
 
-/// One evaluation's report line: what it read, from whom, how much it
-/// derived, and every metric it offers.
+/// One evaluation's report line: what it read, from whom, and every metric
+/// it offers; with `derived`, what it derived and what each input's
+/// `refused` counts, and without, a run that never derived it.
 pub(super) fn report_evaluation(
     evaluation: &PlannedEvaluation,
-    derived: &Derived,
-    refused: &[Refused],
-) -> EvaluationReportEntry {
+    derived: Option<(&Derived, &[Refused])>,
+) -> EvaluationReport {
     let inputs = evaluation
         .inputs
         .iter()
@@ -87,34 +87,47 @@ pub(super) fn report_evaluation(
                 writer,
                 provenance,
                 cap: input.cap,
-                refused: refused.get(role).map_or(0, |refused| refused.count),
-                coverage: derived.coverage.get(role).copied(),
+                refused: derived
+                    .and_then(|(_, refused)| refused.get(role))
+                    .map_or(0, |refused| refused.count),
+                coverage: derived.and_then(|(derived, _)| derived.coverage.get(role).copied()),
             }
         })
         .collect();
     let metrics = evaluation
         .metrics
         .iter()
-        .zip(&derived.metrics)
-        .map(|(metric, series)| MetricReport {
+        .enumerate()
+        .map(|(index, metric)| MetricReport {
             path: DerivedName::new(evaluation.name.clone(), metric.name).to_string(),
             unit: ReportedUnit::Declared(metric.si_unit),
-            samples: series.as_ref().map(|series| series.samples().len()),
+            samples: derived
+                .and_then(|(derived, _)| derived.metrics.get(index)?.as_ref())
+                .map(|series| series.samples().len()),
         })
         .collect();
-    let applied = evaluation.name.applied();
-    EvaluationReportEntry {
-        name: evaluation.name.to_string(),
-        application: applied.map(|(_, application)| application.to_string()),
-        agent: applied.map(|(agent, _)| agent.as_str().to_owned()),
-        kind: evaluation.kind.to_owned(),
-        samples: derived.base_samples,
-        uncovered: derived.uncovered,
-        refused: derived.not_computed.count,
+    let bound = BoundEvaluation {
         params: evaluation.params.clone(),
         binding: evaluation.binding.clone(),
         inputs,
         metrics,
+    };
+    let outcome = match derived {
+        Some((derived, _)) => EvaluationOutcome::Derived(DerivedEvaluation {
+            samples: derived.base_samples,
+            uncovered: derived.uncovered,
+            refused: derived.not_computed.count,
+            bound,
+        }),
+        None => EvaluationOutcome::Underived(bound),
+    };
+    let applied = evaluation.name.applied();
+    EvaluationReport {
+        name: evaluation.name.to_string(),
+        application: applied.map(|(_, application)| application.to_string()),
+        agent: applied.map(|(agent, _)| agent.as_str().to_owned()),
+        kind: evaluation.kind.to_owned(),
+        outcome,
     }
 }
 
@@ -151,7 +164,7 @@ mod tests {
         report::{AssertionStatus, FailureReason, ReportStatus, ReportedUnit, Verdict},
         runner::{
             finalize::fixtures::{
-                after_speed, budget, finalize, lagging, run_out, statuses, BUDGET_SECS,
+                after_speed, budget, derived, finalize, lagging, run_out, statuses, BUDGET_SECS,
             },
             fixtures::{
                 at, cont, measure, ready, report, report_speed, report_unreadable, report_wheel,
@@ -286,9 +299,10 @@ mod tests {
         let [slow] = report.evaluations() else {
             panic!("one evaluation: {report:?}");
         };
+        let slow = slow.derived().expect("it derived");
         assert_eq!((slow.samples, slow.uncovered), (3, 1));
         assert_eq!(
-            slow.inputs[1].coverage,
+            slow.bound.inputs[1].coverage,
             Some(Coverage::Lined {
                 uncovered: UncoveredCounts {
                     before_first: 1,
@@ -297,10 +311,10 @@ mod tests {
                 },
             })
         );
-        assert_eq!(slow.metrics[0].path, "eval.inline.slow.shortfall");
-        assert_eq!(slow.metrics[0].samples, Some(2));
-        assert_eq!(slow.inputs[1].instance.as_deref(), Some("front"));
-        assert_eq!(slow.inputs[0].writer, "node estimator");
+        assert_eq!(slow.bound.metrics[0].path, "eval.inline.slow.shortfall");
+        assert_eq!(slow.bound.metrics[0].samples, Some(2));
+        assert_eq!(slow.bound.inputs[1].instance.as_deref(), Some("front"));
+        assert_eq!(slow.bound.inputs[0].writer, "node estimator");
         assert!(report.recording().is_empty(), "{:?}", report.recording());
     }
 
@@ -344,7 +358,7 @@ mod tests {
             }
         ));
         assert_eq!(report.measures()[0].reason(), Some(FailureReason::Rejected));
-        assert_eq!(report.evaluations()[0].inputs[0].refused, 1);
+        assert_eq!(derived(&report).bound.inputs[0].refused, 1);
     }
 
     #[test]
@@ -364,8 +378,8 @@ mod tests {
                 "evaluation 'slow' metric 'shortfall': 1 value(s) refused, the first {OVERSHOOT}"
             )]
         );
-        assert_eq!(report.evaluations()[0].metrics[0].samples, Some(1));
-        assert_eq!(report.evaluations()[0].refused, 0);
+        assert_eq!(derived(&report).bound.metrics[0].samples, Some(1));
+        assert_eq!(derived(&report).refused, 0);
     }
 
     #[test]
@@ -377,6 +391,6 @@ mod tests {
         let report = finalize(&r, &collector);
 
         assert_eq!(statuses(&report), [AssertionStatus::Unjudged]);
-        assert_eq!(report.evaluations()[0].samples, 0);
+        assert_eq!(derived(&report).samples, 0);
     }
 }

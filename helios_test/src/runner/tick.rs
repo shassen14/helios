@@ -1,6 +1,7 @@
 use crate::{
     assertion::{evaluator::evaluate, AssertionResult, Condition, EntryName, FailureKind},
     collector::{ObservationCollector, Sample, Series},
+    report::{FaultStep, HostFault},
     run::termination::TerminationReason,
     runner::{
         resolve::{EntryOwner, EntryView},
@@ -9,7 +10,7 @@ use crate::{
     },
 };
 
-use super::{termination_check, Phase, Runner, TickSpan, FOREIGN_COLLECTOR, NEVER_SET_UP};
+use super::{termination_check, Abort, Phase, Runner, TickSpan};
 
 use helios_core::prelude::MonotonicTime;
 use helios_runtime::observe::key::RecordedKey;
@@ -20,26 +21,28 @@ impl Runner {
     /// `collector`, and reporting whether to stop. It only reads the collector, so the host stays the
     /// sole source of what was observed.
     ///
-    /// Only a run whose setup succeeded judges. One whose setup failed stops
-    /// at once: a host may tick again before it acts on the failure, and a
+    /// Only a run whose setup succeeded judges. An aborted one stops at
+    /// once: a host may tick again before it acts on the abort, and a
     /// verdict from those ticks would be judged against a run already
     /// declared unfit. A host that ticks without setting the run up, or hands
-    /// it another run's collector, fails setup here and stops.
+    /// it another run's collector, aborts the run for that fault.
     pub fn tick(&mut self, t: MonotonicTime, collector: &ObservationCollector) -> TickAction {
-        let aborted = TickAction::Terminate {
-            reason: TerminationReason::Aborted,
-        };
         let plan = match &mut self.phase {
             Phase::Ready(plan) => plan,
-            Phase::Aborted => return aborted,
+            Phase::Aborted(_) => return TickAction::Abort,
             Phase::AwaitingPipelines => {
-                self.fail_setup(NEVER_SET_UP.to_string());
-                return aborted;
+                self.phase = Phase::Aborted(Abort::fault(HostFault::NeverSetUp));
+                return TickAction::Abort;
             }
         };
         let Some(entries) = plan.with_series_mut(collector) else {
-            self.fail_setup(FOREIGN_COLLECTOR.to_string());
-            return aborted;
+            // Before the first tick is stamped, this one is the run's first.
+            let at_secs = self.ticks.map_or(0.0, |span| t.0 - span.first.0);
+            let fault = HostFault::ForeignCollector {
+                at: FaultStep::Tick { at_secs },
+            };
+            self.phase = Phase::Aborted(Abort::fault_in(fault, plan));
+            return TickAction::Abort;
         };
 
         // The run's clock: its origin stamped on the first tick and fixed
@@ -105,11 +108,13 @@ impl Runner {
     }
 }
 
-/// _Per-step._ The outcome of one `tick`: keep going, or stop with a reason.
+/// _Per-step._ The outcome of one `tick`: keep going, stop with a reason, or
+/// stop untested, which `finalize` explains.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TickAction {
     Continue,
     Terminate { reason: TerminationReason },
+    Abort,
 }
 
 /// Judge an every-sample assertion's `condition` on each sample that arrived
@@ -184,59 +189,49 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_setup_stops_the_run_without_judging() {
-        // The plan, and with it every state, is gone once setup fails; an
+    fn an_aborted_run_stops_without_judging() {
+        // The plan, and with it every state, is gone once the run aborts; an
         // unstamped clock shows the tick returned before judging anything.
         let a = cont("a", CAR, 5.0);
         let (mut r, mut collector) = ready(run("max_simulated_seconds = 10.0", &[&a]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
-        r.fail_setup("unusable".to_string());
+        r.phase = Phase::Aborted(Abort::default());
 
-        assert_eq!(
-            r.tick(at(1.0), &collector),
-            TickAction::Terminate {
-                reason: TerminationReason::Aborted,
-            }
-        );
+        assert_eq!(r.tick(at(1.0), &collector), TickAction::Abort);
         assert!(states(&r).is_empty());
         assert_eq!(r.ticks, None);
     }
 
     #[test]
-    fn a_tick_before_setup_fails_setup_and_stops() {
+    fn a_tick_before_setup_aborts_the_run_for_it() {
         // A host that never called `on_pipeline_built`: the report names that
         // instead of every assertion failing for want of a series.
         let a = cont("a", CAR, 5.0);
         let mut r = Runner::new(run("max_simulated_seconds = 10.0", &[&a])).expect("valid run");
         let collector = r.collector();
 
-        assert_eq!(
-            r.tick(at(1.0), &collector),
-            TickAction::Terminate {
-                reason: TerminationReason::Aborted,
-            }
-        );
-        assert_eq!(r.setup_failures, [NEVER_SET_UP]);
-        assert_eq!(r.phase, Phase::Aborted);
+        assert_eq!(r.tick(at(1.0), &collector), TickAction::Abort);
+        assert_eq!(r.phase, Phase::Aborted(Abort::fault(HostFault::NeverSetUp)));
     }
 
     #[test]
-    fn another_runs_collector_fails_setup_and_stops() {
+    fn another_runs_collector_aborts_the_run_at_its_tick() {
         // Built over the same targets, so its series look the same; reading
         // them would judge the wrong run without a word.
         let a = cont("a", CAR, 5.0);
-        let (mut r, _own) = ready(run("max_simulated_seconds = 10.0", &[&a]), &[CAR]);
+        let (mut r, own) = ready(run("max_simulated_seconds = 10.0", &[&a]), &[CAR]);
         let mut other = r.collector();
         report(&mut other, CAR, 0.5, 5.0);
+        assert_eq!(r.tick(at(1.0), &own), TickAction::Continue);
 
+        assert_eq!(r.tick(at(3.5), &other), TickAction::Abort);
         assert_eq!(
-            r.tick(at(1.0), &other),
-            TickAction::Terminate {
-                reason: TerminationReason::Aborted,
-            }
+            r.phase,
+            Phase::Aborted(Abort::fault(HostFault::ForeignCollector {
+                at: FaultStep::Tick { at_secs: 2.5 },
+            }))
         );
-        assert_eq!(r.setup_failures, [FOREIGN_COLLECTOR]);
-        assert_eq!(r.ticks, None);
+        assert_eq!(r.ticks.map(|span| span.latest), Some(at(1.0)));
     }
 
     #[test]
@@ -502,7 +497,7 @@ mod tests {
             Phase::Ready(plan) => plan.with_series(collector, &[]).expect("its own collector")[0]
                 .series
                 .samples(),
-            Phase::AwaitingPipelines | Phase::Aborted => &[],
+            Phase::AwaitingPipelines | Phase::Aborted(_) => &[],
         }
     }
 

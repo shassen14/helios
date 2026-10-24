@@ -1,4 +1,4 @@
-schema_version = "2.0"
+schema_version = "3.0"
 run_name = "acceptance"
 scenario = "sim/scenarios/01_proving_ground.toml"
 status = "passed"
@@ -44,6 +44,7 @@ final_age_secs = 0.0
 [[evaluations]]
 name = "pose"
 kind = "pose"
+status = "derived"
 samples = 8001
 uncovered = 0
 
@@ -79,6 +80,7 @@ unit = "m"
 [[evaluations]]
 name = "twist"
 kind = "twist"
+status = "derived"
 samples = 8001
 uncovered = 0
 

@@ -52,9 +52,12 @@ mod tests {
         GapWidth,
     };
     use crate::report::{
-        AssertionReportEntry, EvaluationReportEntry, FailureReason, InputReport,
-        MeasureReportEntry, MetricReport, ReportedUnit, SeriesSummary, TerminatedBy, Verdict,
+        AssertionReportEntry, BoundEvaluation, DerivedEvaluation, DroppedValues, EvaluationOutcome,
+        EvaluationReport, FailureReason, FaultStep, HostFault, InputReport, MeasureReportEntry,
+        MetricReport, ReportedUnit, RunEnd, RunEntries, RunIdentity, RunStop, SeriesSummary,
+        TerminatedBy, UnbuiltAgent, Verdict,
     };
+    use crate::run::termination::TerminationReason;
     use crate::statistics::within_run::Reducer;
 
     use helios_core::kernel::si_unit::SiUnit;
@@ -113,66 +116,80 @@ mod tests {
     // inside the `assertions` array-of-tables, and the `measures` one.
     fn sample_report() -> Report {
         Report::new(
-            "smoke".to_string(),
-            "sim.scenarios.parking_lot".to_string(),
-            Some(42),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            12.5,
-            0.3,
-            TerminatedBy::TimeBudget,
-            vec![
-                AssertionReportEntry::new(
-                    "parked".to_string(),
-                    AssertionTarget::parse("agent.car.node.estimator.position")
+            RunIdentity {
+                run_name: "smoke".to_string(),
+                scenario: "sim.scenarios.parking_lot".to_string(),
+                master_seed: Some(42),
+            },
+            RunEnd {
+                simulated_duration_secs: 12.5,
+                wall_duration_secs: 0.3,
+                stop: RunStop::Ended(TerminationReason::MaxSimulatedSeconds),
+            },
+            DroppedValues::default(),
+            RunEntries {
+                assertions: vec![
+                    AssertionReportEntry::new(
+                        "parked".to_string(),
+                        AssertionTarget::parse("agent.car.node.estimator.position")
+                            .expect("valid target"),
+                        None,
+                        None,
+                        Window::default(),
+                        Some(Reducer::Final),
+                        Some(ReportedUnit::Declared(SiUnit::Meters)),
+                        Condition::WithinRange([-0.5, 0.5]),
+                        SeriesSummary {
+                            final_age_secs: Some(0.25),
+                            ..series(3)
+                        },
+                        Verdict::Passed {
+                            actual: AssertionValue::Float(0.0),
+                        },
+                    ),
+                    time_above_failing(Verdict::Failed {
+                        actual: Some(AssertionValue::Float(7.0)),
+                        reason: FailureReason::ConditionFailed,
+                        failed_at_secs: None,
+                    }),
+                ],
+                measures: vec![MeasureReportEntry::new(
+                    "goal_distance".to_string(),
+                    AssertionTarget::parse("agent.car.node.eval.goal_distance")
                         .expect("valid target"),
                     None,
                     None,
                     Window::default(),
-                    Some(Reducer::Final),
+                    Reducer::Final,
+                    true,
+                    Some(Ok(AssertionValue::Float(0.5))),
                     Some(ReportedUnit::Declared(SiUnit::Meters)),
-                    Condition::WithinRange([-0.5, 0.5]),
-                    SeriesSummary {
-                        final_age_secs: Some(0.25),
-                        ..series(3)
-                    },
-                    Verdict::Passed {
-                        actual: AssertionValue::Float(0.0),
-                    },
-                ),
-                time_above_failing(Verdict::Failed {
-                    actual: Some(AssertionValue::Float(7.0)),
-                    reason: FailureReason::ConditionFailed,
-                    failed_at_secs: None,
-                }),
-            ],
-            vec![MeasureReportEntry::new(
-                "goal_distance".to_string(),
-                AssertionTarget::parse("agent.car.node.eval.goal_distance").expect("valid target"),
-                None,
-                None,
-                Window::default(),
-                Reducer::Final,
-                true,
-                Some(Ok(AssertionValue::Float(0.5))),
-                Some(ReportedUnit::Declared(SiUnit::Meters)),
-                series(1),
-            )],
-            vec![twist_evaluation()],
+                    series(1),
+                )],
+                evaluations: vec![twist_evaluation()],
+            },
         )
     }
 
     /// A `twist_tracking` evaluation of the car against its exact truth.
-    fn twist_evaluation() -> EvaluationReportEntry {
-        EvaluationReportEntry {
+    fn twist_evaluation() -> EvaluationReport {
+        EvaluationReport {
             name: "twist".to_string(),
             application: None,
             agent: None,
             kind: "twist_tracking".to_string(),
-            samples: 100,
-            uncovered: 1,
-            refused: 0,
+            outcome: EvaluationOutcome::Derived(DerivedEvaluation {
+                samples: 100,
+                uncovered: 1,
+                refused: 0,
+                bound: twist_bound(),
+            }),
+        }
+    }
+
+    /// What the twist evaluation was bound to, and each input's coverage.
+    fn twist_bound() -> BoundEvaluation {
+        BoundEvaluation {
             params: toml::Table::new(),
             binding: toml::Table::new(),
             inputs: vec![
@@ -226,6 +243,14 @@ mod tests {
         }
     }
 
+    /// What the first evaluation of `report`, which derived, was bound to.
+    fn bound_mut(report: &mut Report) -> &mut BoundEvaluation {
+        match &mut report.evaluations[0].outcome {
+            EvaluationOutcome::Derived(derived) => &mut derived.bound,
+            outcome => panic!("the first evaluation didn't derive: {outcome:?}"),
+        }
+    }
+
     /// `report` written and read back as a plain TOML document.
     fn written(report: &Report) -> toml::Value {
         let path = write_to_temp(report);
@@ -254,7 +279,7 @@ mod tests {
         let value = written(&sample_report());
 
         // Scalars, the derived status and the nested `terminated_by` table.
-        assert_eq!(value["schema_version"].as_str(), Some("2.0"));
+        assert_eq!(value["schema_version"].as_str(), Some("3.0"));
         assert_eq!(value["run_name"].as_str(), Some("smoke"));
         assert_eq!(value["status"].as_str(), Some("failed"));
         assert_eq!(value["master_seed"].as_integer(), Some(42));
@@ -313,6 +338,7 @@ mod tests {
         let evaluations = value["evaluations"].as_array().unwrap();
         let twist = &evaluations[0];
         assert_eq!(twist["kind"].as_str(), Some("twist_tracking"));
+        assert_eq!(twist["status"].as_str(), Some("derived"));
         assert!(twist.get("params").is_none());
         assert_eq!(twist["samples"].as_integer(), Some(100));
         assert_eq!(twist["uncovered"].as_integer(), Some(1));
@@ -344,11 +370,128 @@ mod tests {
     }
 
     #[test]
+    fn an_aborted_run_writes_each_cause_and_each_refusal() {
+        let refused = || vec!["its agent's pipeline wasn't built".to_owned()];
+        let report = Report::new(
+            RunIdentity {
+                run_name: "unbuilt".to_string(),
+                scenario: "test/scenarios/unbuilt_pipeline.toml".to_string(),
+                master_seed: None,
+            },
+            RunEnd {
+                simulated_duration_secs: 0.0,
+                wall_duration_secs: 0.1,
+                stop: RunStop::Aborted {
+                    unbuilt: vec![UnbuiltAgent {
+                        agent: "truck".to_string(),
+                        errors: vec!["nothing supplies the map".to_string()],
+                    }],
+                    faults: vec![HostFault::ForeignCollector {
+                        at: FaultStep::Tick { at_secs: 1.5 },
+                    }],
+                },
+            },
+            DroppedValues::default(),
+            RunEntries {
+                assertions: vec![time_above_failing(Verdict::Unusable {
+                    problems: refused(),
+                })],
+                measures: vec![MeasureReportEntry::new(
+                    "goal_distance".to_string(),
+                    AssertionTarget::parse("agent.truck.node.eval.goal_distance")
+                        .expect("valid target"),
+                    None,
+                    None,
+                    Window::default(),
+                    Reducer::Final,
+                    false,
+                    None,
+                    None,
+                    series(0),
+                )
+                .refused(refused())],
+                evaluations: vec![EvaluationReport {
+                    name: "agent.truck.tracking.twist".to_string(),
+                    application: Some("tracking".to_string()),
+                    agent: Some("truck".to_string()),
+                    kind: "twist_tracking".to_string(),
+                    outcome: EvaluationOutcome::Unusable {
+                        problems: refused(),
+                    },
+                }],
+            },
+        );
+
+        let value = written(&report);
+
+        assert_eq!(value["status"].as_str(), Some("aborted"));
+        let terminated_by = &value["terminated_by"];
+        assert_eq!(terminated_by["kind"].as_str(), Some("aborted"));
+        let causes = terminated_by["causes"].as_array().unwrap();
+        let kinds: Vec<_> = causes.iter().map(|cause| cause["kind"].as_str()).collect();
+        // The refused entries' cause is derived, after the unbuilt pipeline.
+        assert_eq!(
+            kinds,
+            [
+                Some("pipeline_not_built"),
+                Some("unusable_entries"),
+                Some("host_fault")
+            ]
+        );
+        assert_eq!(causes[0]["agent"].as_str(), Some("truck"));
+        assert_eq!(causes[2]["fault"].as_str(), Some("foreign_collector"));
+        assert_eq!(causes[2]["at"]["step"].as_str(), Some("tick"));
+        assert_eq!(causes[2]["at"]["at_secs"].as_float(), Some(1.5));
+        for table in ["assertions", "measures", "evaluations"] {
+            let entry = &value[table].as_array().unwrap()[0];
+            assert_eq!(entry["status"].as_str(), Some("unusable"), "{table}");
+            assert_eq!(
+                entry["problems"].as_array().unwrap()[0].as_str(),
+                Some("its agent's pipeline wasn't built"),
+                "{table}"
+            );
+        }
+        let evaluation = &value["evaluations"].as_array().unwrap()[0];
+        assert_eq!(evaluation["kind"].as_str(), Some("twist_tracking"));
+        assert_eq!(evaluation["status"].as_str(), Some("unusable"));
+        assert!(evaluation.get("samples").is_none());
+    }
+
+    #[test]
+    fn an_underived_evaluation_is_written_with_its_binding_and_no_count() {
+        let mut report = sample_report();
+        let mut bound = twist_bound();
+        for input in &mut bound.inputs {
+            input.refused = 0;
+            input.coverage = None;
+        }
+        for metric in &mut bound.metrics {
+            metric.samples = None;
+        }
+        report.evaluations[0].outcome = EvaluationOutcome::Underived(bound);
+
+        let value = written(&report);
+
+        let evaluation = &value["evaluations"].as_array().unwrap()[0];
+        assert_eq!(evaluation["status"].as_str(), Some("underived"));
+        for count in ["samples", "uncovered", "refused"] {
+            assert!(evaluation.get(count).is_none(), "{count}");
+        }
+        let inputs = evaluation["inputs"].as_array().unwrap();
+        assert_eq!(inputs[0]["role"].as_str(), Some("truth"));
+        assert!(inputs[0].get("gaps").is_none());
+        assert!(inputs[1].get("uncovered").is_none());
+        let metrics = evaluation["metrics"].as_array().unwrap();
+        assert_eq!(metrics[0]["path"].as_str(), Some("eval.inline.twist.surge"));
+        assert!(metrics[0].get("samples").is_none());
+    }
+
+    #[test]
     fn what_binding_fixed_is_written_in_its_own_table_beside_its_params() {
         let mut report = sample_report();
         let roots = "agent.car.odom anchored at global.datum";
-        report.evaluations[0].params = "align = \"declared\"".parse().expect("valid TOML");
-        report.evaluations[0].binding =
+        bound_mut(&mut report).params = "align = \"declared\"".parse().expect("valid TOML");
+        bound_mut(&mut report).binding =
             toml::Table::from_iter([("roots".to_owned(), roots.into())]);
 
         let value = written(&report);
@@ -372,7 +515,7 @@ mod tests {
         let mut report = sample_report();
         report.evaluations[0].application = Some("tracking".to_owned());
         report.evaluations[0].agent = Some("car".to_owned());
-        report.evaluations[0].inputs[0].series = Some("truth.twist".to_owned());
+        bound_mut(&mut report).inputs[0].series = Some("truth.twist".to_owned());
         let value = written(&report);
 
         let evaluation = &value["evaluations"].as_array().unwrap()[0];

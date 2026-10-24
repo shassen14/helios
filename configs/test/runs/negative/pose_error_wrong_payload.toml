@@ -2,7 +2,7 @@
 #
 # The estimate role reads a `StampedTransform`; the `estimate` channel
 # carries a `FrameAwareState`. Setup refuses the evaluation and the run
-# fails (exit 1), naming both types:
+# is aborted (exit 3), naming both types:
 #   it carries ...FrameAwareState, and the role reads ...StampedTransform
 # A pass would mean a payload was read as a type it isn't.
 

@@ -1,4 +1,4 @@
-schema_version = "2.0"
+schema_version = "3.0"
 run_name = "pose_error_sole_instance"
 scenario = "sim/scenarios/01_proving_ground.toml"
 status = "passed"
@@ -11,6 +11,7 @@ kind = "time_budget"
 [[evaluations]]
 name = "est"
 kind = "pose_error"
+status = "derived"
 samples = 801
 uncovered = 0
 

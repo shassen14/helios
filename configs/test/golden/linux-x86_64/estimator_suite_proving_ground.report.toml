@@ -1,4 +1,4 @@
-schema_version = "2.0"
+schema_version = "3.0"
 run_name = "estimator_suite_proving_ground"
 scenario = "sim/scenarios/01_proving_ground.toml"
 status = "passed"
@@ -249,6 +249,7 @@ name = "agent.ProvingCar.estimator.pose"
 application = "estimator"
 agent = "ProvingCar"
 kind = "pose_error"
+status = "derived"
 samples = 24001
 uncovered = 0
 
@@ -341,6 +342,7 @@ name = "agent.ProvingCar.estimator.nees"
 application = "estimator"
 agent = "ProvingCar"
 kind = "nees"
+status = "derived"
 samples = 24001
 uncovered = 0
 

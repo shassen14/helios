@@ -10,8 +10,8 @@
 //!
 //! A run the sim starts leaves a report, compared whole except its wall time
 //! (`<name>.report.toml`); its exit code must be the one its golden status
-//! gives. A run refused before the sim starts leaves only its refusal on
-//! stderr (`<name>.stderr`), and must exit 2. Any difference fails, so a
+//! gives: 0 passed, 1 failed, 3 aborted. A run refused before the sim starts
+//! leaves only its refusal on stderr (`<name>.stderr`), and must exit 2. Any difference fails, so a
 //! change that moves a number updates its golden file in the same commit.
 //!
 //! Run files under `negative/` are negative controls: each must fail, and one
@@ -83,14 +83,18 @@ const SINGLE_STEP: &str = "1";
 const WALL_TIME_KEY: &str = "wall_duration_secs = ";
 /// The report line of a run that passed.
 const PASSED_STATUS: &str = "status = \"passed\"";
+/// The report line of a run aborted untested.
+const ABORTED_STATUS: &str = "status = \"aborted\"";
 
 const REPORT_SUFFIX: &str = "report.toml";
 const STDERR_SUFFIX: &str = "stderr";
 
-/// `helios_test_sim`'s exit codes: passed, failed, refused before the sim.
+/// `helios_test_sim`'s exit codes: passed, failed, refused before the sim,
+/// aborted untested.
 const EXIT_PASSED: i32 = 0;
 const EXIT_FAILED: i32 = 1;
 const EXIT_REFUSED: i32 = 2;
+const EXIT_ABORTED: i32 = 3;
 
 /// What one run produced, in the form its golden file keeps.
 struct Outcome {
@@ -118,6 +122,9 @@ impl Golden {
         match self.kind {
             GoldenKind::Report if self.text.lines().any(|line| line == PASSED_STATUS) => {
                 EXIT_PASSED
+            }
+            GoldenKind::Report if self.text.lines().any(|line| line == ABORTED_STATUS) => {
+                EXIT_ABORTED
             }
             GoldenKind::Report => EXIT_FAILED,
             GoldenKind::Refusal => EXIT_REFUSED,

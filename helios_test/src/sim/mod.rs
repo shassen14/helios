@@ -18,10 +18,18 @@ use crate::runner::Runner;
 
 use helios_core::prelude::MonotonicTime;
 
+use bevy::app::AppExit;
 use bevy::prelude::Resource;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// The exit code of a run that was tested and failed.
+pub const EXIT_FAILED: u8 = 1;
+
+/// The exit code of a run aborted untested, whose report says why. Not 2,
+/// which a run refused before the sim exits with, leaving no report.
+pub const EXIT_ABORTED: u8 = 3;
 
 /// Holds the live [`Runner`] across ticks. Wraps it because `Runner` lives in
 /// the Bevy-free base crate and cannot derive `Resource` itself. Mutated by
@@ -52,9 +60,10 @@ impl WallClockStart {
 /// decides both, in `FixedUpdate`) to the `finalize` system (which needs them,
 /// in a different schedule and so cannot see `tick`'s locals).
 ///
-/// Both fields are `Option` because system 1 can short-circuit straight to
-/// `Flushing` on a setup failure — *before any tick runs* — leaving no
-/// termination at all. `finalize` must cope with that rather than panic.
+/// Both fields are `Option` because an aborted setup routes straight to
+/// `Flushing` — *before any tick runs* — leaving no termination at all, and
+/// a tick that aborts the run stops it with no reason: the runner says why
+/// at finalize.
 ///
 /// `terminated_at` exists because the host cannot stop the moment the runner
 /// says to. `NextState` is applied once per frame, but the fixed loop runs a
@@ -78,11 +87,12 @@ impl RunOutcome {
         }
     }
 
-    /// Record the tick that ended the run. First call wins: any later step in
-    /// the same batch is past the finish line and must not move it.
-    fn terminate(&mut self, now: MonotonicTime, reason: TerminationReason) {
-        if self.reason.is_none() {
-            self.reason = Some(reason);
+    /// Record the tick that ended the run, and why, `None` for an abort.
+    /// First call wins: any later step in the same batch is past the finish
+    /// line and must not move it.
+    fn terminate(&mut self, now: MonotonicTime, reason: Option<TerminationReason>) {
+        if self.terminated_at.is_none() {
+            self.reason = reason;
             self.terminated_at = Some(now);
         }
     }
@@ -91,13 +101,13 @@ impl RunOutcome {
     /// physics — the fixed loop cannot be interrupted — but the runner must not
     /// observe them.
     fn is_terminated(&self) -> bool {
-        self.reason.is_some()
+        self.terminated_at.is_some()
     }
 }
 
-/// The run's pass/fail, written at `finalize` and read by the bin *after*
-/// `app.run()` returns — the one wire by which the verdict escapes the Bevy
-/// loop and becomes the process exit code.
+/// The run's status, written at `finalize` and carried out of the Bevy loop
+/// as the exit code of the `AppExit` it writes, which the bin makes the
+/// process's.
 ///
 /// Defaults to `Failed` (fail-closed): if `finalize` never runs, the run must
 /// report failure, never a silent pass.
@@ -116,15 +126,20 @@ impl RunVerdict {
         self.0 = status;
     }
 
-    /// Whether the run passed. Read by the bin to choose exit 0 vs 1.
-    pub fn passed(&self) -> bool {
-        self.0 == ReportStatus::Passed
+    /// The app's exit: success for a pass, [`EXIT_FAILED`] for a failure,
+    /// [`EXIT_ABORTED`] for an abort.
+    pub fn exit(&self) -> AppExit {
+        match self.0 {
+            ReportStatus::Passed => AppExit::Success,
+            ReportStatus::Failed => AppExit::from_code(EXIT_FAILED),
+            ReportStatus::Aborted => AppExit::from_code(EXIT_ABORTED),
+        }
     }
 }
 
 /// The one wire by which a finished [`Report`] escapes the Bevy loop, for a
 /// batch to aggregate: the struct-sized sibling of [`RunVerdict`], which can
-/// only carry a pass/fail bit out via the exit code.
+/// only carry its status out via the exit code.
 ///
 /// Read the type inside-out and it spells the design:
 /// - `Option` — the slot starts empty and is filled exactly once, at
@@ -190,20 +205,29 @@ impl RunSeed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        report::{DroppedValues, RunEnd, RunEntries, RunIdentity, RunStop},
+        run::termination::TerminationReason,
+    };
 
     #[test]
     fn verdict_defaults_to_failed() {
         // Fail-closed: a runner that never finalizes must not look like a pass.
-        assert!(!RunVerdict::default().passed());
+        assert_eq!(
+            RunVerdict::default().exit(),
+            AppExit::from_code(EXIT_FAILED)
+        );
     }
 
     #[test]
-    fn verdict_reflects_set_status() {
+    fn each_status_exits_with_its_own_code() {
         let mut v = RunVerdict::default();
         v.set(ReportStatus::Passed);
-        assert!(v.passed());
+        assert_eq!(v.exit(), AppExit::Success);
         v.set(ReportStatus::Failed);
-        assert!(!v.passed());
+        assert_eq!(v.exit(), AppExit::from_code(EXIT_FAILED));
+        v.set(ReportStatus::Aborted);
+        assert_eq!(v.exit(), AppExit::from_code(EXIT_ABORTED));
     }
 
     #[test]
@@ -218,18 +242,18 @@ mod tests {
     /// A report of a run named `name` that ran and passed.
     fn report(name: &str) -> Report {
         Report::new(
-            name.to_string(),
-            "scenario".to_string(),
-            Some(99),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            1.0,
-            0.1,
-            crate::report::TerminatedBy::TimeBudget,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            RunIdentity {
+                run_name: name.to_string(),
+                scenario: "scenario".to_string(),
+                master_seed: Some(99),
+            },
+            RunEnd {
+                simulated_duration_secs: 1.0,
+                wall_duration_secs: 0.1,
+                stop: RunStop::Ended(TerminationReason::MaxSimulatedSeconds),
+            },
+            DroppedValues::default(),
+            RunEntries::default(),
         )
     }
 
@@ -251,6 +275,16 @@ mod tests {
     }
 
     #[test]
+    fn an_abort_terminates_with_no_reason() {
+        let mut outcome = RunOutcome::new("run".to_string());
+
+        outcome.terminate(MonotonicTime(1.0), None);
+
+        assert!(outcome.is_terminated());
+        assert!(outcome.reason.is_none());
+    }
+
+    #[test]
     fn a_fresh_outcome_has_not_terminated() {
         let outcome = RunOutcome::new("run".to_string());
 
@@ -262,7 +296,10 @@ mod tests {
     fn terminating_records_the_deciding_tick() {
         let mut outcome = RunOutcome::new("run".to_string());
 
-        outcome.terminate(MonotonicTime(50.0), TerminationReason::MaxSimulatedSeconds);
+        outcome.terminate(
+            MonotonicTime(50.0),
+            Some(TerminationReason::MaxSimulatedSeconds),
+        );
 
         assert!(outcome.is_terminated());
         assert_eq!(outcome.terminated_at, Some(MonotonicTime(50.0)));
@@ -276,8 +313,11 @@ mod tests {
         // — exactly the overshoot `terminated_at` exists to prevent.
         let mut outcome = RunOutcome::new("run".to_string());
 
-        outcome.terminate(MonotonicTime(50.0), TerminationReason::MaxSimulatedSeconds);
-        outcome.terminate(MonotonicTime(50.06), TerminationReason::Aborted);
+        outcome.terminate(
+            MonotonicTime(50.0),
+            Some(TerminationReason::MaxSimulatedSeconds),
+        );
+        outcome.terminate(MonotonicTime(50.06), None);
 
         assert_eq!(outcome.terminated_at, Some(MonotonicTime(50.0)));
         assert!(matches!(

@@ -1,6 +1,7 @@
 //! What a target names in the run: the agent's [`Catalog`] of what it
-//! records, the series a recorded or derived target selects there, the
-//! kind and unit of value they hold, and why a target names none.
+//! records, among the run's [`Catalogs`], the series a recorded or derived
+//! target selects there, the kind and unit of value they hold, and why a
+//! target names none.
 
 use super::{
     entries::Derivable, evaluations::PlannedEvaluation, plan::SeriesTarget, problems::TargetProblem,
@@ -88,6 +89,48 @@ impl<'a> Catalog<'a> {
     }
 }
 
+/// Every agent's [`Catalog`], and the agents whose pipeline wasn't built,
+/// which have none.
+pub(super) struct Catalogs<'a> {
+    built: Vec<Catalog<'a>>,
+    unbuilt: &'a [AgentId],
+}
+
+impl<'a> Catalogs<'a> {
+    /// What each of `pipelines` reports, beside the `unbuilt` agents.
+    pub(super) fn new(
+        pipelines: &'a [(AgentId, &'a AutonomyPipeline)],
+        unbuilt: &'a [AgentId],
+    ) -> Self {
+        Self {
+            built: pipelines
+                .iter()
+                .map(|(agent, pipeline)| Catalog::new(agent, pipeline))
+                .collect(),
+            unbuilt,
+        }
+    }
+
+    /// `agent`'s catalog, or why it has none: its pipeline wasn't built, or
+    /// the run has no such agent.
+    pub(super) fn of(&self, agent: &AgentId) -> Result<&Catalog<'a>, TargetProblem> {
+        match self.built.iter().find(|catalog| catalog.agent == agent) {
+            Some(catalog) => Ok(catalog),
+            None if self.unbuilt.contains(agent) => Err(TargetProblem::PipelineNotBuilt),
+            None => Err(TargetProblem::UnknownAgent),
+        }
+    }
+
+    /// Every agent of the run: each built one, in the order its pipeline
+    /// was given, then each unbuilt one.
+    pub(super) fn agents(&self) -> impl Iterator<Item = &AgentId> {
+        self.built
+            .iter()
+            .map(|catalog| catalog.agent)
+            .chain(self.unbuilt)
+    }
+}
+
 /// What `target` names in the run: its series, every one an instance of one
 /// channel or the one series, the kind of value they hold and its unit, and
 /// whether each value holds until the next.
@@ -109,7 +152,7 @@ pub(super) struct Located {
 pub(super) fn locate(
     target: &AssertionTarget,
     allow_nondeterministic: bool,
-    catalogs: &[Catalog],
+    catalogs: &Catalogs,
     collector: &ObservationCollector,
 ) -> Result<Located, Vec<TargetProblem>> {
     let (catalog, selected) = find(target, catalogs)?;
@@ -170,14 +213,12 @@ pub(super) type Selected<'c, 'a> = (&'c Catalog<'a>, Vec<(&'c Subject, &'c Obser
 /// check, so that problem is reported alone.
 pub(super) fn find<'c, 'a>(
     target: &AssertionTarget,
-    catalogs: &'c [Catalog<'a>],
+    catalogs: &'c Catalogs<'a>,
 ) -> Result<Selected<'c, 'a>, Vec<TargetProblem>> {
     let TargetRoot::Agent { agent, subject } = target.root() else {
         return Err(vec![TargetProblem::Unreported]);
     };
-    let Some(catalog) = catalogs.iter().find(|catalog| catalog.agent == agent) else {
-        return Err(vec![TargetProblem::UnknownAgent]);
-    };
+    let catalog = catalogs.of(agent).map_err(|problem| vec![problem])?;
     let matching = catalog.matching(subject);
     if matching.is_empty() {
         return Err(vec![unreported(catalog, subject)]);
@@ -191,14 +232,14 @@ pub(super) fn find<'c, 'a>(
 /// in run-file order, held when every evaluation's base is; or why the run
 /// can't read it. A selected evaluation the run refused refuses the target
 /// for that alone, its own reasons reported with it, naming each under
-/// `*`. A suite's entry on an agent `catalogs` lacks is refused as an
-/// unknown agent, and `*` selecting nothing as such.
+/// `*`. A suite's entry on an agent `catalogs` has no catalog of is refused
+/// for why it has none, and `*` selecting nothing as such.
 pub(super) fn locate_derived(
     target: &AssertionTarget,
     derived: &DerivedTarget,
     allow_nondeterministic: bool,
     derivable: &Derivable,
-    catalogs: &[Catalog],
+    catalogs: &Catalogs,
 ) -> Result<Located, Vec<TargetProblem>> {
     let each = derived.selects_each_agent();
     let refused: Vec<String> = derivable
@@ -223,19 +264,17 @@ pub(super) fn locate_derived(
         .filter(|(_, planned)| derived.selects(&planned.name))
         .collect();
     if selected.is_empty() {
-        let unknown_agent = match derived.evaluation() {
+        let uncatalogued = match derived.evaluation() {
             EvaluationSelector::Agent(applied) => match &applied.agent {
-                AgentSelector::One(agent) => !catalogs.iter().any(|catalog| catalog.agent == agent),
-                AgentSelector::Each => false,
+                AgentSelector::One(agent) => catalogs.of(agent).err(),
+                AgentSelector::Each => None,
             },
-            EvaluationSelector::Inline(_) => false,
+            EvaluationSelector::Inline(_) => None,
         };
-        return Err(vec![if each {
-            TargetProblem::NoEvaluationSelected
-        } else if unknown_agent {
-            TargetProblem::UnknownAgent
-        } else {
-            TargetProblem::Unreported
+        return Err(vec![match uncatalogued {
+            _ if each => TargetProblem::NoEvaluationSelected,
+            Some(problem) => problem,
+            None => TargetProblem::Unreported,
         }]);
     }
 

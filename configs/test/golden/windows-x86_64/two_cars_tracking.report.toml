@@ -1,4 +1,4 @@
-schema_version = "2.0"
+schema_version = "3.0"
 run_name = "two_cars_tracking"
 scenario = "test/scenarios/two_cars.toml"
 status = "passed"
@@ -202,6 +202,7 @@ name = "agent.NorthCar.tracking.twist"
 application = "tracking"
 agent = "NorthCar"
 kind = "twist_tracking"
+status = "derived"
 samples = 12001
 uncovered = 79
 
@@ -275,6 +276,7 @@ name = "agent.SouthCar.tracking.twist"
 application = "tracking"
 agent = "SouthCar"
 kind = "twist_tracking"
+status = "derived"
 samples = 12001
 uncovered = 79
 
@@ -348,6 +350,7 @@ name = "agent.NorthCar.contacts.contacts"
 application = "contacts"
 agent = "NorthCar"
 kind = "contacts"
+status = "derived"
 samples = 12001
 uncovered = 0
 
@@ -390,6 +393,7 @@ name = "agent.SouthCar.contacts.contacts"
 application = "contacts"
 agent = "SouthCar"
 kind = "contacts"
+status = "derived"
 samples = 12001
 uncovered = 0
 

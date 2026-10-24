@@ -4,7 +4,7 @@
 
 use super::{
     evaluations::PlannedEvaluation,
-    locate::{instances, locate, locate_derived, Catalog, Located},
+    locate::{instances, locate, locate_derived, Catalogs, Located},
     plan::{EntryOwner, SeriesTarget},
     problems::TargetProblem,
 };
@@ -53,7 +53,7 @@ pub(super) struct Found<'r> {
 /// its target's problems, then each anchor's.
 pub(super) fn check<'r>(
     wanted: &Wanted<'r>,
-    catalogs: &[Catalog],
+    catalogs: &Catalogs,
     derived: &Derivable,
     collector: &ObservationCollector,
 ) -> Result<Found<'r>, Vec<TargetProblem>> {

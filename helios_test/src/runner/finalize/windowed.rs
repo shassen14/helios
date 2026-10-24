@@ -111,7 +111,6 @@ mod tests {
     use crate::{
         assertion::AssertionValue,
         report::{AssertionStatus, FailureReason, ReportStatus, SeriesSummary, Verdict},
-        run::termination::TerminationReason,
         runner::fixtures::{
             at, cont, ready, report, report_speed, run, run_measuring, speed_target, target, term,
             windowed, CAR, TRUCK,
@@ -263,11 +262,7 @@ mod tests {
         let (mut r, collector) = ready(run(&budget(), &[&settled]), &[CAR]);
         r.tick(at(1.0), &collector);
         assert_eq!(
-            statuses(&finalize_stopped_by(
-                &r,
-                &collector,
-                TerminationReason::Aborted
-            )),
+            statuses(&finalize_stopped_by(&r, &collector, failed_first())),
             [AssertionStatus::Unjudged]
         );
     }

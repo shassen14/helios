@@ -8,15 +8,18 @@ use super::{
     windowed::Windowed,
 };
 use crate::{
-    assertion::Window,
+    assertion::{EntryName, Window},
     collector::ObservationCollector,
     evaluation::derived::Derived,
-    report::{AssertionReportEntry, EvaluationReportEntry, MeasureReportEntry, Verdict},
+    report::{
+        AssertionReportEntry, EvaluationOutcome, EvaluationReport, FaultStep, HostFault,
+        MeasureReportEntry, Verdict,
+    },
     runner::{
         resolve::{evaluations::PlannedEvaluation, EntryOwner, EntryView, ResolvedPlan},
         state::AssertionState,
         window::{first_stamp, place, Placement},
-        Phase, Runner, TickSpan, FOREIGN_COLLECTOR, NEVER_SET_UP,
+        Phase, Runner, TickSpan,
     },
 };
 
@@ -35,24 +38,30 @@ pub(super) struct Reached<'p, 'c> {
 
 impl<'p, 'c> Reached<'p, 'c> {
     /// What `runner` reached, its entries read from `collector` and the
-    /// series its evaluations `derived`. With it, why the run fails though
-    /// its host stopped it: a host that finalizes without having set the
-    /// run up, or with another run's collector, fails it here as `tick`
+    /// series its evaluations `derived`. With it, the host's fault in
+    /// finalizing it, if any: a host that finalizes without having set the
+    /// run up, or with another run's collector, aborts it here as `tick`
     /// would have.
     pub(super) fn new(
         runner: &'p Runner,
         collector: &'c ObservationCollector,
         derived: Option<&'c [Derived]>,
-    ) -> (Self, Option<&'static str>) {
-        let (plan, judged, failure) = match &runner.phase {
+    ) -> (Self, Option<HostFault>) {
+        let (plan, judged, fault) = match &runner.phase {
             Phase::Ready(plan) => {
                 match derived.and_then(|derived| plan.with_series(collector, derived)) {
                     Some(judged) => (Some(plan), judged, None),
-                    None => (Some(plan), Vec::new(), Some(FOREIGN_COLLECTOR)),
+                    None => (
+                        Some(plan),
+                        Vec::new(),
+                        Some(HostFault::ForeignCollector {
+                            at: FaultStep::Finalize,
+                        }),
+                    ),
                 }
             }
-            Phase::AwaitingPipelines => (None, Vec::new(), Some(NEVER_SET_UP)),
-            Phase::Aborted => (None, Vec::new(), None),
+            Phase::AwaitingPipelines => (None, Vec::new(), Some(HostFault::NeverSetUp)),
+            Phase::Aborted(_) => (None, Vec::new(), None),
         };
         let ran_out = runner.ticks.is_some_and(|span| {
             runner
@@ -68,10 +77,11 @@ impl<'p, 'c> Reached<'p, 'c> {
             derived,
             ran_out,
         };
-        (reached, failure)
+        (reached, fault)
     }
 
-    /// One line per assertion on each series it read, in run-file order.
+    /// One line per assertion on each series it read, in run-file order;
+    /// one, `unusable`, per assertion setup refused.
     pub(super) fn assertions(&self) -> Vec<AssertionReportEntry> {
         self.runner
             .run
@@ -82,8 +92,10 @@ impl<'p, 'c> Reached<'p, 'c> {
                 self.each_or_unread(EntryOwner::Assertion(index))
                     .into_iter()
                     .map(|entry| {
-                        let (series, verdict) = match entry.zip(self.runner.ticks) {
-                            Some((entry, span)) => {
+                        let refused = self.refused(&assertion.name);
+                        let (series, verdict) = match (entry.zip(self.runner.ticks), refused) {
+                            (_, Some(problems)) => (unread(), Verdict::Unusable { problems }),
+                            (Some((entry, span)), None) => {
                                 let windowed = Windowed::new(
                                     entry,
                                     &assertion.window,
@@ -95,7 +107,7 @@ impl<'p, 'c> Reached<'p, 'c> {
                                     judge(assertion, entry.rejection(), &windowed),
                                 )
                             }
-                            None => (unread(), Verdict::Unjudged { actual: None }),
+                            (None, None) => (unread(), Verdict::Unjudged { actual: None }),
                         };
                         AssertionReportEntry::new(
                             assertion.name.to_string(),
@@ -132,7 +144,7 @@ impl<'p, 'c> Reached<'p, 'c> {
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
-            Phase::AwaitingPipelines | Phase::Aborted => Vec::new(),
+            Phase::AwaitingPipelines | Phase::Aborted(_) => Vec::new(),
         };
         for (index, evaluation) in self.planned().iter().enumerate() {
             let refused = self.collector.refused(evaluation.id).unwrap_or_default();
@@ -166,7 +178,8 @@ impl<'p, 'c> Reached<'p, 'c> {
         recording
     }
 
-    /// One line per measure on each series it read, in run-file order.
+    /// One line per measure on each series it read, in run-file order;
+    /// one, `unusable`, per measure setup refused.
     pub(super) fn measures(&self) -> Vec<MeasureReportEntry> {
         self.runner
             .run
@@ -185,26 +198,53 @@ impl<'p, 'c> Reached<'p, 'c> {
                                 span,
                             )
                         });
-                        report_measure(measure, judged, windowed.as_ref())
+                        let line = report_measure(measure, judged, windowed.as_ref());
+                        match self.refused(&measure.name) {
+                            Some(problems) => line.refused(problems),
+                            None => line,
+                        }
                     })
                     .collect::<Vec<_>>()
             })
             .collect()
     }
 
-    /// One line per evaluation that derived its series, in run-file order.
-    pub(super) fn evaluations(&self) -> Vec<EvaluationReportEntry> {
-        self.planned()
-            .iter()
-            .zip(self.derived.into_iter().flatten())
-            .map(|(evaluation, derived)| {
-                report_evaluation(
-                    evaluation,
-                    derived,
-                    self.collector.refused(evaluation.id).unwrap_or_default(),
-                )
-            })
-            .collect()
+    /// One line per evaluation setup bound, then one per evaluation it
+    /// refused, each in run-file order. A bound one derived unless the run
+    /// was aborted before it could, as a refusal, a host fault, or another
+    /// run's collector at finalize does.
+    pub(super) fn evaluations(&self) -> Vec<EvaluationReport> {
+        let bound = self.bound().iter().enumerate().map(|(index, evaluation)| {
+            let derived = self.derived.and_then(|derived| derived.get(index));
+            report_evaluation(
+                evaluation,
+                derived.map(|derived| {
+                    let refused = self.collector.refused(evaluation.id).unwrap_or_default();
+                    (derived, refused)
+                }),
+            )
+        });
+        let refused = match &self.runner.phase {
+            Phase::Aborted(abort) => abort.unusable.evaluations.as_slice(),
+            Phase::AwaitingPipelines | Phase::Ready(_) => &[],
+        };
+        let refused = refused.iter().map(|evaluation| {
+            let applied = evaluation.name.applied();
+            EvaluationReport {
+                name: evaluation.name.to_string(),
+                application: applied.map(|(_, application)| application.to_string()),
+                agent: applied.map(|(agent, _)| agent.as_str().to_owned()),
+                kind: evaluation.kind.clone(),
+                outcome: EvaluationOutcome::Unusable {
+                    problems: evaluation
+                        .problems
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                },
+            }
+        });
+        bound.chain(refused).collect()
     }
 
     /// Each value a measure's recorded series turned away, in run-file
@@ -263,8 +303,31 @@ impl<'p, 'c> Reached<'p, 'c> {
         })
     }
 
+    /// Why setup refused the assertion or measure named `name`, each problem
+    /// spelled; `None` when it didn't.
+    fn refused(&self, name: &EntryName) -> Option<Vec<String>> {
+        let Phase::Aborted(abort) = &self.runner.phase else {
+            return None;
+        };
+        let entry = abort
+            .unusable
+            .entries
+            .iter()
+            .find(|entry| &entry.name == name)?;
+        Some(entry.problems.iter().map(ToString::to_string).collect())
+    }
+
     /// Each evaluation the plan holds; none in a run never set up.
     fn planned(&self) -> &'p [PlannedEvaluation] {
         self.plan.map_or(&[][..], |plan| plan.evaluations())
+    }
+
+    /// Each evaluation setup bound: the plan's, or, in a run aborted, those
+    /// the abort kept.
+    fn bound(&self) -> &'p [PlannedEvaluation] {
+        match &self.runner.phase {
+            Phase::Aborted(abort) => &abort.bound,
+            Phase::AwaitingPipelines | Phase::Ready(_) => self.planned(),
+        }
     }
 }

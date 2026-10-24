@@ -7,7 +7,7 @@
 use super::{
     entries::{check, Derivable, Wanted},
     evaluations::{resolve_evaluations, PlannedEvaluation, RunEvaluations},
-    locate::Catalog,
+    locate::Catalogs,
     problems::{Unusable, UnusableEntry},
 };
 use crate::{
@@ -144,6 +144,11 @@ impl ResolvedPlan {
     pub(in crate::runner) fn states(&self) -> impl Iterator<Item = &AssertionState> {
         self.entries.iter().map(|entry| &entry.state)
     }
+
+    /// Its evaluations, for a run stopped before it derived them.
+    pub(in crate::runner) fn into_evaluations(self) -> Vec<PlannedEvaluation> {
+        self.evaluations
+    }
 }
 
 /// _Per-step._ Which run-file entry a plan entry evaluates: an index into
@@ -251,23 +256,30 @@ impl<S: std::ops::Deref<Target = AssertionState>> EntryView<'_, '_, S> {
     }
 }
 
+/// _Pre-step._ A run setup refused: the evaluations it could still bind,
+/// which the report names though the run never derives them, and every
+/// one, assertion and measure it can't use.
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::runner) struct Unresolved {
+    pub bound: Vec<PlannedEvaluation>,
+    pub unusable: Unusable,
+}
+
 /// The plan for evaluating `evaluations` (each suite's on each agent it is
 /// applied to), `assertions` and `measures`, with each one's series and
-/// inputs bound in `collector`, or every one the run can't evaluate, each
-/// list in run-file order. Evaluations are resolved first, since an entry
-/// may read one's metric.
+/// inputs bound in `collector`, or what the run could bind of them beside
+/// every one it can't evaluate, each list in run-file order. Evaluations are resolved first, since an entry
+/// may read one's metric. One on an `unbuilt` agent is refused for that.
 pub(in crate::runner) fn resolve(
     evaluations: RunEvaluations,
     assertions: &[Assertion],
     measures: &[Measure],
     registry: &EvaluatorRegistry,
     pipelines: &[(AgentId, &AutonomyPipeline)],
+    unbuilt: &[AgentId],
     collector: &mut ObservationCollector,
-) -> Result<ResolvedPlan, Unusable> {
-    let catalogs: Vec<Catalog> = pipelines
-        .iter()
-        .map(|(agent, pipeline)| Catalog::new(agent, pipeline))
-        .collect();
+) -> Result<ResolvedPlan, Unresolved> {
+    let catalogs = Catalogs::new(pipelines, unbuilt);
 
     let mut unusable = Unusable::default();
     let (planned, refused) = resolve_evaluations(evaluations, registry, &catalogs, collector);
@@ -360,7 +372,10 @@ pub(in crate::runner) fn resolve(
             evaluations: planned,
         })
     } else {
-        Err(unusable)
+        Err(Unresolved {
+            bound: planned,
+            unusable,
+        })
     }
 }
 
