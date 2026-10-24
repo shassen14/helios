@@ -28,13 +28,12 @@
 //! `SafetyMonitorNode` downstream of this node, not here.
 
 use super::input::ControlInputBuilder;
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::control::Controller;
-use helios_core::data::TfProvider;
+use helios_core::prelude::TfProvider;
 
 use std::sync::Mutex;
 
@@ -62,14 +61,14 @@ where
         name: impl Into<String>,
         controller: C,
         input_builder: Box<dyn ControlInputBuilder<Output = C::Inputs>>,
-        output: InternalChannel,
+        output: ChannelKey,
     ) -> Self {
-        let descriptor = AlgorithmNodePortDescriptor::new()
+        let descriptor = PortDescriptorBuilder::algorithm()
             .inputs_from_slices(
                 input_builder.required_channels(),
                 input_builder.optional_channels(),
             )
-            .output_internal(output.clone())
+            .output(output.clone())
             .build();
 
         Self {
@@ -77,7 +76,7 @@ where
             controller: Mutex::new(controller),
             input_builder,
             descriptor,
-            output_key: output.into(),
+            output_key: output,
         }
     }
 }
@@ -114,7 +113,13 @@ where
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(self.output_key.clone(), stamped);
+        if let Err(error) = bus.write(self.output_key.clone(), stamped) {
+            tracing::warn!(
+                channel = %self.output_key,
+                error = %error,
+                "controller command output channel write failed"
+            );
+        }
     }
 }
 
@@ -131,19 +136,21 @@ mod tests {
     //!   - mirrors the builder's required/optional channels in its descriptor
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use crate::channels::estimate::estimate;
+    use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
 
     use crate::port::ChannelKey;
 
     use helios_core::control::commands::{BodyTwist, BodyWrench};
     use helios_core::control::{BodyTwistRef, ControlInputs};
-    use helios_core::data::primitives::MonotonicTime;
-    use helios_core::data::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::frames::quantities::FluVector;
-    use helios_core::frames::{FrameAwareState, FrameId};
+    use helios_core::estimation::frames::EstimationFrames;
+    use helios_core::prelude::AgentId;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::quantities::FluVector;
+    use helios_core::spatial::{FrameAwareState, FrameId};
 
-    use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
 
     // --- Mock TfProvider ---
@@ -157,11 +164,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
-                Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 
@@ -229,7 +232,7 @@ mod tests {
     impl AlwaysReadyBuilder {
         fn new() -> Self {
             Self {
-                required: vec![InternalChannel::of::<FrameAwareState>().into()],
+                required: vec![estimate()],
                 optional: vec![],
             }
         }
@@ -245,8 +248,10 @@ mod tests {
             Some(ControlInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
-                    std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
-                    0.0,
+                    std::sync::Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(
+                        AgentId::new("test_agent"),
+                    ))),
+                    MonotonicTime(0.0),
                 ),
                 reference: None,
             })
@@ -284,25 +289,16 @@ mod tests {
     // --- Helpers ---
 
     fn twist_channel() -> ChannelKey {
-        InternalChannel::of::<BodyTwist>().into()
+        ChannelKey::internal_of::<BodyTwist>()
     }
 
     fn make_bus(output: ChannelKey) -> PortBus {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![output],
-            rate: None,
-        };
-        PortBus::new(&[descriptor])
+        let descriptor = PortDescriptor::new(vec![], vec![], vec![output], None);
+        PortBus::of_descriptors(&[descriptor])
     }
 
-    fn tick_at(now: f64, dt: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt,
-            node_id: 11,
-        }
+    fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), dt, 11)
     }
 
     // --- Tests ---
@@ -314,10 +310,16 @@ mod tests {
             "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![twist_channel()]);
-        assert!(node.port_descriptor().rate.is_none());
+        assert_eq!(
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![twist_channel()]
+        );
+        assert!(node.port_descriptor().rate().is_none());
     }
 
     #[test]
@@ -331,10 +333,22 @@ mod tests {
             "direct_twist",
             controller,
             Box::new(builder),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
-        assert_eq!(node.port_descriptor().required_inputs, expected_required);
-        assert_eq!(node.port_descriptor().optional_inputs, expected_optional);
+        assert_eq!(
+            node.port_descriptor()
+                .required_inputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            expected_required
+        );
+        assert_eq!(
+            node.port_descriptor()
+                .optional_inputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            expected_optional
+        );
     }
 
     #[test]
@@ -344,7 +358,7 @@ mod tests {
             "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
@@ -362,14 +376,20 @@ mod tests {
         // The same node type, monomorphized over a controller whose `Out` is
         // `BodyWrench`, publishes on a `BodyWrench`-typed channel — the output
         // slot is caller-supplied but its payload type must match `C::Out`.
-        let wrench_channel: ChannelKey = InternalChannel::of::<BodyWrench>().into();
+        let wrench_channel = ChannelKey::internal_of::<BodyWrench>();
         let node = ControllerNode::new(
             "wrench",
             WrenchController,
             Box::new(AlwaysReadyBuilder::new()),
-            InternalChannel::of::<BodyWrench>(),
+            ChannelKey::internal_of::<BodyWrench>(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![wrench_channel.clone()]);
+        assert_eq!(
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![wrench_channel.clone()]
+        );
 
         let bus = make_bus(wrench_channel.clone());
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
@@ -388,7 +408,7 @@ mod tests {
                 required: vec![],
                 optional: vec![],
             }),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
@@ -403,7 +423,7 @@ mod tests {
             "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(0.0, 0.02));

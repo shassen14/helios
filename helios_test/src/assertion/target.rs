@@ -1,245 +1,551 @@
-use std::collections::HashMap;
+use crate::evaluation::path::{DerivedProblem, DerivedTarget};
 
-use helios_runtime::{AutonomyPipeline, ChannelKey};
-use serde::Deserialize;
+use helios_core::prelude::{AgentId, FrameId};
+use helios_runtime::{
+    observe::path::{channel_path, AgentPathParts, PathPart, PathSubject, SUBJECT_WORDS},
+    port::ChannelKey,
+};
 
-/// _Shared (pre + per)._ A symbolic subsystem path naming what an assertion
-/// watches. Parsed from the run file, then used as a per-step registry key.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-pub struct AssertionTarget(String);
+use serde::{
+    de::{self, value::MapAccessDeserializer, MapAccess, Visitor},
+    ser::SerializeMap,
+    Deserialize, Deserializer, Serialize, Serializer,
+};
+use std::{fmt, sync::Arc};
+
+/// The keys of a selector's table form.
+const PATH_KEY: &str = "path";
+const INSTANCE_KEY: &str = "instance";
+
+/// How a selector asks for every instance of a keyed channel, a derived
+/// target for every agent's evaluation of a suite entry, and a suite
+/// application for every agent of the run.
+pub(crate) const WILDCARD: &str = "*";
+
+/// _Shared (pre + per + post)._ A selector: the path of a series, held whole
+/// and in its parts, and, on a keyed channel, which of its instances. A
+/// recorded series' path is the watcher path it is recorded under
+/// (`agent.<agent>.node.<node>.<leaf>` or `agent.<agent>.channel.<channel>`);
+/// a derived one's is `eval.inline.<evaluation>.<metric>`, or
+/// `eval.agent.<agent>.<suite>.<evaluation>.<metric>` for a suite's, where
+/// `<agent>` may be `*` for every agent the suite was applied to. A recorded
+/// path names one agent.
+///
+/// Written as the path alone, or as `{ path = "…", instance = "…" }`: an
+/// instance gets its own field because its spelling holds dots (a frame,
+/// `agent.car.base_link`) the path grammar can't. `instance = "*"` asks for
+/// every instance, each its own series.
+///
+/// Only a path that splits into its parts becomes a selector, so a run file
+/// naming anything else is refused when it is read, before a sim starts.
+/// Whether the agent reports what the path names, and has the instance, is
+/// checked later, against the built pipelines.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AssertionTarget {
+    path: String,
+    root: TargetRoot,
+    instance: Option<InstanceSelector>,
+}
 
 impl AssertionTarget {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// _Per-step._ Identifies one agent at runtime; supplied by the host, used as a
-/// registry key. Not parsed from the run file.
-// TODO: move to `helios_runtime` once multi-agent scheduling lands there.
-// Lives in `helios_test` for now so we don't churn the runtime crate before
-// it has a real consumer.
-// TODO: String -> Arc<str>
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-pub struct AgentId(String);
-
-impl AgentId {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// _Per-step._ Resolves an assertion target to a bus channel; built at
-/// pipeline-built time, queried each tick.
-// Leaf-lookup map: TOML target string → bus channel for one agent. Populated
-// once per agent at `on_pipeline_built`; queried once per assertion per tick.
-pub struct TargetRegistry {
-    by_target: HashMap<(AgentId, AssertionTarget), ChannelKey>,
-}
-
-impl TargetRegistry {
-    pub fn new() -> Self {
-        TargetRegistry {
-            by_target: HashMap::new(),
+    /// The target `path` names, with no instance, or why it names none.
+    pub fn parse(path: impl Into<String>) -> Result<Self, MalformedTarget> {
+        let path = path.into();
+        let root = if DerivedTarget::is_derived(&path) {
+            DerivedTarget::parse(&path)
+                .map(TargetRoot::Derived)
+                .map_err(TargetFault::Derived)
+        } else {
+            match AgentPathParts::split(&path) {
+                Ok(parts) if parts.agent == WILDCARD => Err(TargetFault::EachAgentRecorded),
+                Ok(parts) => Ok(TargetRoot::Agent {
+                    agent: AgentId::new(parts.agent),
+                    subject: TargetSubject::from(parts.subject),
+                }),
+                Err(part) => Err(TargetFault::Recorded(part)),
+            }
+        };
+        match root {
+            Ok(root) => Ok(Self {
+                path,
+                root,
+                instance: None,
+            }),
+            Err(fault) => Err(MalformedTarget { path, fault }),
         }
     }
 
-    // Last-writer-wins. Same justification as `ExtractorTable::register` —
-    // lets tests stage fixture entries over a built-up registry without a
-    // separate "override" entry point.
-    pub fn register(&mut self, agent: AgentId, target: AssertionTarget, channel: ChannelKey) {
-        self.by_target.insert((agent, target), channel);
+    /// The selector of `channel` on `agent`, at `instance` when the channel
+    /// is keyed by frame. Its path is spelled from the parts, never parsed,
+    /// so it is well-formed by construction.
+    pub fn channel(agent: &AgentId, channel: &ChannelKey, instance: Option<&FrameId>) -> Self {
+        Self {
+            path: channel_path(agent.as_str(), channel),
+            root: TargetRoot::Agent {
+                agent: agent.clone(),
+                subject: TargetSubject::Channel {
+                    channel: channel.name().clone(),
+                },
+            },
+            instance: instance.map(|frame| InstanceSelector::One(frame.to_string().into())),
+        }
     }
 
-    // The `clone()` pair is the price of a tuple `HashMap` key — `get` needs
-    // a `&(AgentId, AssertionTarget)`, and `(&AgentId, &AssertionTarget)`
-    // doesn't satisfy `Borrow`. Two small string clones per assertion per
-    // tick is well below anything worth restructuring the map for; revisit
-    // if a profile ever flags it.
-    pub fn resolve(&self, agent: &AgentId, target: &AssertionTarget) -> Option<&ChannelKey> {
-        self.by_target.get(&(agent.clone(), target.clone()))
+    /// This selector narrowed to `instance`.
+    pub fn with_instance(self, instance: InstanceSelector) -> Self {
+        Self {
+            instance: Some(instance),
+            ..self
+        }
+    }
+
+    /// The watcher path, without the instance: what the host is asked to
+    /// record, since a channel path watches every instance.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Whether it names a recorded series, and whose, or a derived one.
+    pub fn root(&self) -> &TargetRoot {
+        &self.root
+    }
+
+    /// Whether it names a series a host records, which the host is asked
+    /// for. A derived series is computed from recorded ones instead.
+    pub fn is_recorded(&self) -> bool {
+        matches!(self.root, TargetRoot::Agent { .. })
+    }
+
+    /// Which instances of a keyed channel it selects. `None` when it names
+    /// none, which only a series with no instance or one alone satisfies.
+    pub fn instance(&self) -> Option<&InstanceSelector> {
+        self.instance.as_ref()
+    }
+
+    /// Whether a value recorded at `instance` under this selector's path is
+    /// one it selects.
+    pub fn covers(&self, instance: Option<&str>) -> bool {
+        match &self.instance {
+            None | Some(InstanceSelector::Each) => true,
+            Some(InstanceSelector::One(one)) => instance == Some(one.as_ref()),
+        }
     }
 }
 
-impl Default for TargetRegistry {
-    fn default() -> Self {
-        Self::new()
+impl TryFrom<String> for AssertionTarget {
+    type Error = MalformedTarget;
+
+    fn try_from(path: String) -> Result<Self, Self::Error> {
+        Self::parse(path)
     }
 }
 
-pub fn build_for_pipeline(
-    agent: &AgentId,
-    pipeline: &AutonomyPipeline,
-) -> Vec<(AssertionTarget, ChannelKey)> {
-    let mut pairs: Vec<(AssertionTarget, ChannelKey)> = pipeline
-        .channels()
-        .map(|(node_name, key)| {
-            let target_str = format!(
-                "agent.{}.{}.{}",
-                agent.as_str(),
-                node_name,
-                channel_to_path_segment(key)
-            );
-            (AssertionTarget::new(target_str), key.clone())
+/// The path, then `[instance=…]` when it names one, so every message about
+/// it says which instance.
+impl fmt::Display for AssertionTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.path)?;
+        if let Some(instance) = &self.instance {
+            write!(f, "[{INSTANCE_KEY}={instance}]")?;
+        }
+        Ok(())
+    }
+}
+
+/// The path, or a table with `path` and an optional `instance`. By hand
+/// rather than `untagged`, so a malformed selector is refused with what a
+/// selector may be.
+impl<'de> Deserialize<'de> for AssertionTarget {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(TargetVisitor)
+    }
+}
+
+/// As it was written: the path alone, or the table when it names an
+/// instance.
+impl Serialize for AssertionTarget {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.instance {
+            None => serializer.serialize_str(&self.path),
+            Some(instance) => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry(PATH_KEY, &self.path)?;
+                map.serialize_entry(INSTANCE_KEY, &instance.to_string())?;
+                map.end()
+            }
+        }
+    }
+}
+
+struct TargetVisitor;
+
+impl<'de> Visitor<'de> for TargetVisitor {
+    type Value = AssertionTarget;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "a watcher path, or {{ {PATH_KEY} = \"<path>\", {INSTANCE_KEY} = \"<instance>\" \
+             or \"{WILDCARD}\" }}"
+        )
+    }
+
+    fn visit_str<E: de::Error>(self, path: &str) -> Result<AssertionTarget, E> {
+        AssertionTarget::parse(path).map_err(de::Error::custom)
+    }
+
+    fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<AssertionTarget, M::Error> {
+        let table = TargetTable::deserialize(MapAccessDeserializer::new(map))?;
+        let target = AssertionTarget::parse(table.path).map_err(de::Error::custom)?;
+        Ok(match table.instance {
+            Some(instance) => target.with_instance(instance),
+            None => target,
         })
-        .collect();
-
-    // `channels()` already yields a deterministic topological order, but we
-    // re-sort alphabetically by target path: these are human-referenced
-    // strings, so alphabetical order makes registry dumps and any future
-    // diagnostic output scannable and diffable, independent of pipeline build
-    // order. Ordering doesn't affect `TargetRegistry` lookups (a `HashMap`);
-    // it's purely for the listing.
-    pairs.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-    pairs
-}
-
-// Maps a `ChannelKey` to one dot-path segment used inside the target string.
-// Prefers the channel's instance disambiguator (e.g. `oracle/pose`) because
-// that's the name humans wrote in the config; falls back to the type name
-// when the instance is empty (the unnamed/default channel case).
-//
-// `/` is rewritten to `_` so the segment stays a single dot-path token —
-// `agent.car.mapper.oracle/pose` would otherwise split into two segments
-// downstream.
-fn channel_to_path_segment(key: &ChannelKey) -> String {
-    let raw = key.instance();
-    if !raw.trim().is_empty() {
-        raw.replace('/', "_")
-    } else {
-        to_snake_case(last_segment(key.type_name()))
     }
 }
 
-fn last_segment(type_name: &'static str) -> &'static str {
-    type_name.rsplit("::").next().unwrap_or(type_name)
+/// A selector's table form as written.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetTable {
+    path: String,
+    #[serde(default)]
+    instance: Option<InstanceSelector>,
 }
 
-// Lowercase + underscore-separated. `FrameAwareState` → `frame_aware_state`,
-// `f64` → `f64`. Sufficient for Rust type names; not a general-purpose
-// snake_case (no digit-boundary handling, no acronym preservation). If a
-// type name with quirks shows up, switch to the `heck` crate.
-fn to_snake_case(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for (i, ch) in s.chars().enumerate() {
-        if i > 0 && ch.is_uppercase() {
-            out.push('_');
+/// _Shared (pre + per + post)._ Which instances of a keyed channel a selector
+/// names: one, by its spelling, or each (`"*"`), every one its own series.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "String")]
+pub enum InstanceSelector {
+    One(Arc<str>),
+    Each,
+}
+
+impl TryFrom<String> for InstanceSelector {
+    type Error = &'static str;
+
+    fn try_from(instance: String) -> Result<Self, Self::Error> {
+        match instance.as_str() {
+            "" => Err("an instance is never empty; leave `instance` out to name none"),
+            WILDCARD => Ok(InstanceSelector::Each),
+            _ => Ok(InstanceSelector::One(instance.into())),
         }
-        out.extend(ch.to_lowercase());
     }
-    out
+}
+
+impl fmt::Display for InstanceSelector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstanceSelector::One(one) => f.write_str(one),
+            InstanceSelector::Each => f.write_str(WILDCARD),
+        }
+    }
+}
+
+/// _Shared (pre + per)._ What a target names: a series an agent records, or
+/// one an evaluation derives.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TargetRoot {
+    Agent {
+        agent: AgentId,
+        subject: TargetSubject,
+    },
+    Derived(DerivedTarget),
+}
+
+/// _Shared (pre + per)._ What kind of value a target names, with its parts
+/// after the subject word.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TargetSubject {
+    /// What a pipeline node said about itself.
+    Node {
+        node: Arc<str>,
+        /// The leaf, dots included.
+        leaf: Arc<str>,
+    },
+    /// The values on one of the agent's channels, by its name: every
+    /// instance of a keyed channel.
+    Channel { channel: Arc<str> },
+}
+
+impl From<PathSubject<'_>> for TargetSubject {
+    fn from(subject: PathSubject<'_>) -> Self {
+        match subject {
+            PathSubject::Node { node, leaf } => TargetSubject::Node {
+                node: node.into(),
+                leaf: leaf.into(),
+            },
+            PathSubject::Channel { channel } => TargetSubject::Channel {
+                channel: channel.into(),
+            },
+        }
+    }
+}
+
+/// _Pre-step._ A run-file target that doesn't split into the parts of a
+/// watcher path or a derived key, and what is wrong with it.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("target '{path}' {fault}")]
+pub struct MalformedTarget {
+    path: String,
+    fault: TargetFault,
+}
+
+/// _Pre-step._ What is wrong with a malformed target, by the root it was
+/// read under.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TargetFault {
+    /// Not under the derived root, and the first part of a watcher path
+    /// that is wrong.
+    #[error(
+        "is not a watcher path agent.<agent>.node.<node>.<leaf> or \
+         agent.<agent>.channel.<channel>, nor a derived series \
+         eval.inline.<evaluation>.<metric> or \
+         eval.agent.<agent>.<suite>.<evaluation>.<metric>: {}",
+        what_is_wrong(*.0)
+    )]
+    Recorded(PathPart),
+    #[error(
+        "is not a derived series eval.inline.<evaluation>.<metric> or \
+         eval.agent.<agent>.<suite>.<evaluation>.<metric>: {0}"
+    )]
+    Derived(DerivedProblem),
+    /// A recorded path whose agent is `*`. A recorded path names one agent;
+    /// `*` selects agents only in a suite's derived series.
+    #[error(
+        "names every agent ('{WILDCARD}') on a recorded path, which names one agent; \
+         '{WILDCARD}' selects agents only in a suite's derived series \
+         eval.agent.{WILDCARD}.<suite>.<evaluation>.<metric>"
+    )]
+    EachAgentRecorded,
+}
+
+/// What is wrong with a target whose `part` is the first that is.
+fn what_is_wrong(part: PathPart) -> String {
+    match part {
+        PathPart::Root => "it starts with something else".to_owned(),
+        PathPart::Agent => "the agent is missing".to_owned(),
+        PathPart::Subject => format!(
+            "the word after the agent is missing or not one of {}",
+            SUBJECT_WORDS.join(", ")
+        ),
+        PathPart::Node => "the node is missing".to_owned(),
+        PathPart::Leaf => "the leaf is missing".to_owned(),
+        PathPart::Channel => "the channel is missing".to_owned(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use helios_runtime::port::InternalChannel;
+    use helios_runtime::channels;
 
-    fn channel_named<T: 'static>(instance: &'static str) -> ChannelKey {
-        InternalChannel::named::<T>(instance).into()
-    }
+    #[test]
+    fn parse_keeps_the_path_and_its_parts() {
+        let target = AssertionTarget::parse("agent.car.node.estimator.aiding.gps.nis")
+            .expect("valid target");
 
-    fn channel_unnamed<T: 'static>() -> ChannelKey {
-        InternalChannel::of::<T>().into()
+        assert_eq!(target.path(), "agent.car.node.estimator.aiding.gps.nis");
+        assert!(target.is_recorded());
+        assert_eq!(
+            target.root(),
+            &TargetRoot::Agent {
+                agent: AgentId::new("car"),
+                subject: TargetSubject::Node {
+                    node: "estimator".into(),
+                    leaf: "aiding.gps.nis".into(),
+                },
+            }
+        );
     }
 
     #[test]
-    fn register_and_resolve_roundtrip() {
-        let mut reg = TargetRegistry::new();
-        let agent = AgentId::new("car_1");
-        let target = AssertionTarget::new("agent.car_1.estimator.position");
-        let channel = channel_unnamed::<f64>();
+    fn parse_keeps_a_channel_target() {
+        let target = AssertionTarget::parse("agent.car.channel.truth.tf").expect("valid target");
 
-        reg.register(agent.clone(), target.clone(), channel.clone());
-
-        assert_eq!(reg.resolve(&agent, &target), Some(&channel));
+        assert_eq!(
+            target.root(),
+            &TargetRoot::Agent {
+                agent: AgentId::new("car"),
+                subject: TargetSubject::Channel {
+                    channel: "truth.tf".into(),
+                },
+            }
+        );
     }
 
     #[test]
-    fn resolve_returns_none_for_missing_pair() {
-        let reg = TargetRegistry::new();
-        let agent = AgentId::new("car_1");
-        let target = AssertionTarget::new("agent.car_1.unknown");
+    fn parse_keeps_a_derived_target() {
+        let target = AssertionTarget::parse("eval.inline.twist.surge_error").expect("valid target");
 
-        assert_eq!(reg.resolve(&agent, &target), None);
+        assert!(!target.is_recorded());
+        assert_eq!(
+            target.root(),
+            &TargetRoot::Derived(
+                DerivedTarget::parse("eval.inline.twist.surge_error").expect("valid name")
+            )
+        );
     }
 
     #[test]
-    fn resolve_isolates_by_agent() {
-        let mut reg = TargetRegistry::new();
-        let agent_a = AgentId::new("car_a");
-        let agent_b = AgentId::new("car_b");
-        let target = AssertionTarget::new("agent.shared.scalar");
-        let channel = channel_unnamed::<f64>();
+    fn every_agent_is_a_derived_targets_and_refused_on_a_recorded_path() {
+        let each = AssertionTarget::parse("eval.agent.*.tracking.twist.surge")
+            .expect("a derived target selects every agent");
+        assert!(
+            matches!(each.root(), TargetRoot::Derived(derived) if derived.selects_each_agent())
+        );
 
-        reg.register(agent_a.clone(), target.clone(), channel);
-
-        assert!(reg.resolve(&agent_a, &target).is_some());
-        assert!(reg.resolve(&agent_b, &target).is_none());
+        for path in ["agent.*.channel.truth.tf", "agent.*.node.estimator.nis"] {
+            assert_eq!(
+                AssertionTarget::parse(path),
+                Err(MalformedTarget {
+                    path: path.to_owned(),
+                    fault: TargetFault::EachAgentRecorded,
+                })
+            );
+        }
     }
 
     #[test]
-    fn register_overrides_previous_entry() {
-        let mut reg = TargetRegistry::new();
-        let agent = AgentId::new("car_1");
-        let target = AssertionTarget::new("agent.car_1.scalar");
-        let first = channel_unnamed::<f64>();
-        let second = channel_unnamed::<i64>();
+    fn a_malformed_derived_target_says_what_is_wrong() {
+        let error = AssertionTarget::parse("eval.inline.twist").expect_err("no metric");
 
-        reg.register(agent.clone(), target.clone(), first);
-        reg.register(agent.clone(), target.clone(), second.clone());
-
-        assert_eq!(reg.resolve(&agent, &target), Some(&second));
+        assert_eq!(
+            error.to_string(),
+            "target 'eval.inline.twist' is not a derived series \
+             eval.inline.<evaluation>.<metric> or \
+             eval.agent.<agent>.<suite>.<evaluation>.<metric>: the metric is missing or not one \
+             level"
+        );
     }
 
     #[test]
-    fn channel_to_path_segment_uses_instance() {
-        let key = channel_named::<f64>("oracle/pose");
-        assert_eq!(channel_to_path_segment(&key), "oracle_pose");
+    fn parse_refuses_a_path_with_no_leaf() {
+        assert_eq!(
+            AssertionTarget::parse("agent.car.node.estimator"),
+            Err(MalformedTarget {
+                path: "agent.car.node.estimator".to_owned(),
+                fault: TargetFault::Recorded(PathPart::Leaf),
+            })
+        );
     }
 
     #[test]
-    fn channel_to_path_segment_replaces_all_slashes() {
-        let key = channel_named::<f64>("debug/inner/value");
-        assert_eq!(channel_to_path_segment(&key), "debug_inner_value");
+    fn a_malformed_target_says_which_part_is_wrong() {
+        let error = AssertionTarget::parse("agent.car.node").expect_err("no node or leaf");
+
+        assert!(
+            error.to_string().ends_with("the node is missing"),
+            "{error}"
+        );
     }
 
     #[test]
-    fn channel_to_path_segment_falls_back_to_type_name() {
-        let key = channel_unnamed::<f64>();
-        assert_eq!(channel_to_path_segment(&key), "f64");
+    fn a_target_without_a_subject_says_which_subjects_exist() {
+        let error =
+            AssertionTarget::parse("agent.car.estimator.speed").expect_err("no subject word");
+
+        assert!(
+            error.to_string().ends_with("not one of node, channel"),
+            "{error}"
+        );
     }
 
     #[test]
-    fn last_segment_strips_module_path() {
-        assert_eq!(last_segment("foo::bar::Baz"), "Baz");
-        assert_eq!(last_segment("Baz"), "Baz");
-        assert_eq!(last_segment("f64"), "f64");
+    fn parse_refuses_a_path_outside_both_roots_naming_both() {
+        let error = AssertionTarget::parse("car.estimator.speed.x").expect_err("no root");
+
+        assert!(error.to_string().contains("eval.inline."), "{error}");
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    struct Wrap {
+        target: AssertionTarget,
+    }
+
+    fn read(text: &str) -> Result<AssertionTarget, toml::de::Error> {
+        toml::from_str::<Wrap>(&format!("target = {text}")).map(|wrap| wrap.target)
+    }
+
+    const TF: &str = "agent.car.channel.truth.tf";
+
+    #[test]
+    fn a_selector_is_a_path_or_a_table_naming_an_instance() {
+        let path = AssertionTarget::parse(TF).expect("valid target");
+        assert_eq!(read(&format!("\"{TF}\"")).unwrap(), path);
+        assert_eq!(read(&format!("{{ path = \"{TF}\" }}")).unwrap(), path);
+
+        let base = read(&format!(
+            "{{ path = \"{TF}\", instance = \"agent.car.base_link\" }}"
+        ))
+        .unwrap();
+        assert_eq!(
+            base.instance(),
+            Some(&InstanceSelector::One("agent.car.base_link".into()))
+        );
+        assert_eq!(base.path(), TF);
+
+        let each = read(&format!("{{ path = \"{TF}\", instance = \"*\" }}")).unwrap();
+        assert_eq!(each.instance(), Some(&InstanceSelector::Each));
+        assert_eq!(each.to_string(), format!("{TF}[instance=*]"));
     }
 
     #[test]
-    fn to_snake_case_basic_cases() {
-        assert_eq!(to_snake_case("FrameAwareState"), "frame_aware_state");
-        assert_eq!(to_snake_case("f64"), "f64");
-        assert_eq!(to_snake_case("A"), "a");
-        assert_eq!(to_snake_case(""), "");
-        assert_eq!(to_snake_case("MyType"), "my_type");
+    fn a_malformed_selector_is_refused_at_parse() {
+        for text in [
+            "\"agent.car\"".to_string(),
+            format!("{{ path = \"{TF}\", instance = \"\" }}"),
+            format!("{{ path = \"{TF}\", frame = \"base\" }}"),
+            "{ instance = \"base\" }".to_string(),
+            "3".to_string(),
+        ] {
+            assert!(read(&text).is_err(), "{text}");
+        }
     }
 
     #[test]
-    fn default_is_empty() {
-        let reg = TargetRegistry::default();
-        let agent = AgentId::new("x");
-        let target = AssertionTarget::new("y");
-        assert!(reg.resolve(&agent, &target).is_none());
+    fn a_selector_serializes_as_it_was_written() {
+        for text in [
+            format!("\"{TF}\""),
+            format!("{{ path = \"{TF}\", instance = \"agent.car.base_link\" }}"),
+            format!("{{ path = \"{TF}\", instance = \"*\" }}"),
+        ] {
+            let target = read(&text).unwrap();
+            let written = toml::to_string(&Wrap {
+                target: target.clone(),
+            })
+            .unwrap();
+            assert_eq!(toml::from_str::<Wrap>(&written).unwrap().target, target);
+        }
+    }
+
+    #[test]
+    fn a_selector_built_from_its_parts_equals_the_one_its_spelling_parses_to() {
+        let car = AgentId::new("car");
+        let base_link = FrameId::base_link(car.clone());
+
+        let built = AssertionTarget::channel(&car, &channels::truth_tf(), Some(&base_link));
+        let parsed = read(&format!(
+            "{{ path = \"{TF}\", instance = \"agent.car.base_link\" }}"
+        ))
+        .unwrap();
+
+        assert_eq!(built, parsed);
+    }
+
+    #[test]
+    fn a_selector_covers_the_instances_it_names() {
+        let path = AssertionTarget::parse(TF).expect("valid target");
+        let base = path
+            .clone()
+            .with_instance(InstanceSelector::One("base".into()));
+        let each = path.clone().with_instance(InstanceSelector::Each);
+
+        assert!(path.covers(Some("imu")) && path.covers(None));
+        assert!(each.covers(Some("imu")));
+        assert!(base.covers(Some("base")));
+        assert!(!base.covers(Some("imu")) && !base.covers(None));
     }
 }

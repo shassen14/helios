@@ -1,0 +1,5 @@
+# configs/entities/objects/traffic_cone.toml
+# Geometry and collider parts live in the .glb; this file holds the rest.
+mesh    = "objects/traffic_cone.glb"
+class   = "traffic_cone"
+mass_kg = 1.2

@@ -10,11 +10,11 @@ use crate::brain_bridge::components::MissionGoalChannels;
 use crate::core::components::ConfiguredMissionGoal;
 use crate::core::components::GoalDispatched;
 use crate::core::events::GoalCommandEvent;
+use crate::core::run_clock::RunClock;
 use crate::prelude::HostInputPublisher;
 
-use helios_core::data::MonotonicTime;
 use helios_core::prelude::PlannerGoal;
-use helios_runtime::port::InternalChannel;
+use helios_runtime::port::ChannelKey;
 
 use bevy::prelude::*;
 
@@ -22,7 +22,7 @@ use bevy::prelude::*;
 /// the target agent declared in [`MissionGoalChannels`], via [`HostInputPublisher`].
 ///
 /// One goal fans out to all of the agent's planner channels, stamped at the
-/// current tick clock. The value lands on a last-known-good bus channel, so it
+/// run's current instant. The value lands on a last-known-good bus channel, so it
 /// persists across ticks until the next goal overwrites it. An event for an
 /// agent with no [`MissionGoalChannels`] — a plannerless agent, or one whose
 /// pipeline failed to build — has nowhere to go and is dropped with a warning.
@@ -30,9 +30,12 @@ pub fn forward_goal_events(
     mut events: MessageReader<GoalCommandEvent>,
     mut host_inputs: HostInputPublisher,
     goal_channels: Query<&MissionGoalChannels>,
-    time: Res<Time>,
+    clock: RunClock,
 ) {
-    let timestamp = MonotonicTime(time.elapsed_secs_f64());
+    // Runs only while `Running`, when the clock has started.
+    let Some(timestamp) = clock.now() else {
+        return;
+    };
 
     for event in events.read() {
         let Ok(channels) = goal_channels.get(event.agent) else {
@@ -46,7 +49,7 @@ pub fn forward_goal_events(
         for channel in &channels.0 {
             host_inputs.publish(
                 event.agent,
-                InternalChannel::named::<PlannerGoal>(channel.as_str()),
+                ChannelKey::internal::<PlannerGoal>(channel.as_str()),
                 event.goal.clone(),
                 timestamp,
             );
@@ -84,7 +87,7 @@ pub fn dispatch_configured_goals(
 mod tests {
     use super::*;
 
-    use helios_core::planning::types::PlannerGoal;
+    use helios_core::interchange::path::PlannerGoal;
     use nalgebra::Vector2;
 
     /// Counts `GoalCommandEvent`s seen across ticks. Chained after the system

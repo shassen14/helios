@@ -10,9 +10,12 @@ use crate::{
     viz::{
         interaction::{registration::register_viz_actions, InteractionSet},
         live::{
+            bounding_boxes::{draw_bounding_boxes, toggle_bounding_boxes, BoundingBoxGizmos},
+            colliders::{apply_collider_view_tuning, toggle_colliders},
             estimate::estimate_update_system,
             map::{ensure_map_visible, map_update_system, toggle_map_visibility},
             path::path_update_system,
+            point_cloud::{draw_point_clouds, toggle_point_cloud, PointCloudGizmos},
             pose::pose_update_system,
             tf::{tf_overlay_system, tf_overlay_visible, toggle_tf_overlay, TfOverlayVisible},
             tf_labels::tf_label_system,
@@ -20,6 +23,7 @@ use crate::{
     },
 };
 
+use avian3d::prelude::{PhysicsDebugPlugin, PhysicsGizmos};
 use bevy::prelude::*;
 
 pub mod interaction;
@@ -78,6 +82,55 @@ impl Plugin for VizPlugin {
         app.add_systems(
             Update,
             (ensure_map_visible, toggle_map_visibility)
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running)),
+        );
+
+        // collider debug
+        app.add_plugins(PhysicsDebugPlugin);
+        // Nothing drawn and switched off until the tuning's color is applied
+        // and the toggle turns it on.
+        app.insert_gizmo_config(
+            PhysicsGizmos::none(),
+            GizmoConfig {
+                enabled: false,
+                ..default()
+            },
+        );
+        app.add_systems(Startup, apply_collider_view_tuning);
+        app.add_systems(
+            Update,
+            toggle_colliders
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running)),
+        );
+
+        // bounding boxes — switched off until the toggle turns them on.
+        app.insert_gizmo_config(
+            BoundingBoxGizmos,
+            GizmoConfig {
+                enabled: false,
+                ..default()
+            },
+        );
+        app.add_systems(
+            Update,
+            (toggle_bounding_boxes, draw_bounding_boxes)
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running)),
+        );
+
+        // point clouds — switched off until the toggle turns them on.
+        app.insert_gizmo_config(
+            PointCloudGizmos,
+            GizmoConfig {
+                enabled: false,
+                ..default()
+            },
+        );
+        app.add_systems(
+            Update,
+            (toggle_point_cloud, draw_point_clouds)
                 .in_set(VizSet::Live)
                 .run_if(in_state(AppState::Running)),
         );

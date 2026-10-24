@@ -1,6 +1,11 @@
-use bevy::prelude::*;
+use crate::core::run_clock::RunClock;
+
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::prelude::PlannerGoal;
+use helios_core::interchange::perception::object_instance::ObjectInstanceId;
+use helios_core::interchange::perception::semantic_class::SemanticClass;
+use helios_core::prelude::{MonotonicTime, PlannerGoal};
+
+use bevy::prelude::*;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
 
@@ -28,10 +33,19 @@ pub enum ControllerStateSource {
 /// the ground-truth (oracle) publisher.
 #[derive(Component, Clone, Debug, Serialize)]
 pub struct GroundTruthState {
+    /// The run instant this state describes. Truth, sensors and the brain's
+    /// tick are stamped with it, so the instant travels with the data rather
+    /// than with which set read the clock.
+    pub at: MonotonicTime,
     pub pose: Isometry3<f64>,
     pub linear_velocity: Vector3<f64>,
     pub angular_velocity: Vector3<f64>,
+    /// The mean over the step that ended at `at`, a backward difference of
+    /// velocity, so it lags `at` by half a step. Under explicit force
+    /// integration the acceleration at `at` isn't known until the next
+    /// step's forces are.
     pub linear_acceleration: Vector3<f64>,
+    /// The mean over the step that ended at `at`, as `linear_acceleration`.
     pub angular_acceleration: Vector3<f64>,
     pub last_linear_velocity: Vector3<f64>,
     pub last_angular_velocity: Vector3<f64>,
@@ -40,6 +54,7 @@ pub struct GroundTruthState {
 impl Default for GroundTruthState {
     fn default() -> Self {
         Self {
+            at: RunClock::START,
             pose: Isometry3::identity(),
             linear_velocity: Vector3::zeros(),
             angular_velocity: Vector3::zeros(),
@@ -61,33 +76,27 @@ pub struct GoalDispatched;
 // == World Object Components ==
 // =========================================================================
 
-/// Identifies the prefab catalog key for a world object entity (e.g. `"objects.stop_sign"`).
+/// Identifies the prefab catalog key for a world object entity (e.g. `"entities.objects.crate_1m"`).
 /// Useful for runtime queries such as "which objects of type X are near the agent?".
 #[derive(Component, Clone, Debug)]
 pub struct WorldObjectType(pub String);
 
-/// Semantic classification attached to every world object entity.
-/// Used by perception systems for ground-truth labeling and by dataset exporters.
-#[derive(Component, Clone, Debug)]
-pub struct SemanticLabel {
-    /// Human-readable class name, e.g. `"stop_sign"`, `"building"`.
-    pub label: String,
-    /// Integer class ID used by perception algorithms and ML dataset formats.
-    pub class_id: u32,
-}
+/// A world object's identity in ground truth. Unlike `Name`, which is only a
+/// debug label, this is the key datasets are joined on.
+#[derive(Component, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ObjectInstance(pub ObjectInstanceId);
 
-/// Axis-aligned bounding box in object-local space (half-extents, meters).
+/// A world object's semantic class, from the scenario's class catalog.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ObjectClass(pub SemanticClass);
+
+/// Axis-aligned bounding box in the entity's local frame (Bevy axes, meters).
 /// Used for debug visualization, sensor hit attribution, and dataset annotation.
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct BoundingBox3D {
-    /// Half-extents [hx, hy, hz] along the object's local X/Y/Z axes.
+    /// Box centre relative to the entity's origin. Not zero in general: an
+    /// object standing on its origin has its centre half its height up.
+    pub centre: Vec3,
+    /// Half-extents along the entity's local X/Y/Z axes.
     pub half_extents: Vec3,
 }
-
-/// Identifies the physics medium represented by a terrain entity.
-/// Agents and sensors can query this to determine applicable physics rules
-/// (drag, buoyancy, sensor propagation) for their current environment.
-///
-/// Recognised values: `"air"`, `"water"`, `"vacuum"`.
-#[derive(Component, Clone, Debug)]
-pub struct TerrainMedium(pub String);

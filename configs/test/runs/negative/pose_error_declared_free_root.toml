@@ -1,0 +1,33 @@
+# Negative control: `declared` alignment of an estimate whose root is free in
+# the world.
+#
+# The car's EKF reads no GPS, so nothing pins its odom to the world's datum:
+# the build places odom free. Setup refuses the evaluation and the run fails
+# (exit 1), quoting why:
+#   the estimate's root 'agent.DeadReckoningCar.odom' is not placed in
+#   'global.open_field': node "primary" reads no input that pins the
+#   position of agent.DeadReckoningCar.odom
+# A pass would mean a frame with no place in the world was graded as if it
+# shared the truth's.
+
+schema_version = "2.0"
+scenario = { from = "test/scenarios/dead_reckoning.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 2.0 }
+
+[evaluation]
+gap_multiple = 3.0
+
+[[evaluate]]
+name = "est"
+kind = "pose_error"
+[evaluate.inputs]
+estimate = { path = "agent.DeadReckoningCar.channel.tf", instance = "agent.DeadReckoningCar.base_link" }
+truth = { path = "agent.DeadReckoningCar.channel.truth.tf", instance = "agent.DeadReckoningCar.base_link" }
+[evaluate.params]
+align = "declared"
+
+[[measure]]
+name = "position_rms"
+target = "eval.inline.est.position"
+reduce = "rms"

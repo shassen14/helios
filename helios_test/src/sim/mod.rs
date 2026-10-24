@@ -8,18 +8,15 @@
 //! They are intentionally dumb: no verdict logic lives here — that stays in the
 //! pure `Runner`.
 
-mod metrics;
 mod plugin;
 
-pub use metrics::MetricsPlugin;
-pub use plugin::TestRunnerPlugin;
+pub use plugin::TestRunAppExt;
 
-use crate::report::ReportStatus;
+use crate::report::{Report, ReportStatus};
 use crate::run::termination::TerminationReason;
 use crate::runner::Runner;
-use crate::RunMetrics;
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 
 use bevy::prelude::Resource;
 use std::path::PathBuf;
@@ -28,13 +25,13 @@ use std::time::Instant;
 
 /// Holds the live [`Runner`] across ticks. Wraps it because `Runner` lives in
 /// the Bevy-free base crate and cannot derive `Resource` itself. Mutated by
-/// systems 1–2 (`ResMut`), read by system 3 (`Res`). Inserted by the bin so a
-/// `Runner::new` failure becomes a clean exit code *before* the app spins up.
+/// systems 1–2 (`ResMut`), read by system 3 (`Res`). Inserted by
+/// [`TestRunAppExt::add_test_run`], beside the collector the runner reads.
 #[derive(Resource)]
 pub struct ActiveRunner(Runner);
 
 impl ActiveRunner {
-    pub fn new(runner: Runner) -> Self {
+    fn new(runner: Runner) -> Self {
         Self(runner)
     }
 }
@@ -125,15 +122,15 @@ impl RunVerdict {
     }
 }
 
-/// The one wire by which a whole `RunMetrics` escapes the Bevy loop — the
-/// struct-sized sibling of [`RunVerdict`], which can only carry a pass/fail bit
-/// out via the exit code.
+/// The one wire by which a finished [`Report`] escapes the Bevy loop, for a
+/// batch to aggregate: the struct-sized sibling of [`RunVerdict`], which can
+/// only carry a pass/fail bit out via the exit code.
 ///
 /// Read the type inside-out and it spells the design:
-/// - `Option` — the slot starts empty and is filled exactly once, at flush.
-///   `None` means the run produced no metrics (the summarizer never ran);
-///   the bin treats that as "nothing to collect", never a silent zero.
-/// - `Mutex` — the summarizer writes through a *shared* `&` reference (interior
+/// - `Option` — the slot starts empty and is filled exactly once, at
+///   finalize. `None` means the run never finalized; the bin treats that as
+///   a run with no report, never a silent pass.
+/// - `Mutex` — finalize writes through a *shared* `&` reference (interior
 ///   mutability), which is why `store`/`take` take `&self`. Thread-safe because
 ///   Bevy resources are touched across threads (`Resource: Send + Sync`).
 /// - `Arc` — shared ownership across the `app.run()` boundary. The bin keeps one
@@ -141,28 +138,28 @@ impl RunVerdict {
 ///   (Bevy 0.16) the world drops *its* clone, but the bin's clone keeps the
 ///   value alive. Reading a `Res` from the world *after* `run()` would instead
 ///   panic on the emptied world — this clone is the documented escape hatch.
-#[derive(Resource, Clone)]
-pub struct MetricsCollector(Arc<Mutex<Option<RunMetrics>>>);
+#[derive(Resource, Clone, Default)]
+pub struct ReportSlot(Arc<Mutex<Option<Report>>>);
 
-impl MetricsCollector {
+impl ReportSlot {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(None)))
+        Self::default()
     }
 
-    /// Pull the stored metrics out, leaving the slot empty — the bin's read,
+    /// Pull the stored report out, leaving the slot empty — the bin's read,
     /// called *after* `run()` returns. Destructive: a second `take` yields
     /// `None`. A poisoned lock (a thread panicked mid-write) also yields `None`
     /// rather than panicking, because runtime paths never unwrap.
-    pub fn take(&self) -> Option<RunMetrics> {
+    pub fn take(&self) -> Option<Report> {
         self.0.lock().ok().and_then(|mut guard| guard.take())
     }
 
-    /// Store this run's metrics — the summarizer's write, at `OnEnter(Flushing)`
-    /// before the world drains. A poisoned lock drops the metrics silently; we
-    /// cannot safely recover and must not panic in a runtime path.
-    pub fn store(&self, metrics: RunMetrics) {
+    /// Store this run's report — finalize's write, before the world drains.
+    /// A poisoned lock drops it; we cannot safely recover and must not panic
+    /// in a runtime path.
+    fn store(&self, report: Report) {
         if let Ok(mut guard) = self.0.lock() {
-            *guard = Some(metrics);
+            *guard = Some(report);
         }
     }
 }
@@ -178,21 +175,15 @@ impl ReportOutputPath {
     }
 }
 
-/// The per-run identity (`run_index` + `seed`) the summarizer stamps onto each
-/// `RunMetrics`. Inserted by the bin; `Default` (`run_index` 0, `seed` `None`)
-/// suits a single unseeded run. A multi-run driver writes a distinct value per
-/// run — the per-run seed override sets these, and the summarizer reads them
-/// back unchanged. A `None` seed means the run was unseeded: the real seed was
-/// chosen inside the sim and isn't known here.
+/// The seed this run was given, which its report names. Inserted by the bin;
+/// `None` (the default) means the run was unseeded: the real seed was chosen
+/// inside the sim and isn't known here.
 #[derive(Resource, Default)]
-pub struct RunMetadata {
-    run_index: u32,
-    seed: Option<u64>,
-}
+pub struct RunSeed(Option<u64>);
 
-impl RunMetadata {
-    pub fn new(run_index: u32, seed: Option<u64>) -> Self {
-        Self { run_index, seed }
+impl RunSeed {
+    pub fn new(seed: Option<u64>) -> Self {
+        Self(seed)
     }
 }
 
@@ -224,27 +215,39 @@ mod tests {
         assert!(outcome.reason.is_none());
     }
 
+    /// A report of a run named `name` that ran and passed.
+    fn report(name: &str) -> Report {
+        Report::new(
+            name.to_string(),
+            "scenario".to_string(),
+            Some(99),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            1.0,
+            0.1,
+            crate::report::TerminatedBy::TimeBudget,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
     #[test]
-    fn collector_round_trips_metrics_and_take_is_destructive() {
-        use crate::MetricId;
+    fn the_slot_round_trips_a_report_and_take_is_destructive() {
+        let slot = ReportSlot::new();
+        // Nothing stored yet: the bin must see "no report", not a default.
+        assert!(slot.take().is_none());
 
-        let collector = MetricsCollector::new();
-        // Nothing stored yet: the bin must see "no metrics", not a default.
-        assert!(collector.take().is_none());
+        slot.store(report("smoke"));
 
-        let mut m = RunMetrics::new(3, Some(99));
-        m.insert(MetricId::new("final_pos_e"), 1.5);
-        collector.store(m);
-
-        let got = collector
+        let got = slot
             .take()
-            .expect("stored metrics must survive and come back out");
-        assert_eq!(got.run_index(), 3);
-        assert_eq!(got.seed(), Some(99));
-        assert_eq!(got.get(&MetricId::new("final_pos_e")), Some(1.5));
+            .expect("a stored report must survive and come back out");
+        assert_eq!(got.status(), &ReportStatus::Passed);
 
         // `take` empties the slot — a second read finds nothing.
-        assert!(collector.take().is_none());
+        assert!(slot.take().is_none());
     }
 
     #[test]
@@ -284,22 +287,18 @@ mod tests {
     }
 
     #[test]
-    fn collector_clones_share_one_slot() {
+    fn slot_clones_share_one_report() {
         // The bin keeps one clone and inserts another into the world; both must
-        // point at the *same* value, or the metrics would not escape the drained
+        // point at the *same* value, or the report would not escape the drained
         // world. Storing through one clone must be visible through the other.
-        use crate::MetricId;
-
-        let bin_side = MetricsCollector::new();
+        let bin_side = ReportSlot::new();
         let world_side = bin_side.clone();
 
-        let mut m = RunMetrics::new(0, Some(0));
-        m.insert(MetricId::new("final_pos_e"), 2.0);
-        world_side.store(m); // the summarizer would write through this clone
+        world_side.store(report("smoke")); // finalize writes through this clone
 
-        let got = bin_side // the bin reads through its own clone
-            .take()
-            .expect("a store through one clone is visible through the other");
-        assert_eq!(got.get(&MetricId::new("final_pos_e")), Some(2.0));
+        assert!(
+            bin_side.take().is_some(),
+            "a store through one clone is visible through the other"
+        );
     }
 }

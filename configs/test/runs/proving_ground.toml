@@ -1,0 +1,21 @@
+# Proving ground run: a world built only from placed objects, end to end.
+#
+# The scene must build from the layout (ground, walls, crates, cones). The
+# barrier and cones stand on the car's route to expose what mapping and
+# planning get wrong, so the drive is not expected to be clean: the car may
+# clip the barrier's corner, push through the cones, or stall short of the
+# goal. It carries no assertions or measures: `pose_error_proving_ground`,
+# `twist_tracking_proving_ground` and `contacts_proving_ground` grade this
+# drive, and `acceptance` measures where the car came to rest and how fast
+# it still moved.
+
+schema_version = "2.0"
+
+# Resolved relative to --config-root (default "configs").
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
+
+# Carried but unused (observation presets aren't resolved yet).
+observation = { from = "default" }
+
+# Long enough to drive 40 m and settle at rest.
+termination = { max_simulated_seconds = 60.0 }

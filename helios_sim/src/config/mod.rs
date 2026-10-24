@@ -1,8 +1,10 @@
 //! This module handles loading, resolving, and validating all simulation
 //! configuration from disk, including the prefab catalog system.
 
+mod body_frames;
 mod catalog;
 mod resolver;
+mod world_layout;
 
 pub mod structs;
 
@@ -18,8 +20,9 @@ use crate::{
     cli::Cli, config::structs::Simulation, core::app_state::AssetLoadSet, prelude::AppState,
 };
 use catalog::load_catalog_from_disk;
-pub use catalog::PrefabCatalog;
+pub use catalog::{read_catalog, PrefabCatalog};
 pub use structs::{AgentConfig, RawScenarioConfig, ScenarioConfig};
+pub use world_layout::{load_world_layout, LoadedWorldLayout};
 
 pub struct ConfigPlugin;
 
@@ -41,20 +44,32 @@ impl Plugin for ConfigPlugin {
 }
 
 /// Takes one raw agent value all the way to a typed [`AgentConfig`], resolving
-/// its `from` references and then checking the result against the schema.
+/// its `from` references, checking the result against the schema, and then
+/// checking its body's frame names.
 ///
-/// The two failures are labelled distinctly because they send the reader to
-/// different files. A resolution failure means a `from` reference did not land
+/// The three failures are labelled distinctly because they send the reader to
+/// different places. A resolution failure means a `from` reference did not land
 /// — the referenced prefab is missing or misspelled. A deserialization failure
 /// means the reference resolved fine but the fields it produced do not match
 /// what `AgentConfig` expects, and serde's message names the offending field
-/// and the valid alternatives.
+/// and the valid alternatives. A body-frame failure names the topology mount or
+/// sensor-fit key whose name is malformed, reserved, or taken.
 fn resolve_agent(agent_value: &Value, catalog: &PrefabCatalog) -> Result<AgentConfig, String> {
     let resolved_value = resolver::resolve_agent_value(agent_value, catalog)
         .map_err(|e| format!("failed to resolve: {}", e))?;
 
-    Value::deserialize::<AgentConfig>(&resolved_value)
-        .map_err(|e| format!("failed to deserialize: {}", e))
+    let agent = Value::deserialize::<AgentConfig>(&resolved_value)
+        .map_err(|e| format!("failed to deserialize: {}", e))?;
+
+    let topology_mounts = agent.vehicle.topology.mounts().iter();
+    let errors = body_frames::check_body_frames(
+        topology_mounts.map(|mount| mount.name.as_str()),
+        agent.sensors.keys().map(String::as_str),
+    );
+    if !errors.is_empty() {
+        return Err(format!("bad body frame names: {}", errors.join("; ")));
+    }
+    Ok(agent)
 }
 
 fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res<PrefabCatalog>) {
@@ -86,20 +101,34 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
         }
     }
 
+    // 3. Follow the world's references. Its failures join the agents' so one
+    //    run reports every broken reference in the scenario.
+    let loaded_layout = match load_world_layout(&raw_config.common.world, &catalog) {
+        Ok(loaded) => Some(loaded),
+        Err(errors) => {
+            failures.extend(errors);
+            None
+        }
+    };
+
     // A partially-built scene has no valid interpretation: the scenario states
     // what to simulate, and quietly simulating a subset answers a question
     // nobody asked. Left non-fatal, a config typo becomes a green run over an
     // empty world.
     if !failures.is_empty() {
         panic!(
-            "{} of {} agents failed to load:\n{}",
+            "scenario {:?} failed to load. Errors: {}\n{}",
+            scenario_path,
             failures.len(),
-            raw_config.agents.len(),
             failures.join("\n")
         );
     }
 
-    // 3. Assemble the final, complete `ScenarioConfig` resource. Every
+    if let Some(loaded) = loaded_layout {
+        commands.insert_resource(loaded);
+    }
+
+    // 4. Assemble the final, complete `ScenarioConfig` resource. Every
     //    non-agent field rides across in the one `common` move; only the agents
     //    needed the resolve step above.
     let mut final_config = ScenarioConfig {
@@ -109,7 +138,7 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
 
     apply_cli_overrides(&mut final_config.common.simulation, &cli);
 
-    // 4. Insert the single, unified config as a resource.
+    // 5. Insert the single, unified config as a resource.
     commands.insert_resource(final_config);
 }
 
@@ -131,8 +160,6 @@ fn apply_cli_overrides(sim: &mut Simulation, cli: &Cli) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use helios_runtime::config::SearchPlannerConfig;
 
     use std::{collections::HashMap, path::PathBuf};
 
@@ -200,9 +227,12 @@ mod tests {
         sign = "Normal"
 
         [sensors.gps]
+        transform = { translation = [0.0, 0.0, 0.0] }
+        channel = "gps.fix"
+
+        [sensors.gps.device]
         kind = "Gps"
         rate = 10.0
-        channel = "gps/fix"
     "#;
 
     // Parses an agent's TOML into the raw `Value` the scenario loader hands to
@@ -271,35 +301,17 @@ mod tests {
         );
     }
 
-    // Parses a planner catalog snippet into the runtime's `SearchPlannerConfig`,
-    // the same type `AgentConfig` embeds — so these tests exercise the real
-    // schema and serde defaults, not a hand-built value.
-    fn planner_config(toml: &str) -> SearchPlannerConfig {
-        Figment::new()
-            .merge(Toml::string(toml))
-            .extract()
-            .expect("planner TOML should deserialize")
-    }
-
     #[test]
-    fn planner_goal_channel_defaults_to_mission() {
-        // A planner prefab that omits `goal_channel` resolves to the canonical
-        // "mission" slot at load time, so the default is a real config value in
-        // the dump rather than an invisible constant in the builder.
-        let SearchPlannerConfig::AStar { goal_channel, .. } =
-            planner_config("kind = \"AStar\"\nrate = 5.0\n");
+    fn a_sensor_named_like_a_spine_frame_is_rejected() {
+        let spine = MINIMAL_AGENT.replace("[sensors.gps", "[sensors.base_link");
 
-        assert_eq!(goal_channel, "mission");
-    }
+        let error = resolve_agent(&agent_value(&spine), &empty_catalog())
+            .expect_err("a sensor named base_link should be rejected");
 
-    #[test]
-    fn planner_goal_channel_is_read_when_present() {
-        // An explicit `goal_channel` overrides the default, which is how a stack
-        // renames the mission channel to match whichever host input writes it.
-        let SearchPlannerConfig::AStar { goal_channel, .. } =
-            planner_config("kind = \"AStar\"\nrate = 5.0\ngoal_channel = \"waypoints\"\n");
-
-        assert_eq!(goal_channel, "waypoints");
+        assert!(
+            error.starts_with("bad body frame names") && error.contains("base_link"),
+            "a reserved name should fail the frame check and name the key, got: {error}"
+        );
     }
 
     // A `Cli` carrying only the seed under test; the path fields are irrelevant
@@ -311,6 +323,7 @@ mod tests {
             headless: true,
             speed: None,
             seed,
+            watch_stats: false,
         }
     }
 

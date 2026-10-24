@@ -1,0 +1,33 @@
+# Estimator accuracy and consistency: an agent's estimated `base_link` pose
+# against its true one, and whether the estimate's covariance is honest
+# about that error (NEES of each block a true pose grades). Read through the
+# agent's estimate seam and its truth source, so it applies to any agent
+# with both.
+#
+# Graded under `declared`: each estimate is placed in the world through the
+# anchor the build declares for the estimator's odom, never aligned from a
+# sample. An agent whose odom has no declared anchor is refused at setup.
+#
+# The gap default is how these numbers are computed, so it travels with the
+# suite: a role spans gaps up to three periods of its input's declared rate.
+
+[evaluation]
+gap_multiple = 3.0
+
+[[evaluate]]
+name = "pose"
+kind = "pose_error"
+[evaluate.inputs]
+estimate = "estimate.pose"
+truth = "truth.pose"
+[evaluate.params]
+align = "declared"
+
+[[evaluate]]
+name = "nees"
+kind = "nees"
+[evaluate.inputs]
+estimate = "estimate.state"
+truth = "truth.pose"
+[evaluate.params]
+align = "declared"

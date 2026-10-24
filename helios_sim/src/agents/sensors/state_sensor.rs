@@ -11,12 +11,13 @@
 //! [`StateSensor`].
 
 use crate::core::prng::SensorRng;
-use crate::core::transforms::{bevy_transform_to_transform_bevy, FromBevy, TrackedFrame};
-use crate::prelude::{GroundTruthState, SensorPublishChannel, SensorPublisher};
+use crate::core::run_clock::RunClock;
+use crate::core::transforms::{bevy_transform_to_transform_bevy, FromBevy};
+use crate::prelude::{AgentIdComponent, GroundTruthState, SensorPublishChannel, SensorPublisher};
 
-use helios_core::data::{MonotonicTime, SensorPayload, SensorReading};
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::transforms::Transform as CoreTransform;
+use helios_core::prelude::{SensorPayload, SensorReading};
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::transforms::Transform as CoreTransform;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -24,6 +25,7 @@ use std::time::Duration;
 use bevy::ecs::component::{Component, Mutable};
 use bevy::ecs::entity::Entity;
 use bevy::ecs::hierarchy::ChildOf;
+use bevy::ecs::query::With;
 use bevy::ecs::system::{Local, Query, Res};
 use bevy::log::warn;
 use bevy::time::{Time, Timer, TimerMode};
@@ -86,22 +88,33 @@ pub trait StateSensor: Component<Mutability = Mutable> {
 /// The shared publish loop, registered once per concrete sensor type
 /// (`publish_state_sensor::<Gps>`, …) in `SimulationSet::Sensors`.
 ///
-/// For each sensor entity whose timer fires this tick: look up the parent
-/// agent's ground truth, convert the sensor's global transform to an ENU
-/// pose, ask the sensor for a reading, and publish it on the entity's
-/// declared channel.
+/// For each sensor entity whose timer fires this tick: look up its agent's
+/// ground truth, convert the sensor's global transform to an ENU pose, ask the
+/// sensor for a reading, stamp it with the channel's mount, and publish it on
+/// the entity's declared channel. The agent is the nearest ancestor carrying
+/// its identity ([`AgentIdComponent`]): a sensor hangs directly under it, or
+/// under its installation's frame entity when one installation carries several
+/// sensors (an IMU).
+///
+/// A reading is stamped with the instant its agent's truth describes,
+/// [`GroundTruthState::at`]: this step's, since the sensor samples the world
+/// physics has just moved. Nothing samples before the run starts, when there
+/// is no run time: each sensor's timer starts with the run.
 ///
 /// Noise is drawn from the entity's own [`SensorRng`], so a sensor's readings
 /// depend only on its own name, its own tick count, and the run's master seed.
 /// The registrations of this system for different sensor types are unordered
 /// with respect to each other, and after this loop that no longer matters.
 ///
-/// A sensor whose parent has no [`GroundTruthState`] can never produce data —
-/// that is a scene-wiring bug, so the entity is skipped with a warning, once
-/// per entity.
-#[allow(clippy::type_complexity)]
+/// A sensor with no agent above it, or whose agent has no
+/// [`GroundTruthState`], can never produce data — that is a scene-wiring bug,
+/// so the entity is skipped with a warning, once per entity.
+// Bevy systems declare their dependencies as parameters, so the count exceeds
+// clippy's default threshold; that's idiomatic here, not a smell.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn publish_state_sensor<S: StateSensor>(
     time: Res<Time>,
+    clock: RunClock,
     truth_query: Query<&GroundTruthState>,
     mut sensor_query: Query<(
         Entity,
@@ -110,31 +123,35 @@ pub fn publish_state_sensor<S: StateSensor>(
         &mut SensorRng,
         &GlobalTransform,
         &SensorPublishChannel,
-        &TrackedFrame,
-        &ChildOf,
     )>,
+    parents: Query<&ChildOf>,
+    agents: Query<(), With<AgentIdComponent>>,
     mut publisher: SensorPublisher,
     mut warned_missing_truth: Local<HashSet<Entity>>,
 ) {
-    let elapsed = time.elapsed_secs_f64();
+    if clock.now().is_none() {
+        return;
+    }
     let dt = time.delta();
 
-    for (entity, mut sensor, mut timer, mut rng, transform, channel, tracked, parent) in
-        &mut sensor_query
-    {
+    for (entity, mut sensor, mut timer, mut rng, transform, channel) in &mut sensor_query {
         timer.0.tick(dt);
 
         if !timer.0.just_finished() {
             continue;
         }
 
-        let Ok(truth) = truth_query.get(parent.parent()) else {
+        let agent = parents
+            .iter_ancestors(entity)
+            .find(|&ancestor| agents.contains(ancestor));
+        let Some((agent, truth)) =
+            agent.and_then(|agent| truth_query.get(agent).ok().map(|truth| (agent, truth)))
+        else {
             if warned_missing_truth.insert(entity) {
                 warn!(
-                    "State sensor {:?} skipped: parent agent {:?} has no GroundTruthState, \
+                    "State sensor {:?} skipped: its agent {:?} has no GroundTruthState, \
                      so the sensor will never publish.",
-                    entity,
-                    parent.parent()
+                    entity, agent
                 );
             }
             continue;
@@ -146,12 +163,12 @@ pub fn publish_state_sensor<S: StateSensor>(
         let payload = sensor.sample(truth, &sensor_pose_world, &mut rng.0);
 
         let reading = SensorReading {
-            sensor: tracked.id.clone(),
-            timestamp: MonotonicTime(elapsed),
+            sensor: channel.mount().clone(),
+            timestamp: truth.at,
             data: payload,
         };
 
-        publisher.publish(parent.parent(), channel.0.as_str(), vec![reading]);
+        publisher.publish(agent, channel, vec![reading]);
     }
 }
 
@@ -159,16 +176,24 @@ pub fn publish_state_sensor<S: StateSensor>(
 mod tests {
     use super::*;
 
-    use helios_core::data::sensor::GpsPosition;
-    use helios_core::data::AgentId;
-    use helios_core::frames::transforms::Convention;
-    use helios_core::frames::FrameId;
+    use crate::core::run_clock::start_run_clock_now;
+    use crate::prelude::AutonomyPipelineComponent;
+
+    use helios_core::interchange::measurement::sensor::GpsPosition;
+    use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
+    use helios_core::spatial::{transforms::Convention, FrameId};
+    use helios_runtime::port::{ChannelKey, PortBus, PortDescriptorBuilder};
+    use helios_runtime::{
+        BodyCapabilities, PipelineBuilder, PipelineNode, PortDescriptor, TickContext,
+    };
 
     use bevy::ecs::schedule::Schedule;
     use bevy::ecs::world::World;
+    use bevy::time::Fixed;
     use nalgebra::Vector3;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+    use std::collections::HashMap;
 
     /// Counts `sample` calls so the tests can assert exactly when the generic
     /// system consults a sensor.
@@ -209,15 +234,30 @@ mod tests {
     /// derivation for no gain.
     const TEST_SEED: u64 = 0;
 
-    fn world_with_sensor(parent_has_truth: bool) -> (World, Entity) {
+    const TEST_AGENT: &str = "test_agent";
+    const TEST_CHANNEL: &str = "test.channel";
+    const TEST_UNIT: &str = "test_unit";
+    /// These tests publish and stamp readings, which a reference doesn't
+    /// change, so their channels state none and their pipelines declare no
+    /// world frame.
+    const UNREFERENCED: bool = false;
+
+    /// The test sensor's mount: its installation's frame, named apart from
+    /// its channel so a header stamped from the wrong one shows.
+    fn test_mount() -> FrameId {
+        FrameId::agent(AgentId::new(TEST_AGENT), TEST_UNIT)
+    }
+
+    fn world_with_sensor(agent_has_truth: bool) -> (World, Entity) {
         let mut world = World::new();
         world.insert_resource(Time::<()>::default());
+        world.init_resource::<Time<Fixed>>();
+        start_run_clock_now(&mut world);
 
-        let agent = if parent_has_truth {
-            world.spawn(GroundTruthState::default()).id()
-        } else {
-            world.spawn_empty().id()
-        };
+        let agent = world.spawn(AgentIdComponent(AgentId::new(TEST_AGENT))).id();
+        if agent_has_truth {
+            world.entity_mut(agent).insert(GroundTruthState::default());
+        }
 
         let sensor = world
             .spawn((
@@ -225,10 +265,12 @@ mod tests {
                 SensorTimer::from_rate(RATE_HZ),
                 SensorRng(ChaCha8Rng::seed_from_u64(TEST_SEED)),
                 GlobalTransform::default(),
-                SensorPublishChannel("test.channel".to_string()),
-                TrackedFrame::new(
-                    FrameId::sensor(AgentId::new("test_agent"), "test.channel"),
-                    Convention::Flu,
+                SensorPublishChannel::new::<GpsPosition>(
+                    TEST_CHANNEL,
+                    TEST_UNIT,
+                    test_mount(),
+                    RATE_HZ,
+                    UNREFERENCED,
                 ),
                 ChildOf(agent),
             ))
@@ -285,13 +327,107 @@ mod tests {
     }
 
     #[test]
-    fn skips_a_sensor_whose_parent_has_no_truth_state() {
+    fn skips_a_sensor_whose_agent_has_no_truth_state() {
         let (mut world, sensor) = world_with_sensor(false);
         let mut schedule = publish_schedule();
 
         advance_and_run(&mut world, &mut schedule, period());
 
         assert_eq!(samples(&world, sensor), 0);
+    }
+
+    /// Truth on an entity that is not an agent is not the sensor's: the agent
+    /// is found by its identity, not by whatever carries truth.
+    #[test]
+    fn skips_a_sensor_with_no_agent_above_it() {
+        let (mut world, sensor) = world_with_sensor(true);
+        let agent = world.get::<ChildOf>(sensor).unwrap().parent();
+        world.entity_mut(agent).remove::<AgentIdComponent>();
+        let mut schedule = publish_schedule();
+
+        advance_and_run(&mut world, &mut schedule, period());
+
+        assert_eq!(samples(&world, sensor), 0);
+    }
+
+    /// One installation carrying several sensors (an IMU) hangs them under
+    /// its frame entity, so the agent is a grandparent.
+    #[test]
+    fn samples_a_sensor_hung_under_its_installation_frame() {
+        let (mut world, sensor) = world_with_sensor(true);
+        let agent = world.get::<ChildOf>(sensor).unwrap().parent();
+        let installation = world.spawn(ChildOf(agent)).id();
+        world.entity_mut(sensor).insert(ChildOf(installation));
+        let mut schedule = publish_schedule();
+
+        advance_and_run(&mut world, &mut schedule, period());
+
+        assert_eq!(samples(&world, sensor), 1);
+    }
+
+    /// Declares the test channel as an optional input, so the bus reserves
+    /// a slot the sensor can publish into.
+    struct FakeGpsConsumer {
+        descriptor: PortDescriptor,
+    }
+
+    impl PipelineNode for FakeGpsConsumer {
+        fn name(&self) -> &str {
+            "fake_gps_consumer"
+        }
+
+        fn port_descriptor(&self) -> &PortDescriptor {
+            &self.descriptor
+        }
+
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
+    }
+
+    fn test_channel() -> ChannelKey {
+        ChannelKey::measurement::<Vec<SensorReading<GpsPosition>>>(TEST_CHANNEL)
+    }
+
+    /// Nothing downstream of the estimator reads a state sensor's header, so
+    /// a wrong one would pass every run: it must name the channel's mount,
+    /// the installation's frame, never the channel. Its stamp is the instant
+    /// the truth it sampled describes, which here is apart from the clock's.
+    #[test]
+    fn a_reading_is_stamped_with_its_channels_mount_and_its_truths_instant() {
+        const TRUTH_AT: MonotonicTime = MonotonicTime(7.5);
+        let (mut world, sensor) = world_with_sensor(true);
+        let agent = world.get::<ChildOf>(sensor).unwrap().parent();
+        world.get_mut::<GroundTruthState>(agent).unwrap().at = TRUTH_AT;
+        let channel = world.get::<SensorPublishChannel>(sensor).unwrap().clone();
+        let consumer = FakeGpsConsumer {
+            descriptor: PortDescriptorBuilder::algorithm()
+                .inputs_from_slices(&[], &[test_channel()])
+                .build(),
+        };
+        let pipeline = PipelineBuilder::new(AgentId::new(TEST_AGENT))
+            .add_node(Box::new(consumer))
+            .with_body_capabilities(BodyCapabilities {
+                publishes: vec![channel.description(&FrameId::global("datum"))],
+                frames: HashMap::from([(test_mount(), Convention::Flu)]),
+                ..Default::default()
+            })
+            .build()
+            .expect("a single-node pipeline builds");
+        world
+            .entity_mut(agent)
+            .insert(AutonomyPipelineComponent(pipeline));
+        let mut schedule = publish_schedule();
+
+        advance_and_run(&mut world, &mut schedule, period());
+
+        let pipeline = world.get::<AutonomyPipelineComponent>(agent).unwrap();
+        let batch = pipeline
+            .0
+            .bus()
+            .read::<Vec<SensorReading<GpsPosition>>>(test_channel())
+            .expect("the reading was published");
+        let reading = batch.value.last().expect("one reading in the batch");
+        assert_eq!(reading.sensor, test_mount());
+        assert_eq!(reading.timestamp, TRUTH_AT);
     }
 
     // ==================================================================
@@ -333,7 +469,14 @@ mod tests {
     fn draws_per_sensor(names: &[&str]) -> Vec<Vec<u64>> {
         let mut world = World::new();
         world.insert_resource(Time::<()>::default());
-        let agent = world.spawn(GroundTruthState::default()).id();
+        world.init_resource::<Time<Fixed>>();
+        start_run_clock_now(&mut world);
+        let agent = world
+            .spawn((
+                AgentIdComponent(AgentId::new("car_1")),
+                GroundTruthState::default(),
+            ))
+            .id();
 
         let mut sensors = Vec::new();
         for name in names {
@@ -343,10 +486,12 @@ mod tests {
                     SensorTimer::from_rate(RATE_HZ),
                     SensorRng::from_sensor(TEST_MASTER_SEED, name),
                     GlobalTransform::default(),
-                    SensorPublishChannel("test.channel".to_string()),
-                    TrackedFrame::new(
-                        FrameId::sensor(AgentId::new("car_1"), *name),
-                        Convention::Flu,
+                    SensorPublishChannel::new::<GpsPosition>(
+                        "test.channel",
+                        "test_unit",
+                        FrameId::agent(AgentId::new("car_1"), *name),
+                        RATE_HZ,
+                        UNREFERENCED,
                     ),
                     ChildOf(agent),
                 ))

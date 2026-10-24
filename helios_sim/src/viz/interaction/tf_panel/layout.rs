@@ -16,7 +16,7 @@
 //! A frame with three sensors below it therefore sits above their midpoint, not
 //! hard-left of them — the difference between a legible tree and a lopsided one.
 
-use helios_core::frames::{transforms::tf::stamped::FrameEdge, FrameId};
+use helios_core::spatial::{transforms::tf::stamped::FrameEdge, FrameId};
 
 use std::collections::{HashMap, HashSet};
 
@@ -138,7 +138,7 @@ fn place_subtree(
 mod tests {
     use super::*;
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     /// A dynamic-style edge `child -> parent`. Poses are irrelevant to layout, so
     /// the tests speak only in identities.
@@ -182,7 +182,7 @@ mod tests {
         let agent = AgentId::new("robot_1");
         let odom = FrameId::odom(agent.clone());
         let base_link = FrameId::base_link(agent.clone());
-        let imu = FrameId::sensor(agent.clone(), "imu");
+        let imu = FrameId::agent(agent.clone(), "imu");
 
         let layout = tree_layout(&[
             edge(base_link.clone(), odom.clone()),
@@ -215,9 +215,9 @@ mod tests {
     fn parent_centres_over_an_odd_fan() {
         let agent = AgentId::new("robot_1");
         let base_link = FrameId::base_link(agent.clone());
-        let gps = FrameId::sensor(agent.clone(), "gps");
-        let imu = FrameId::sensor(agent.clone(), "imu");
-        let mag = FrameId::sensor(agent.clone(), "mag");
+        let gps = FrameId::agent(agent.clone(), "gps");
+        let imu = FrameId::agent(agent.clone(), "imu");
+        let mag = FrameId::agent(agent.clone(), "mag");
 
         let layout = tree_layout(&[
             edge(gps.clone(), base_link.clone()),
@@ -242,7 +242,7 @@ mod tests {
         let base_link = FrameId::base_link(agent.clone());
         let odom = FrameId::odom(agent.clone());
         let map = FrameId::map(agent.clone());
-        let imu = FrameId::sensor(agent.clone(), "imu");
+        let imu = FrameId::agent(agent.clone(), "imu");
 
         let forward = [
             edge(base_link.clone(), odom.clone()),

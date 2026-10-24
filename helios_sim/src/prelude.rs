@@ -12,17 +12,17 @@ pub use crate::HeliosSimulationPlugin;
 pub use crate::cli::Cli;
 
 pub use crate::config::structs::{
-    AgentConfig, AtmosphereConfig, RawScenarioConfig, ScenarioConfig, SensorConfig, TerrainConfig,
-    Vehicle,
+    AgentConfig, AtmosphereConfig, RawScenarioConfig, ScenarioConfig, SensorDeviceConfig,
+    SensorInstallationConfig, Vehicle,
 };
 pub use crate::config::ConfigPlugin;
 
 pub use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
 pub use crate::core::components::{
-    ActuatorCommandComponent, BoundingBox3D, GroundTruthState, SemanticLabel, TerrainMedium,
-    WorldObjectType,
+    ActuatorCommandComponent, BoundingBox3D, GroundTruthState, WorldObjectType,
 };
 pub use crate::core::host::{HeliosHost, Presentation, TimePolicy};
+pub use crate::core::run_clock::RunClock;
 pub use crate::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::core::transforms::{TfTree, TrackedFrame};
 
@@ -32,4 +32,5 @@ pub use crate::brain_bridge::components::{
     AgentIdComponent, AutonomyPipelineComponent, TfServiceComponent,
 };
 pub use crate::brain_bridge::HostInputPublisher;
+pub use crate::brain_bridge::ObservationSinkAppExt;
 pub use crate::brain_bridge::{SensorPublishChannel, SensorPublisher};

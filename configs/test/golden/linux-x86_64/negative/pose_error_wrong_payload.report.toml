@@ -1,0 +1,10 @@
+schema_version = "2.0"
+run_name = "pose_error_wrong_payload"
+scenario = "sim/scenarios/01_proving_ground.toml"
+status = "failed"
+setup_failures = ["on_pipeline_built failed: the run can't use these evaluations, assertions and measures: evaluation 'est': its input 'estimate' on 'agent.ProvingCar.channel.estimate': it carries helios_core::spatial::FrameAwareState, and the role reads helios_core::spatial::transforms::tf::stamped::StampedTransform"]
+simulated_duration_secs = 0.0
+assertions = []
+
+[terminated_by]
+kind = "aborted"

@@ -13,7 +13,7 @@ pub mod feedback;
 pub mod feedforward;
 
 use crate::control::reference::ControlReference;
-use crate::frames::FrameAwareState;
+use crate::spatial::FrameAwareState;
 
 pub struct ControlInputs<R: ControlReference> {
     pub state: FrameAwareState,

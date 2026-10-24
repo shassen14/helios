@@ -14,7 +14,7 @@
 use bevy::prelude::*;
 use serde::Deserialize;
 
-use helios_core::frames::transforms::Convention;
+use helios_core::spatial::transforms::Convention;
 
 use crate::{
     core::transforms::{frame_triad_to_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3},

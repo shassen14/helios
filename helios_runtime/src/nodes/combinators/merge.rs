@@ -29,18 +29,17 @@
 //!
 //! ## A combinator, like `Sum` and `Selector`
 //!
-//! Runtime-native (wraps no `helios_core` trait), no input builder. All channels
-//! are `InternalChannel`: the partial contributions and the merged command are
-//! brain-internal by construction.
+//! Runtime-native (wraps no `helios_core` trait), no input builder. The partial
+//! contributions and the merged command are brain-internal: the command seam
+//! hands it internal channels.
 
 use std::{collections::HashSet, sync::Arc};
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId};
 
 use crate::{
-    pipeline::descriptor::AlgorithmNodePortDescriptor,
-    port::{ChannelError, InternalChannel},
-    ChannelKey, Health, PipelineNode, PortDescriptor, Stamped,
+    port::{ChannelKey, PortDescriptorBuilder},
+    Health, PipelineNode, PortDescriptor, Stamped,
 };
 
 pub(crate) struct Merge {
@@ -53,22 +52,22 @@ pub(crate) struct Merge {
 impl Merge {
     pub(crate) fn new(
         name: impl Into<Arc<str>>,
-        inputs: Vec<InternalChannel>,
-        output: InternalChannel,
+        inputs: Vec<ChannelKey>,
+        output: ChannelKey,
     ) -> Self {
-        let mut base_descriptor = AlgorithmNodePortDescriptor::new();
+        let mut base_descriptor = PortDescriptorBuilder::algorithm();
 
         for input in &inputs {
-            base_descriptor = base_descriptor.input_internal(input.clone());
+            base_descriptor = base_descriptor.input(input.clone());
         }
 
-        let descriptor = base_descriptor.output_internal(output.clone()).build();
+        let descriptor = base_descriptor.output(output.clone()).build();
 
         Self {
             name: name.into(),
             descriptor,
-            inputs: inputs.into_iter().map(Into::into).collect(),
-            output: output.into(),
+            inputs: inputs.into_iter().collect(),
+            output,
         }
     }
 }
@@ -99,7 +98,7 @@ impl PipelineNode for Merge {
     fn execute(
         &self,
         bus: &crate::port::PortBus,
-        _tf: &dyn helios_core::data::TfProvider,
+        _tf: &dyn helios_core::prelude::TfProvider,
         tick: crate::TickContext,
     ) {
         let Some(inputs) = self
@@ -149,8 +148,8 @@ impl PipelineNode for Merge {
             producer: tick.node_id,
         };
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
-            tracing::warn!(channel = %self.output, "merge output channel is not wired into the DAG");
+        if let Err(error) = bus.write(self.output.clone(), stamped) {
+            tracing::warn!(channel = %self.output, error = %error, "merge output channel write failed");
         }
     }
 }
@@ -165,15 +164,14 @@ mod tests {
     use super::*;
 
     use helios_core::control::actuators::{ActuatorSetpoint, SetpointValue};
-    use helios_core::data::ports::TfProvider;
-    use helios_core::data::primitives::MonotonicTime;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::tf::TfProvider;
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
+    use helios_core::spatial::FrameId;
 
     use crate::port::PortBus;
     use crate::{NodeId, TickContext};
-
-    use nalgebra::Isometry3;
 
     struct MockRuntime;
 
@@ -184,11 +182,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
-                Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 
@@ -212,30 +206,26 @@ mod tests {
         }
     }
 
-    fn tick(now: f64, node_id: NodeId) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt: 0.1,
-            node_id,
-        }
+    fn tick(now: f64, node_id: NodeId) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), 0.1, node_id)
     }
 
     fn bus_for(node: &Merge) -> PortBus {
-        PortBus::new(std::slice::from_ref(node.port_descriptor()))
+        PortBus::of_descriptors(std::slice::from_ref(node.port_descriptor()))
     }
 
     /// The canonical decoupled wiring: a drive leg and a steer leg merged into one
     /// terminal command. Returns the node plus the drive / steer / output keys.
     fn drive_steer_merge() -> (Merge, ChannelKey, ChannelKey, ChannelKey) {
-        let drive = InternalChannel::named::<ActuatorCommand>("drive_leg");
-        let steer = InternalChannel::named::<ActuatorCommand>("steer_leg");
-        let out = InternalChannel::named::<ActuatorCommand>("actuators");
+        let drive = ChannelKey::internal::<ActuatorCommand>("drive_leg");
+        let steer = ChannelKey::internal::<ActuatorCommand>("steer_leg");
+        let out = ChannelKey::internal::<ActuatorCommand>("actuators");
         let node = Merge::new(
             "actuator_merge",
             vec![drive.clone(), steer.clone()],
             out.clone(),
         );
-        (node, drive.into(), steer.into(), out.into())
+        (node, drive, steer, out)
     }
 
     #[test]
@@ -418,9 +408,12 @@ mod tests {
         // combinator is rate-free.
         let (node, drive, steer, out) = drive_steer_merge();
         let d = node.port_descriptor();
-        assert_eq!(d.required_inputs, vec![drive, steer]);
-        assert!(d.optional_inputs.is_empty());
-        assert_eq!(d.outputs, vec![out]);
-        assert!(d.rate.is_none());
+        assert_eq!(
+            d.required_inputs().cloned().collect::<Vec<_>>(),
+            vec![drive, steer]
+        );
+        assert!(d.optional_inputs().next().is_none());
+        assert_eq!(d.outputs().cloned().collect::<Vec<_>>(), vec![out]);
+        assert!(d.rate().is_none());
     }
 }

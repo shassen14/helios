@@ -1,0 +1,20 @@
+# Mock oracle run: the proving ground with the estimator replaced by the
+# mock oracle, which republishes the body's truth as the estimate.
+#
+# It covers the mock's side of the truth channels: the sim's truth rig
+# publishing `truth.tf` and `truth.twist` on the agent's `base_link`
+# instance, and the mock reading them as its estimate. A refused truth write
+# or a truth the mock cannot use warns, so the run must finish with no
+# warnings. It carries no assertions; `pose_error_mock_oracle` grades this
+# scenario's estimate against its truth.
+
+schema_version = "2.0"
+
+# Resolved relative to --config-root (default "configs").
+scenario = { from = "sim/scenarios/dev_mock_oracle.toml" }
+
+# Carried but unused (observation presets aren't resolved yet).
+observation = { from = "default" }
+
+# As long as the proving ground's: long enough to drive and settle at rest.
+termination = { max_simulated_seconds = 60.0 }

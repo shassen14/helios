@@ -1,7 +1,9 @@
-use crate::{data::PointCloud, frames::conventions::Flu};
+use crate::{prelude::RangeField, spatial::conventions::Flu};
+
+use std::fmt::Debug;
+
 use dyn_clone::DynClone;
 use nalgebra::Vector3;
-use std::fmt::Debug;
 
 /// Represents a single ray to be cast by the simulation engine.
 /// All vectors are in the SENSOR's local coordinate frame.
@@ -18,23 +20,34 @@ pub struct RayHit {
     pub distance: f32,
 }
 
-/// Output type for `process_hits`. Typed per sensor family so `MeasurementData` is not required.
+/// What `process_hits` produces, one variant per output type a ray-cast sensor
+/// can emit. A lidar emits an organized [`RangeField`] in its FLU frame.
 #[derive(Debug, Clone)]
 pub enum RaycastingOutput {
-    PointCloud(PointCloud<Flu, ()>),
+    RangeField(RangeField<Flu>),
 }
 
 /// The contract for any sensor model that works by casting rays into the environment.
 pub trait RaycastingSensorModel: Send + Sync + DynClone + Debug {
-    /// Generates the complete set of rays that defines this sensor's scan pattern.
-    /// The rays are returned in the sensor's local coordinate frame.
-    fn generate_rays(&self) -> Vec<SensorRay>;
+    /// Generates the complete set of rays for one scan, in the sensor's local
+    /// frame.
+    ///
+    /// The rays are where the sensor *actually* points this scan, pointing error
+    /// included, so the caller supplies the RNG. Casting them is the host's job;
+    /// the error model stays here.
+    fn generate_rays(&self, rng: &mut dyn rand::RngCore) -> Vec<SensorRay>;
 
     /// Takes the raw results from the physics engine's raycasting and processes
     /// them into a final `RaycastingOutput` packet, applying sensor-specific noise.
     ///
     /// The caller supplies the RNG so this function is deterministic under the project's
     /// seeded-PRNG rule (no `thread_rng` inside algorithm code).
+    ///
+    /// `hits` must arrive in the order [`generate_rays`](Self::generate_rays)
+    /// produced the rays. A host may leave out rays that hit nothing but must
+    /// not reorder the rest: noise is drawn per hit in arrival order, so the
+    /// same seed reproduces the same output only if a host casting rays in
+    /// parallel restores that order first.
     fn process_hits(&self, hits: &[RayHit], rng: &mut dyn rand::RngCore) -> RaycastingOutput;
 
     /// Returns the maximum effective range of the sensor in meters.

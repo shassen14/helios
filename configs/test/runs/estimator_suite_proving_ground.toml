@@ -1,0 +1,105 @@
+# The proving-ground car's GPS-fused EKF through the estimator suite.
+#
+# Pose error: `pose_error_proving_ground.toml`'s assertion and measures,
+# each retargeted to the suite's evaluation on `ProvingCar`. That inline run
+# stays, and the two reports agree on every number; only the names and the
+# evaluation's binding differ.
+#
+# NEES: measures only, until runs show whether this EKF is consistent. A
+# consistent filter's NEES averages near its dof (the binding lists each
+# graded block's), but samples within one run are correlated, so one run's
+# mean is no χ² test; a bound set here would be a regression pin.
+#
+# Every window starts a settle time after the first GPS update the filter
+# applied; the inline run's header says why.
+#
+# `position_held`'s bound is a regression pin set from this run's measured
+# error, not a specification of the EKF.
+
+schema_version = "2.0"
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 60.0 }
+
+[[suite]]
+name = "estimator"
+from = "test/evaluations/estimator.toml"
+agents = ["ProvingCar"]
+
+[[assert]]
+name = "position_held"
+target = "eval.agent.ProvingCar.estimator.pose.position"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+condition = { less_than = 0.15 }
+
+[[measure]]
+name = "position_rms"
+target = "eval.agent.ProvingCar.estimator.pose.position"
+reduce = "rms"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "position_max"
+target = "eval.agent.ProvingCar.estimator.pose.position"
+reduce = "max"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "position_final"
+target = "eval.agent.ProvingCar.estimator.pose.position"
+reduce = "final"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "z_rms"
+target = "eval.agent.ProvingCar.estimator.pose.z"
+reduce = "rms"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "rotation_rms"
+target = "eval.agent.ProvingCar.estimator.pose.rotation"
+reduce = "rms"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "rotation_max"
+target = "eval.agent.ProvingCar.estimator.pose.rotation"
+reduce = "max"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "nees_mean"
+target = "eval.agent.ProvingCar.estimator.nees.nees"
+reduce = "mean"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "nees_max"
+target = "eval.agent.ProvingCar.estimator.nees.nees"
+reduce = "max"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "nees_position_mean"
+target = "eval.agent.ProvingCar.estimator.nees.nees_position"
+reduce = "mean"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "nees_position_max"
+target = "eval.agent.ProvingCar.estimator.nees.nees_position"
+reduce = "max"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "nees_orientation_mean"
+target = "eval.agent.ProvingCar.estimator.nees.nees_orientation"
+reduce = "mean"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }
+
+[[measure]]
+name = "nees_orientation_max"
+target = "eval.agent.ProvingCar.estimator.nees.nees_orientation"
+reduce = "max"
+window = { start = { after = "agent.ProvingCar.node.primary.aiding.gps.nis", plus = 5.0 } }

@@ -2,7 +2,7 @@ use crate::pipeline::node::NodeId;
 
 use std::borrow::Cow;
 
-use helios_core::data::primitives::MonotonicTime;
+use helios_core::spatial::primitives::MonotonicTime;
 
 /// Bus envelope wrapping every value on the port bus.
 ///

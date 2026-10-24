@@ -9,13 +9,12 @@
 use super::state_sensor::{publish_state_sensor, SensorTimer, StateSensor};
 
 use crate::brain_bridge::components::SensorPublishChannel;
+use crate::config::structs::CHANNEL_FIELD;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 
-use helios_core::data::sensor::MagneticField;
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::interchange::measurement::sensor::MagneticField;
 use helios_core::sensors::magnetometer::MagnetometerModel;
 
 use nalgebra::{Isometry3, Vector3};
@@ -88,8 +87,17 @@ fn spawn_magnetometer_sensors(
     let magnetic_field = &config.common.world.magnetic_field;
 
     for (agent_entity, agent_name, request, agent_id) in &request_query {
-        for (sensor_name, sensor_config) in &request.0.sensors {
-            if let SensorConfig::Magnetometer(mag_config) = sensor_config {
+        for (sensor_name, installation) in &request.0.sensors {
+            if let SensorDeviceConfig::Magnetometer(mag_config) = &installation.device {
+                let Some(channel) = installation.channel(CHANNEL_FIELD) else {
+                    error!(
+                        "Magnetometer '{}' on agent '{}' has no `{}`. Skipping sensor.",
+                        sensor_name,
+                        agent_name.as_str(),
+                        CHANNEL_FIELD
+                    );
+                    continue;
+                };
                 info!(
                     "  -> Spawning Magnetometer '{}' as child of agent '{}' with rate of {:.1} Hz",
                     sensor_name,
@@ -114,21 +122,25 @@ fn spawn_magnetometer_sensors(
                     continue;
                 };
 
-                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_label = format!("{}/{}", agent_id.0, sensor_name);
                 let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
 
+                let frame = installation.frame(&agent_id.0, sensor_name);
                 let sensor_entity = commands
                     .spawn((
                         Name::new(sensor_label),
-                        SensorPublishChannel(mag_config.channel.clone()),
+                        SensorPublishChannel::new::<<Magnetometer as StateSensor>::Payload>(
+                            channel,
+                            sensor_name,
+                            frame.id.clone(),
+                            mag_config.rate,
+                            MagnetometerModel::WORLD_REFERENCED,
+                        ),
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),
                         sensor_rng,
-                        TrackedFrame::new(
-                            FrameId::sensor(agent_id.0.clone(), mag_config.channel.clone()),
-                            Convention::Flu,
-                        ),
-                        mag_config.get_relative_pose().to_bevy_local_transform(),
+                        TrackedFrame::new(frame.id, frame.convention),
+                        frame.pose.to_bevy_local_transform(),
                     ))
                     .id();
 

@@ -1,7 +1,9 @@
 //! Forward model for an accelerometer.
 
-use crate::data::sensor::Acceleration;
+use crate::interchange::measurement::sensor::Acceleration;
 use crate::sensors::noise::TriaxialGaussian;
+use crate::spatial::conventions::Flu;
+use crate::spatial::transforms::{Convention, ConventionOf};
 
 use nalgebra::{UnitQuaternion, Vector3};
 use rand::RngCore;
@@ -16,6 +18,15 @@ pub struct AccelerometerModel {
 }
 
 impl AccelerometerModel {
+    /// The axis convention of the sensor frame this model reports in, the
+    /// frame its installation names.
+    pub const FRAME_CONVENTION: Convention = Flu::CONVENTION;
+
+    /// Whether this model's output is expressed in, or relative to, the world
+    /// frame its truth is given in. Specific force is about the body alone;
+    /// gravity fixes only local level, which every world frame shares.
+    pub const WORLD_REFERENCED: bool = false;
+
     /// Builds the model. Returns `None` if any component of `stddev` is not
     /// strictly positive.
     pub fn new(bias: Vector3<f64>, stddev: Vector3<f64>) -> Option<Self> {

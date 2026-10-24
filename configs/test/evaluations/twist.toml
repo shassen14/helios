@@ -1,0 +1,16 @@
+# Twist tracking: an agent's true body twist minus the guidance reference it
+# tracks, on each body axis. Read through the agent's reference seam and its
+# truth source, so it applies to any agent with both.
+#
+# The gap default is how these numbers are computed, so it travels with the
+# suite: a role spans gaps up to three periods of its input's declared rate.
+
+[evaluation]
+gap_multiple = 3.0
+
+[[evaluate]]
+name = "twist"
+kind = "twist_tracking"
+[evaluate.inputs]
+truth = "truth.twist"
+reference = "reference"

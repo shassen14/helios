@@ -1,18 +1,22 @@
 use crate::{
-    data::{ports::TfProvider, AgentId, MonotonicTime},
     estimation::{
+        frames::EstimationFrames,
         measurement::{MeasurementModel, Prediction, Unavailable},
         schema::{MeasurementSchema, MeasurementSchemaBlock},
     },
-    frames::{
+    prelude::{MonotonicTime, TfProvider},
+    spatial::state::Quantity,
+    spatial::{
         conventions::{Enu, Flu},
         quantities::FreeVector,
-        transforms::{Convention, Rotation},
+        transforms::{Convention, ConventionOf, Rotation},
         FrameAwareState, FrameId,
     },
-    state::Quantity,
 };
 use nalgebra::{DVector, Vector3};
+
+/// The axes the model reads its sensor's mount in.
+type MountAxes = Flu;
 
 /// A measurement model for a 3-axis magnetometer.
 ///
@@ -20,10 +24,18 @@ use nalgebra::{DVector, Vector3};
 /// providing an absolute heading reference.
 #[derive(Debug, Clone)]
 pub struct MagneticFieldModel {
-    pub agent: AgentId,
+    /// The body the state tracks and the root it holds the body's pose in.
+    pub frames: EstimationFrames,
     pub sensor: FrameId,
     /// The "true" magnetic field vector in the world (ENU) frame.
     pub world_magnetic_field: Vector3<f64>,
+}
+
+impl MagneticFieldModel {
+    /// The axis convention this model reads its sensor's mount in. A host
+    /// checks it against the convention the tf tree holds for the mount
+    /// before the first tick.
+    pub const MOUNT_CONVENTION: Convention = MountAxes::CONVENTION;
 }
 
 impl MeasurementModel for MagneticFieldModel {
@@ -32,7 +44,7 @@ impl MeasurementModel for MagneticFieldModel {
         let frame = self.sensor.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::Mag(frame),
-            Convention::Flu,
+            Self::MOUNT_CONVENTION,
         )];
 
         MeasurementSchema::compose(blocks)
@@ -55,30 +67,24 @@ impl MeasurementModel for MagneticFieldModel {
         };
 
         let orientation_body_to_world = filter_state
-            .orientation::<Flu, Enu>(
-                FrameId::base_link(self.agent.clone()),
-                FrameId::odom(self.agent.clone()),
-            )
+            .orientation::<Flu, Enu>(self.frames.body.clone(), self.frames.root.clone())
             .map(Rotation::into_inner)
             .unwrap_or_default();
         let q_body_from_world = orientation_body_to_world.inverse();
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
 
-        let Some(erased) = tf.get_transform(
-            self.sensor.clone(),
-            FrameId::base_link(self.agent.clone()),
-            at,
-        ) else {
+        let Some(erased) = tf.get_transform(self.sensor.clone(), self.frames.body.clone(), at)
+        else {
             return Prediction::Unavailable(Unavailable::MissingTransform {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
-        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
@@ -115,13 +121,13 @@ mod tests {
     //!   the bias read falls back to zero.
 
     use super::*;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::manifold::TangentNoise;
-    use crate::state::{Component, Quantity};
+    use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
+    use crate::spatial::state::{Component, Quantity};
+    use crate::spatial::transforms::{Convention, ErasedTransform, Transform};
+    use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;
@@ -151,7 +157,7 @@ mod tests {
     }
 
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "magnetometer")
+        FrameId::agent(agent(), "magnetometer")
     }
 
     const AT: MonotonicTime = MonotonicTime(0.0);
@@ -184,15 +190,13 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            let iso = if from.is_sensor() {
+            let iso = if !from.is_base_link() {
                 self.0
             } else {
                 self.0.inverse()
             };
-            Some(ErasedTransform::from_parts(
-                iso,
-                Convention::Flu,
-                Convention::Flu,
+            Some(ErasedTransform::erase(
+                Transform::<Flu, Flu>::from_isometry(iso),
             ))
         }
     }
@@ -203,7 +207,7 @@ mod tests {
 
     fn make_orientation_state() -> FrameAwareState {
         let schema = StateSchema::compose(vec![orientation_block()]);
-        FrameAwareState::from_schema(Arc::new(schema), 0.0)
+        FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0))
     }
 
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
@@ -253,7 +257,7 @@ mod tests {
 
     fn make_model() -> MagneticFieldModel {
         MagneticFieldModel {
-            agent: agent(),
+            frames: EstimationFrames::odom(agent()),
             sensor: sensor(),
             world_magnetic_field: Vector3::new(0.0, 1.0, 0.0),
         }
@@ -274,7 +278,7 @@ mod tests {
                 DMatrix::identity(3, 3),
             ),
         ]);
-        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         state.set_variable(
             &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X),
             bias.x,

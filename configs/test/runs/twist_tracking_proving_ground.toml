@@ -1,0 +1,91 @@
+# Twist tracking on the proving ground: the true body twist minus the
+# guidance reference, on each body axis. This run FAILS today, and its
+# failure is the finding it pins.
+#
+# The planner plans for a point, so the car's route clips the barrier's
+# corner and the car pins there while guidance still asks for 5 m/s. Surge
+# error settles near -5 m/s, and both surge assertions fail. Once the
+# planner keeps clearance from obstacles, the car drives through, and this
+# run's golden report changes in the same commit.
+
+schema_version = "2.0"
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 60.0 }
+
+[evaluation]
+gap_multiple = 3.0
+
+[[evaluate]]
+name = "twist"
+kind = "twist_tracking"
+[evaluate.inputs]
+truth = { path = "agent.ProvingCar.channel.truth.twist", instance = "agent.ProvingCar.base_link" }
+reference = "agent.ProvingCar.channel.reference"
+
+[[assert]]
+name = "surge_tracked"
+target = "eval.inline.twist.surge"
+reduce = "rms"
+condition = { less_than = 0.5 }
+
+[[assert]]
+name = "surge_settled"
+target = "eval.inline.twist.surge"
+window = { start = 5.0, end = 20.0 }
+condition = { within_range = [-1.0, 1.0] }
+
+[[measure]]
+name = "surge_rms"
+target = "eval.inline.twist.surge"
+reduce = "rms"
+
+[[measure]]
+name = "surge_max"
+target = "eval.inline.twist.surge"
+reduce = "max"
+
+[[measure]]
+name = "surge_min"
+target = "eval.inline.twist.surge"
+reduce = "min"
+
+[[measure]]
+name = "surge_final"
+target = "eval.inline.twist.surge"
+reduce = "final"
+
+[[measure]]
+name = "sway_rms"
+target = "eval.inline.twist.sway"
+reduce = "rms"
+
+[[measure]]
+name = "heave_rms"
+target = "eval.inline.twist.heave"
+reduce = "rms"
+
+[[measure]]
+name = "roll_rate_rms"
+target = "eval.inline.twist.roll_rate"
+reduce = "rms"
+
+[[measure]]
+name = "pitch_rate_rms"
+target = "eval.inline.twist.pitch_rate"
+reduce = "rms"
+
+[[measure]]
+name = "yaw_rate_rms"
+target = "eval.inline.twist.yaw_rate"
+reduce = "rms"
+
+[[measure]]
+name = "speed_rms"
+target = "eval.inline.twist.speed"
+reduce = "rms"
+
+[[measure]]
+name = "velocity_rms"
+target = "eval.inline.twist.velocity"
+reduce = "rms"

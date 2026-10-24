@@ -14,6 +14,7 @@ use bevy::prelude::*;
 use crate::agents::sensors::HeliosSensorsPlugin;
 use crate::agents::vehicles::HeliosVehiclesPlugin;
 use crate::brain_bridge::BrainBridgePlugin;
+use crate::core::run_clock::RunClockPlugin;
 use crate::core::simulation_setup::SimulationSetupPlugin;
 use crate::registry::embodiment::EmbodimentRegistryPlugin;
 use crate::registry::plugin::AutonomyRegistryPlugin;
@@ -45,6 +46,7 @@ impl Plugin for HeliosSimulationPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             SimulationSetupPlugin,
+            RunClockPlugin,
             AutonomyRegistryPlugin,
             EmbodimentRegistryPlugin,
             HeliosWorldPlugin,
@@ -56,7 +58,7 @@ impl Plugin for HeliosSimulationPlugin {
 }
 
 /// Absolute path to this crate's `assets/` directory, the canonical home of
-/// Helios sim assets (terrain/object GLBs).
+/// Helios sim assets (object and vehicle GLBs).
 ///
 /// Built from `CARGO_MANIFEST_DIR`, which the compiler expands to *this*
 /// crate's manifest dir regardless of which binary calls it — so a bin in

@@ -1,7 +1,10 @@
+pub mod bounding_boxes;
+pub mod colliders;
 pub mod discovery;
 pub mod estimate;
 pub mod map;
 pub mod path;
+pub mod point_cloud;
 pub mod pose;
 pub mod tf;
 pub mod tf_labels;

@@ -1,7 +1,7 @@
 //! The embodied half of each simulated agent: its physical body and the
 //! sensors mounted on it.
 //!
-//! An "agent" here is a vehicle plus a sensor suite. This module owns the host
+//! An "agent" here is a vehicle plus its sensor fit. This module owns the host
 //! side of that pairing — [`vehicles`] turns the brain's control output into
 //! physical motion, [`sensors`] samples ground-truth world state into typed
 //! readings. The autonomy that decides what the body does lives behind the

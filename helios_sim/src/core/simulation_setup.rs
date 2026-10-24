@@ -1,21 +1,24 @@
 use std::time::Duration;
 
-use avian3d::prelude::PhysicsSystems;
+use avian3d::prelude::{CollidingEntities, CollisionEventsEnabled, PhysicsSystems};
 use bevy::time::TimeUpdateStrategy;
+use bevy::transform::TransformSystems;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
 use super::components::GroundTruthState;
-use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
+use super::transforms::TfTree;
 use crate::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::core::components::ConfiguredMissionGoal;
-use crate::core::ground_truth::publish_oracle_channels_system;
+use crate::core::ground_truth::publish_truth_channels_system;
 use crate::core::ground_truth_sync_system;
 use crate::core::host::TimePolicy;
 use crate::core::prng::MasterSeed;
+use crate::core::run_clock::RunClock;
+use crate::core::truth_contacts::publish_truth_contacts_system;
 use crate::prelude::*;
 
-use helios_core::data::AgentId;
+use helios_core::prelude::AgentId;
 
 pub struct SimulationSetupPlugin;
 
@@ -56,38 +59,37 @@ impl Plugin for SimulationSetupPlugin {
             ),
         );
 
-        // TF tree update strategy:
-        // - Structural system (Precomputation): inserts/removes entries when TrackedFrame is
-        //   added or removed. No-op on the vast majority of ticks.
-        // - Incremental system (Precomputation): updates poses for Changed<GlobalTransform>.
-        //   Handles first-tick initialization; no-op every tick after that until physics runs.
-        // - Incremental system (StateSync): updates poses after Avian3D physics, so
-        //   oracle publishing and any downstream consumers see the latest state.
         app.add_systems(
             FixedUpdate,
             (
-                (tf_tree_structural_system, tf_tree_incremental_update_system)
-                    .chain()
-                    .in_set(SimulationSet::Precomputation)
+                ground_truth_sync_system
+                    .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
-                ground_truth_sync_system.in_set(SimulationSet::StateSync),
-                publish_oracle_channels_system
+                publish_truth_channels_system
                     .after(ground_truth_sync_system)
                     .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
-                tf_tree_incremental_update_system
-                    .in_set(SimulationSet::StateSync)
+                publish_truth_contacts_system
                     .after(ground_truth_sync_system)
+                    .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
             ),
         );
     }
 }
 
+/// The fixed steps a fast-forwarded run batches into one update, in place of
+/// the derived [`fast_forward_steps_per_update`]. A test hook, inserted only
+/// by a harness: how many steps a frame runs must change nothing a run
+/// computes, and this varies it on purpose. Zero is read as one, since zero
+/// would stop the clock.
+#[derive(Resource, Debug)]
+pub struct StepsPerUpdate(pub u32);
+
 // Chain the scene-building sets so each pass runs after the previous one's
 // spawns are visible. Every set boundary is a Commands sync point, so a pass
 // that queries the prior pass's inserts (e.g. `SpawnPipeline` reading the
-// sensor channels from `ProcessSensors`) must sit in a later set, not just a
+// measurement channels from `ProcessSensors`) must sit in a later set, not just a
 // later system.
 fn configure_scene_build_sets(app: &mut App) {
     app.configure_sets(
@@ -98,6 +100,7 @@ fn configure_scene_build_sets(app: &mut App) {
             SceneBuildSet::ProcessVehicle,
             SceneBuildSet::ProcessSensors,
             SceneBuildSet::SpawnPipeline,
+            SceneBuildSet::SetUpSinks,
             SceneBuildSet::BindPipeline,
             SceneBuildSet::Physics,
             SceneBuildSet::Finalize,
@@ -107,33 +110,41 @@ fn configure_scene_build_sets(app: &mut App) {
     );
 }
 
-fn configure_fixed_update_sets(app: &mut App) {
+pub(crate) fn configure_fixed_update_sets(app: &mut App) {
     // Configure the runtime schedule graph.
     app.configure_sets(
         FixedUpdate,
         (
-            // Prepare TF from current transforms.
+            // Reserved, empty.
             SimulationSet::Precomputation,
-            // Simulate sensors, publish readings to the bus.
+            // Apply the command the brain decided last step as forces.
+            SimulationSet::Actuation,
+            // Step physics from the last step's instant to this one's.
+            (
+                PhysicsSystems::First,
+                PhysicsSystems::Prepare,
+                PhysicsSystems::StepSimulation,
+                PhysicsSystems::Writeback,
+                PhysicsSystems::Last,
+            ),
+            // Propagate the written-back transforms, so everything after
+            // reads one post-step world.
+            TransformSystems::Propagate,
+            // Read truth back, at this step's instant, and publish it.
+            SimulationSet::StateSync,
+            // Sample the post-step world, publish readings to the bus.
             SimulationSet::Sensors,
             // Tick the whole autonomy pipeline (every DAG node).
             SimulationSet::BrainTick,
-            // Feed goals into the pipeline, then drain its outputs to ECS.
+            // Feed goals into the pipeline, then drain its outputs to ECS for
+            // the next step's actuation.
             SimulationSet::BrainInput,
             SimulationSet::BrainOutput,
-            // Convert control to physical forces.
-            SimulationSet::Actuation,
-            // Physics, then read state back.
-            (
-                // Avian's internal set where it prepares bodies.
-                PhysicsSystems::Prepare,
-                // The main physics simulation step.
-                PhysicsSystems::StepSimulation,
-                // Our system runs IMMEDIATELY AFTER the simulation.
-                SimulationSet::StateSync,
-            ),
+            // Feed the observation sinks the tick's batch.
+            SimulationSet::Observation,
             // Observe the fully-settled tick: ground truth and oracle channels
-            // are fresh, so external consumers read the buses here.
+            // are fresh, and the sinks hold the tick, so external consumers
+            // read them here.
             SimulationSet::Validation,
         )
             .chain(), // .chain() enforces the order of the tuples/sets
@@ -193,6 +204,7 @@ fn fixed_timestep(frequency_hz: f64) -> Duration {
 fn configure_time_pacing(
     config: Res<ScenarioConfig>,
     policy: Res<TimePolicy>,
+    batch_override: Option<Res<StepsPerUpdate>>,
     mut virtual_time: ResMut<Time<Virtual>>,
     mut update_strategy: ResMut<TimeUpdateStrategy>,
 ) {
@@ -201,7 +213,9 @@ fn configure_time_pacing(
     }
 
     let step = fixed_timestep(config.common.simulation.frequency_hz);
-    let steps_per_update = fast_forward_steps_per_update(step);
+    let steps_per_update = batch_override
+        .map(|batch| batch.0.max(1))
+        .unwrap_or_else(|| fast_forward_steps_per_update(step));
 
     // Takes the wall clock out of the loop: `time_system` synthesizes a delta
     // of `step * steps_per_update` per update instead of reading `Instant::now`,
@@ -262,7 +276,7 @@ fn fast_forward_max_delta(timestep: Duration, steps_per_update: u32) -> Duration
     timestep * steps_per_update * HEADROOM
 }
 
-fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
+fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>, clock: RunClock) {
     // The resolution and deserialization logic has been moved to the config module.
     // We can now simply iterate over the final, concrete `AgentConfig` structs.
     for agent_config in &config.agents {
@@ -279,16 +293,25 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
         commands.spawn((
             Name::new(format!("{}/base_link", agent_config.name())),
             // The agent's canonical frame-scope identity, built once here and read
-            // by every downstream frame producer (topology, sensors, odom,
-            // pipeline). Stamping it on the shell — before any producer runs — is
-            // what leaves no name string in scope for a producer to re-derive a
+            // by every downstream frame producer (topology, sensors, pipeline).
+            // Stamping it on the shell — before any producer runs — is what
+            // leaves no name string in scope for a producer to re-derive a
             // divergent scope from. See `AgentIdComponent`.
             AgentIdComponent(AgentId::new(agent_config.name())),
+            // The spawn state, at the run's start, or at the instant an agent
+            // spawned mid-run arrives.
             GroundTruthState {
+                at: clock.now().unwrap_or(RunClock::START),
                 pose: start_isometry,
                 ..default()
             },
             start_transform,
+            // What the truth rig reads to publish `truth.contacts`: Avian
+            // reports touches only for a body that asks, and fills
+            // `CollidingEntities` only on a collider that carries it, the
+            // agent's root.
+            CollisionEventsEnabled,
+            CollidingEntities::default(),
             // We clone the agent_config to move ownership into the component.
             // This is necessary because multiple systems in your spawning pipeline
             // (for sensors, estimators, etc.) will need to read from it.
@@ -329,8 +352,10 @@ mod tests {
 
     use std::time::Duration;
 
+    use avian3d::prelude::PhysicsSystems;
     use bevy::prelude::*;
     use bevy::time::TimeUpdateStrategy;
+    use bevy::transform::TransformSystems;
 
     /// Slow enough that one fixed step alone spends the whole overshoot budget
     /// *and* exceeds Bevy's 250 ms default clamp — the rate at which batching
@@ -539,7 +564,12 @@ mod tests {
                 (|mut o: ResMut<SetOrder>| o.0.push("BrainOutput"))
                     .in_set(SimulationSet::BrainOutput),
                 (|mut o: ResMut<SetOrder>| o.0.push("Actuation")).in_set(SimulationSet::Actuation),
+                (|mut o: ResMut<SetOrder>| o.0.push("Physics")).in_set(PhysicsSystems::Writeback),
+                (|mut o: ResMut<SetOrder>| o.0.push("Propagate"))
+                    .in_set(TransformSystems::Propagate),
                 (|mut o: ResMut<SetOrder>| o.0.push("StateSync")).in_set(SimulationSet::StateSync),
+                (|mut o: ResMut<SetOrder>| o.0.push("Observation"))
+                    .in_set(SimulationSet::Observation),
                 (|mut o: ResMut<SetOrder>| o.0.push("Validation"))
                     .in_set(SimulationSet::Validation),
             ),
@@ -553,12 +583,15 @@ mod tests {
             app.world().resource::<SetOrder>().0,
             vec![
                 "Precomputation",
+                "Actuation",
+                "Physics",
+                "Propagate",
+                "StateSync",
                 "Sensors",
                 "BrainTick",
                 "BrainInput",
                 "BrainOutput",
-                "Actuation",
-                "StateSync",
+                "Observation",
                 "Validation",
             ],
         );
@@ -586,6 +619,8 @@ mod tests {
                     .in_set(SceneBuildSet::ProcessSensors),
                 (|mut o: ResMut<SetOrder>| o.0.push("SpawnPipeline"))
                     .in_set(SceneBuildSet::SpawnPipeline),
+                (|mut o: ResMut<SetOrder>| o.0.push("SetUpSinks"))
+                    .in_set(SceneBuildSet::SetUpSinks),
                 (|mut o: ResMut<SetOrder>| o.0.push("BindPipeline"))
                     .in_set(SceneBuildSet::BindPipeline),
                 (|mut o: ResMut<SetOrder>| o.0.push("Physics")).in_set(SceneBuildSet::Physics),
@@ -607,6 +642,7 @@ mod tests {
                 "ProcessVehicle",
                 "ProcessSensors",
                 "SpawnPipeline",
+                "SetUpSinks",
                 "BindPipeline",
                 "Physics",
                 "Finalize",

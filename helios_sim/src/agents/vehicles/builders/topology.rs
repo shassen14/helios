@@ -3,17 +3,17 @@ use crate::config::structs::TopologyConfig;
 use crate::core::transforms::TrackedFrame;
 use crate::registry::contexts::TopologyBuildContext;
 
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::spatial::FrameId;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
 /// Builds the general single-body topology: one dynamic rigid body at the start
-/// pose tagged with its FLU body frame, plus one child frame entity per declared
-/// mount. Each mount frame carries its FLU pose and a `MountFrame` name; the
-/// visual and plant axes resolve those names to place parts and assign wheel
-/// roles. A body that declares no mounts (the L0 shim) spawns none.
+/// pose tagged with its body frame, plus one child frame entity per declared
+/// mount, each in the topology's convention. Each mount frame carries its pose
+/// and a `MountFrame` name; the visual and plant axes resolve those names to
+/// place parts and assign wheel roles. A body that declares no mounts (the L0
+/// shim) spawns none.
 #[allow(irrefutable_let_patterns)] // single variant today; a second makes the else-arm live
 pub fn build_rigid_body_with_mount(ctx: &mut TopologyBuildContext) -> Result<(), String> {
     let TopologyConfig::RigidBodyWithMount { mass, mounts } = ctx.config else {
@@ -23,11 +23,12 @@ pub fn build_rigid_body_with_mount(ctx: &mut TopologyBuildContext) -> Result<(),
         ));
     };
 
+    let convention = ctx.config.convention();
     ctx.commands.entity(ctx.entity).insert((
         ctx.start_transform,
         RigidBody::Dynamic,
         Mass(*mass),
-        TrackedFrame::new(FrameId::base_link(ctx.agent.clone()), Convention::Flu),
+        TrackedFrame::new(FrameId::base_link(ctx.agent.clone()), convention),
         SleepingDisabled,
         LinearVelocity::default(),
         AngularVelocity::default(),
@@ -40,8 +41,8 @@ pub fn build_rigid_body_with_mount(ctx: &mut TopologyBuildContext) -> Result<(),
             .spawn((
                 mount.pose.to_bevy_local_transform(),
                 TrackedFrame::new(
-                    FrameId::sensor(ctx.agent.clone(), mount.name.clone()),
-                    Convention::Flu,
+                    FrameId::agent(ctx.agent.clone(), mount.name.clone()),
+                    convention,
                 ),
                 MountFrame(mount.name.clone()),
             ))
@@ -59,7 +60,7 @@ mod tests {
 
     use crate::config::structs::{MountConfig, Pose};
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     use bevy::ecs::system::SystemState;
     use nalgebra::{UnitQuaternion, Vector3};
@@ -94,7 +95,8 @@ mod tests {
 
     // Spawning posed, named child frames is an ECS effect, so this is a Tier-2
     // minimal-World test. It asserts each mount becomes a child of the body,
-    // carrying its name and the FLU→Bevy image of its declared pose.
+    // carrying its name, the FLU→Bevy image of its declared pose, and the
+    // topology's convention.
     #[test]
     fn builds_a_named_child_frame_per_mount() {
         let front_left = mount("wheel_fl", Vector3::new(1.3, 0.75, 0.0));
@@ -117,10 +119,11 @@ mod tests {
         assert_eq!(children.len(), 2);
 
         // Requiring TrackedFrame in the query also asserts every mount frame is
-        // FLU-tagged: a frame missing it would not match and the count would fail.
+        // tracked: a frame missing it would not match and the count would fail.
         let mut placed = std::collections::HashMap::new();
         let mut query = world.query::<(&MountFrame, &Transform, &TrackedFrame)>();
-        for (mount, transform, _flu) in query.iter(&world) {
+        for (mount, transform, tracked) in query.iter(&world) {
+            assert_eq!(tracked.convention, config.convention());
             placed.insert(mount.0.clone(), transform.translation);
         }
         assert_eq!(placed.len(), 2);

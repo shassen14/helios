@@ -1,7 +1,7 @@
 //! Spatial velocity command (linear + angular).
 
-use crate::frames::conventions::{Flu, Frame};
-use crate::frames::quantities::{FluVector, FreeVector};
+use crate::spatial::conventions::{Flu, Frame};
+use crate::spatial::quantities::{FluVector, FreeVector};
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg, Sub};
@@ -23,8 +23,8 @@ use std::ops::{Add, Mul, Neg, Sub};
 ///   different velocities (`v_p = v_o + ω × r`) — so summing twists taken about
 ///   different points would be meaningless.
 /// - **A frame change is a pure rotation.** Converting, say, an
-///   [`Enu`](crate::frames::conventions::Enu) twist to an
-///   [`Flu`](crate::frames::conventions::Flu) one rotates `linear` and `angular`
+///   [`Enu`](crate::spatial::conventions::Enu) twist to an
+///   [`Flu`](crate::spatial::conventions::Flu) one rotates `linear` and `angular`
 ///   and nothing else — the reference point is unchanged, so no `ω × r` coupling
 ///   term arises. Were the point allowed to differ, a plain rotation would be
 ///   silently wrong.
@@ -33,8 +33,8 @@ use std::ops::{Add, Mul, Neg, Sub};
 ///
 /// `angular` transforms like an ordinary vector only under rotations between
 /// *right-handed* frames. Every convention shipped here
-/// ([`Enu`](crate::frames::conventions::Enu),
-/// [`Flu`](crate::frames::conventions::Flu)) is right-handed, so rotating a
+/// ([`Enu`](crate::spatial::conventions::Enu),
+/// [`Flu`](crate::spatial::conventions::Flu)) is right-handed, so rotating a
 /// `Twist` is correct. A left-handed convention would require a sign correction
 /// on the angular part that a plain rotation would not apply.
 ///
@@ -43,8 +43,8 @@ use std::ops::{Add, Mul, Neg, Sub};
 ///
 /// ```compile_fail
 /// use helios_core::control::commands::Twist;
-/// use helios_core::frames::conventions::{Enu, Flu};
-/// use helios_core::frames::quantities::FreeVector;
+/// use helios_core::spatial::conventions::{Enu, Flu};
+/// use helios_core::spatial::quantities::FreeVector;
 ///
 /// let world: Twist<Enu> = Twist::new(FreeVector::zeros(), FreeVector::zeros());
 /// let body: Twist<Flu> = Twist::new(FreeVector::zeros(), FreeVector::zeros());
@@ -155,7 +155,7 @@ impl<F: Frame> Default for Twist<F> {
 #[cfg(test)]
 mod tests {
     use crate::control::commands::BodyTwist;
-    use crate::frames::quantities::FluVector;
+    use crate::spatial::quantities::FluVector;
 
     /// Builds a body-frame twist from linear `(vx, vy, vz)` and angular
     /// `(wx, wy, wz)`.

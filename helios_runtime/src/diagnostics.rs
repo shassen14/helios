@@ -31,12 +31,7 @@ pub fn inspect_bus(bus: &PortBus) -> Vec<SlotSummary> {
         (a.channel.kind() as u8)
             .cmp(&(b.channel.kind() as u8))
             .then_with(|| a.channel.type_name().cmp(b.channel.type_name()))
-            .then_with(|| {
-                a.channel
-                    .instance()
-                    .as_ref()
-                    .cmp(b.channel.instance().as_ref())
-            })
+            .then_with(|| a.channel.name().as_ref().cmp(b.channel.name().as_ref()))
     });
 
     rows

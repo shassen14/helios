@@ -1,0 +1,9 @@
+schema_version = "2.0"
+run_name = "mock_oracle"
+scenario = "sim/scenarios/dev_mock_oracle.toml"
+status = "passed"
+simulated_duration_secs = 60.0
+assertions = []
+
+[terminated_by]
+kind = "time_budget"

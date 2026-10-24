@@ -1,7 +1,7 @@
 //! Per-node rate gating.
 //!
-//! One [`RateTimer`] lives in [`AutonomyPipeline`](super::AutonomyPipeline)'s
-//! `rate_timers` vector per [`NodeId`](super::node::NodeId). Each tick,
+//! Each node's [`RateTimer`] lives beside it in the pipeline, built when the
+//! [`AutonomyPipeline`](super::AutonomyPipeline) is. Each tick,
 //! the pipeline calls [`RateTimer::should_fire_and_advance`] for every
 //! node; only nodes whose elapsed time has crossed their configured
 //! period actually execute. Slow-tick double-firing is **not** corrected

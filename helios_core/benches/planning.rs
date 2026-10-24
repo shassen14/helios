@@ -1,12 +1,13 @@
 use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::mapping::MapData;
-use helios_core::state::{Component, Quantity};
+use helios_core::interchange::perception::map::MapData;
+use helios_core::prelude::MonotonicTime;
+use helios_core::spatial::state::{Component, Quantity};
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
-use helios_core::planning::astar::{AStarConfig, AStarPlanner};
-use helios_core::planning::types::PlannerGoal;
+use helios_core::interchange::path::PlannerGoal;
+use helios_core::planning::search::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::SearchPlanner;
 use helios_core::planning::SearchPlannerInputs;
 use nalgebra::{DMatrix, DVector, Isometry3, Vector2};
@@ -15,6 +16,9 @@ use std::sync::Arc;
 // =========================================================================
 // == Fixtures ==
 // =========================================================================
+
+/// An arbitrary global frame the bench expresses quantities in.
+const DATUM: &str = "test_datum";
 
 fn bench_config() -> AStarConfig {
     AStarConfig {
@@ -31,19 +35,19 @@ fn bench_config() -> AStarConfig {
 
 fn make_state(x: f64, y: f64) -> FrameAwareState {
     let schema = Arc::new(StateSchema::compose(vec![StateSchemaBlock::new(
-        Quantity::Position(FrameId::world()),
+        Quantity::Position(FrameId::global(DATUM)),
         Convention::Enu,
         None,
         DVector::zeros(3),
         DMatrix::identity(3, 3),
     )]));
-    let mut state = FrameAwareState::from_schema(schema, 0.0);
+    let mut state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
     state.set_variable(
-        &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
+        &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::X),
         x,
     );
     state.set_variable(
-        &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
+        &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Y),
         y,
     );
     state

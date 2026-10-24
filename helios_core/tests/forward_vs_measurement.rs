@@ -18,23 +18,25 @@
 //! truth. Cases are drawn from a seeded RNG, so the property is checked over
 //! many random poses, rates, mounts, and fields while staying reproducible.
 
-use helios_core::data::ports::TfProvider;
-use helios_core::data::AgentId;
-use helios_core::data::MonotonicTime;
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::measurement::accelerometer::SpecificForceModel;
 use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
 use helios_core::estimation::measurement::{MeasurementModel, Prediction};
 use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
-use helios_core::frames::transforms::{Convention, ErasedTransform};
-use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::manifold::TangentNoise;
+use helios_core::kernel::manifold::TangentNoise;
+use helios_core::prelude::AgentId;
+use helios_core::prelude::MonotonicTime;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gps::GpsModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 use helios_core::sensors::magnetometer::MagnetometerModel;
-use helios_core::state::{Component, Quantity};
+use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::state::{Component, Quantity};
+use helios_core::spatial::tf::TfProvider;
+use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform};
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
@@ -48,7 +50,7 @@ fn agent() -> AgentId {
 }
 
 fn sensor() -> FrameId {
-    FrameId::sensor(agent(), "sensor0")
+    FrameId::agent(agent(), "sensor0")
 }
 
 const AT: MonotonicTime = MonotonicTime(0.0);
@@ -76,10 +78,8 @@ impl TfProvider for SensorInBody {
         _to: FrameId,
         _at: MonotonicTime,
     ) -> Option<ErasedTransform> {
-        Some(ErasedTransform::from_parts(
-            self.0,
-            Convention::Flu,
-            Convention::Flu,
+        Some(ErasedTransform::erase(
+            Transform::<Flu, Flu>::from_isometry(self.0),
         ))
     }
 }
@@ -89,7 +89,7 @@ fn gps_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0001);
     let forward = GpsModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = GpsPositionModel {
-        agent: agent(),
+        frames: EstimationFrames::odom(agent()),
         sensor: sensor(),
     };
 
@@ -128,7 +128,7 @@ fn gyroscope_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0002);
     let forward = GyroscopeModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = AngularRateModel {
-        agent: agent(),
+        body: FrameId::base_link(agent()),
         sensor: sensor(),
     };
 
@@ -169,7 +169,7 @@ fn accelerometer_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0003);
     let forward = AccelerometerModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = SpecificForceModel {
-        agent: agent(),
+        frames: EstimationFrames::odom(agent()),
         sensor: sensor(),
         gravity_world,
     };
@@ -240,7 +240,7 @@ fn magnetometer_forward_matches_filter_prediction() {
         )
         .unwrap();
         let filter = MagneticFieldModel {
-            agent: agent(),
+            frames: EstimationFrames::odom(agent()),
             sensor: sensor(),
             world_magnetic_field: field_world,
         };
@@ -328,7 +328,7 @@ fn make_state(
         flat(Quantity::Acceleration(body.clone()), Convention::Flu),
         flat(Quantity::AngularAcceleration(body.clone()), Convention::Flu),
     ]);
-    let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+    let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
 
     set_vec3(
         &mut state,

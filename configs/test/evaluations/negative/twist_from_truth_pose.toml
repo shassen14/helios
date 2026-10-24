@@ -1,0 +1,13 @@
+# A broken suite, read only by the negative control
+# `runs/negative/suite_wrong_series.toml`: its truth role reads twists, and
+# `truth.pose` carries transforms.
+
+[evaluation]
+gap_multiple = 3.0
+
+[[evaluate]]
+name = "twist"
+kind = "twist_tracking"
+[evaluate.inputs]
+truth = "truth.pose"
+reference = "reference"

@@ -15,11 +15,13 @@
 //!
 //! - `required` — every one must be present or the node publishes nothing. A sum
 //!   missing a term is silently wrong, worse than no command (which a downstream
-//!   reads as last-known-good). Required inputs are also the *only* inputs the
-//!   topological sort orders on, so they are read fresh this tick.
-//! - `optional` — folded in when present, skipped when absent. Not ordered, so an
-//!   optional contributor is read last-known-good (possibly a tick old): fine for
-//!   a slowly varying feedforward term, not for a feedback correction.
+//!   reads as last-known-good).
+//! - `optional` — folded in when present, skipped when absent.
+//!
+//! Ordering does not depend on the split: every input is same-tick, so the sort
+//! runs each contributor first and the sum reads this tick's values. A
+//! contributor that did not publish this tick (rate-gated, or it skipped) still
+//! holds its last value, and the sum folds that in as-is.
 //!
 //! Past the gate the distinction is spent — the node holds a flat set of
 //! contributing `Stamped`s and derives two aggregates from it: the summed value
@@ -28,16 +30,15 @@
 //! ## A combinator, like `Selector`
 //!
 //! Runtime-native (wraps no `helios_core` trait), generic over the payload `T`,
-//! no input builder, one monomorphization per `T`. All channels are
-//! `InternalChannel`: the summed contributions and the output are brain-internal
-//! by construction.
+//! no input builder, one monomorphization per `T`. The summed contributions
+//! and the output are brain-internal: the command seam hands it internal
+//! channels.
 
 use std::{marker::PhantomData, ops::Add, sync::Arc};
 
 use crate::{
-    pipeline::descriptor::AlgorithmNodePortDescriptor,
-    port::{ChannelError, InternalChannel},
-    ChannelKey, Health, PipelineNode, PortDescriptor, Stamped,
+    port::{ChannelKey, PortDescriptorBuilder},
+    Health, PipelineNode, PortDescriptor, Stamped,
 };
 
 pub(crate) struct Sum<T: Send + Sync + Clone + Add<Output = T> + 'static> {
@@ -54,33 +55,33 @@ impl<T: Send + Sync + Clone + Add<Output = T> + 'static> Sum<T> {
     ///
     /// `required` inputs must all be present at run time for the node to publish;
     /// `optional` inputs are folded in when present. `output` is the channel the
-    /// sum is published on. All are `InternalChannel`; each is stored as a
-    /// `ChannelKey` for bus access and mirrored into the descriptor — `required`
-    /// as required inputs, `optional` as optional inputs.
+    /// sum is published on. Each is stored for bus access and mirrored into
+    /// the descriptor: `required` as required inputs, `optional` as optional
+    /// inputs.
     pub(crate) fn new(
         name: impl Into<Arc<str>>,
-        required: Vec<InternalChannel>,
-        optional: Vec<InternalChannel>,
-        output: InternalChannel,
+        required: Vec<ChannelKey>,
+        optional: Vec<ChannelKey>,
+        output: ChannelKey,
     ) -> Self {
-        let mut base_descriptor = AlgorithmNodePortDescriptor::new();
+        let mut base_descriptor = PortDescriptorBuilder::algorithm();
 
         for req in &required {
-            base_descriptor = base_descriptor.input_internal(req.clone());
+            base_descriptor = base_descriptor.input(req.clone());
         }
 
         for opt in &optional {
-            base_descriptor = base_descriptor.optional_internal(opt.clone());
+            base_descriptor = base_descriptor.optional(opt.clone());
         }
 
-        let descriptor = base_descriptor.output_internal(output.clone()).build();
+        let descriptor = base_descriptor.output(output.clone()).build();
 
         Self {
             name: name.into(),
             descriptor,
-            required: required.into_iter().map(Into::into).collect(),
-            optional: optional.into_iter().map(Into::into).collect(),
-            output: output.into(),
+            required: required.into_iter().collect(),
+            optional: optional.into_iter().collect(),
+            output,
             _marker: PhantomData,
         }
     }
@@ -107,7 +108,7 @@ impl<T: Send + Sync + Clone + Add<Output = T> + 'static> PipelineNode for Sum<T>
     fn execute(
         &self,
         bus: &crate::port::PortBus,
-        _tf: &dyn helios_core::data::TfProvider,
+        _tf: &dyn helios_core::prelude::TfProvider,
         tick: crate::TickContext,
     ) {
         let Some(required) = self
@@ -147,8 +148,8 @@ impl<T: Send + Sync + Clone + Add<Output = T> + 'static> PipelineNode for Sum<T>
             producer: tick.node_id,
         };
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
-            tracing::warn!(channel = %self.output, "sum output channel is not wired into the DAG");
+        if let Err(error) = bus.write(self.output.clone(), stamped) {
+            tracing::warn!(channel = %self.output, error = %error, "sum output channel write failed");
         }
     }
 }
@@ -163,16 +164,15 @@ mod tests {
     //! plain single-required and required-plus-optional shapes.
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
+    use helios_core::spatial::FrameId;
 
     use crate::port::PortBus;
     use crate::{NodeId, TickContext};
 
-    use helios_core::data::ports::TfProvider;
-    use helios_core::data::primitives::MonotonicTime;
-
-    use nalgebra::Isometry3;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::tf::TfProvider;
 
     #[derive(Clone, Debug, PartialEq)]
     struct Cmd(i32);
@@ -193,11 +193,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
-                Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 
@@ -210,26 +206,22 @@ mod tests {
         }
     }
 
-    fn tick(now: f64, node_id: NodeId) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt: 0.1,
-            node_id,
-        }
+    fn tick(now: f64, node_id: NodeId) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), 0.1, node_id)
     }
 
     fn bus_for(node: &Sum<Cmd>) -> PortBus {
-        PortBus::new(std::slice::from_ref(node.port_descriptor()))
+        PortBus::of_descriptors(std::slice::from_ref(node.port_descriptor()))
     }
 
     /// The canonical control wiring: one required (feedback), one optional
     /// (feedforward). Returns the node plus the fb / ff / output keys.
     fn fb_ff_sum() -> (Sum<Cmd>, ChannelKey, ChannelKey, ChannelKey) {
-        let fb = InternalChannel::named::<Cmd>("fb");
-        let ff = InternalChannel::named::<Cmd>("ff");
-        let out = InternalChannel::named::<Cmd>("sum");
+        let fb = ChannelKey::internal::<Cmd>("fb");
+        let ff = ChannelKey::internal::<Cmd>("ff");
+        let out = ChannelKey::internal::<Cmd>("sum");
         let node = Sum::new("drive_sum", vec![fb.clone()], vec![ff.clone()], out.clone());
-        (node, fb.into(), ff.into(), out.into())
+        (node, fb, ff, out)
     }
 
     #[test]
@@ -275,33 +267,32 @@ mod tests {
     #[test]
     fn all_required_inputs_are_summed() {
         // Requiredness is n-ary: two required inputs both contribute.
-        let a = InternalChannel::named::<Cmd>("a");
-        let b = InternalChannel::named::<Cmd>("b");
-        let out = InternalChannel::named::<Cmd>("sum");
+        let a = ChannelKey::internal::<Cmd>("a");
+        let b = ChannelKey::internal::<Cmd>("b");
+        let out = ChannelKey::internal::<Cmd>("sum");
         let node = Sum::new("pair", vec![a.clone(), b.clone()], vec![], out.clone());
         let bus = bus_for(&node);
-        bus.write(a.into(), stamped(3, 1.0, Health::Ok, 1)).unwrap();
-        bus.write(b.into(), stamped(4, 1.0, Health::Ok, 2)).unwrap();
+        bus.write(a, stamped(3, 1.0, Health::Ok, 1)).unwrap();
+        bus.write(b, stamped(4, 1.0, Health::Ok, 2)).unwrap();
 
         node.execute(&bus, &MockRuntime, tick(2.0, 7));
 
-        assert_eq!(bus.read::<Cmd>(out.into()).unwrap().value, Cmd(7));
+        assert_eq!(bus.read::<Cmd>(out).unwrap().value, Cmd(7));
     }
 
     #[test]
     fn a_single_required_input_passes_through() {
         // The FB-only and FF-only validation wirings: required=[x], optional=[].
         // One contributor reduces to itself — an open-loop characterization run.
-        let only = InternalChannel::named::<Cmd>("only");
-        let out = InternalChannel::named::<Cmd>("sum");
+        let only = ChannelKey::internal::<Cmd>("only");
+        let out = ChannelKey::internal::<Cmd>("sum");
         let node = Sum::new("solo", vec![only.clone()], vec![], out.clone());
         let bus = bus_for(&node);
-        bus.write(only.into(), stamped(8, 1.0, Health::Ok, 1))
-            .unwrap();
+        bus.write(only, stamped(8, 1.0, Health::Ok, 1)).unwrap();
 
         node.execute(&bus, &MockRuntime, tick(2.0, 7));
 
-        assert_eq!(bus.read::<Cmd>(out.into()).unwrap().value, Cmd(8));
+        assert_eq!(bus.read::<Cmd>(out).unwrap().value, Cmd(8));
     }
 
     #[test]
@@ -354,9 +345,9 @@ mod tests {
     fn descriptor_splits_required_and_optional() {
         let (node, fb, ff, out) = fb_ff_sum();
         let d = node.port_descriptor();
-        assert_eq!(d.required_inputs, vec![fb]);
-        assert_eq!(d.optional_inputs, vec![ff]);
-        assert_eq!(d.outputs, vec![out]);
-        assert!(d.rate.is_none());
+        assert_eq!(d.required_inputs().cloned().collect::<Vec<_>>(), vec![fb]);
+        assert_eq!(d.optional_inputs().cloned().collect::<Vec<_>>(), vec![ff]);
+        assert_eq!(d.outputs().cloned().collect::<Vec<_>>(), vec![out]);
+        assert!(d.rate().is_none());
     }
 }

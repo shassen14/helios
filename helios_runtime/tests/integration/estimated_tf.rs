@@ -19,24 +19,25 @@
 #![allow(dead_code)]
 
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
 };
 
 use helios_runtime::{
     channels::tf::publish_edge,
-    pipeline::PipelineBuilder,
-    port::{PortBus, PortDescriptor},
+    pipeline::{FrameConventions, PipelineBuilder},
+    port::{PortBus, PortDescriptor, PortDescriptorBuilder},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     tf_service::TfService,
     AutonomyPipeline,
 };
 
-use helios_core::data::{AgentId, MonotonicDuration, MonotonicTime, TfProvider};
-use helios_core::frames::id::FrameId;
-use helios_core::frames::transforms::tf::buffer::TfWindow;
-use helios_core::frames::transforms::tf::stamped::{FrameEdge, StampedTransform};
-use helios_core::frames::transforms::{Convention, ErasedTransform};
+use helios_core::prelude::{AgentId, MonotonicDuration, MonotonicTime, TfProvider};
+use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::id::FrameId;
+use helios_core::spatial::transforms::tf::buffer::TfWindow;
+use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
+use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform, Transform};
 
 use nalgebra::Isometry3;
 
@@ -56,7 +57,7 @@ fn odom() -> FrameId {
     FrameId::odom(agent())
 }
 fn imu() -> FrameId {
-    FrameId::sensor(agent(), "imu")
+    FrameId::agent(agent(), "imu")
 }
 
 /// The `imu → base_link` sensor mount: time-invariant calibration, seeded into
@@ -66,13 +67,9 @@ fn imu_mount() -> StampedTransform {
     StampedTransform {
         parent: base_link(),
         child: imu(),
-        // `from_parts` takes the child's convention first (imu, FLU), the
-        // parent's second (base_link, FLU).
-        transform: ErasedTransform::from_parts(
+        transform: ErasedTransform::erase(Transform::<Flu, Flu>::from_isometry(
             Isometry3::translation(0.1, 0.0, 0.0),
-            Convention::Flu,
-            Convention::Flu,
-        ),
+        )),
         stamp: MonotonicTime(0.0),
     }
 }
@@ -114,12 +111,7 @@ impl AidingConsumerNode {
         Self {
             name: name.to_string(),
             // Reads tf, not the bus: no ports to declare.
-            descriptor: PortDescriptor {
-                required_inputs: vec![],
-                optional_inputs: vec![],
-                outputs: vec![],
-                rate: None,
-            },
+            descriptor: PortDescriptorBuilder::algorithm().build(),
             from,
             to,
             applied,
@@ -150,7 +142,7 @@ impl PipelineNode for AidingConsumerNode {
 }
 
 /// Stands in for an estimator/localizer that owns a transform edge: each tick it
-/// dual-publishes a bare `StampedTransform` onto the edge's channel via the real
+/// dual-publishes a bare `StampedTransform` onto the edge's instance via the real
 /// `publish_edge` helper, exactly as a production producer does. The inner
 /// (pose-held) stamp is the tick's `now`.
 struct EdgeProducerNode {
@@ -159,23 +151,25 @@ struct EdgeProducerNode {
     edge: FrameEdge,
     from_conv: Convention,
     to_conv: Convention,
+    edge_warned: AtomicBool,
 }
 
 impl EdgeProducerNode {
     fn new(name: &str, edge: FrameEdge, from_conv: Convention, to_conv: Convention) -> Self {
         Self {
             name: name.to_string(),
-            // Declares the edge as an output so the pipeline allocates its slot
-            // and `tf_edge_channels()` surfaces it into the drain list.
-            descriptor: PortDescriptor {
-                required_inputs: vec![],
-                optional_inputs: vec![],
-                outputs: vec![helios_runtime::channels::tf::tf_edge(&edge).into()],
-                rate: None,
-            },
+            // Declares the edge on `tf` so the pipeline allocates its
+            // child's instance, which the service drains.
+            descriptor: PortDescriptorBuilder::algorithm()
+                .output_keyed::<StampedTransform>(
+                    helios_runtime::channels::tf::tf(),
+                    [edge.clone()],
+                )
+                .build(),
             edge,
             from_conv,
             to_conv,
+            edge_warned: AtomicBool::new(false),
         }
     }
 }
@@ -194,10 +188,12 @@ impl PipelineNode for EdgeProducerNode {
             parent: self.edge.parent.clone(),
             child: self.edge.child.clone(),
             stamp: tick.now,
-            transform: ErasedTransform::from_parts(
+            transform: ErasedTransform::new(
                 Isometry3::identity(),
-                self.from_conv,
-                self.to_conv,
+                EdgeEnds {
+                    child: self.from_conv,
+                    parent: self.to_conv,
+                },
             ),
         };
         publish_edge(
@@ -208,6 +204,7 @@ impl PipelineNode for EdgeProducerNode {
                 health: Health::Ok,
                 producer: tick.node_id,
             },
+            &self.edge_warned,
         );
     }
 }
@@ -236,7 +233,7 @@ fn present_static_extrinsic_aids_the_consumer() {
     // dynamic edge needed, so the consumer is aided on the very first tick.
     let applied = Arc::new(AtomicU32::new(0));
     let unaided = Arc::new(AtomicU32::new(0));
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(agent())
         .add_node(Box::new(AidingConsumerNode::new(
             "imu_aiding",
             imu(),
@@ -246,7 +243,8 @@ fn present_static_extrinsic_aids_the_consumer() {
         )))
         .build()
         .expect("single consumer builds");
-    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![imu_mount()]);
+    let mut service = TfService::new(window(), vec![imu_mount()], &FrameConventions::default())
+        .expect("the seeds form a valid tree");
 
     drive(&pipeline, &mut service, 1.0, 0.1);
 
@@ -263,7 +261,7 @@ fn missing_extrinsic_yields_none_never_a_fabricated_transform() {
     // runtime did — so the drop stays visible at the seam.
     let applied = Arc::new(AtomicU32::new(0));
     let unaided = Arc::new(AtomicU32::new(0));
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(agent())
         .add_node(Box::new(AidingConsumerNode::new(
             "imu_aiding",
             imu(),
@@ -273,7 +271,8 @@ fn missing_extrinsic_yields_none_never_a_fabricated_transform() {
         )))
         .build()
         .expect("single consumer builds");
-    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![]);
+    let mut service = TfService::new(window(), vec![], &FrameConventions::default())
+        .expect("the seeds form a valid tree");
 
     for t in 1..=3 {
         drive(&pipeline, &mut service, t as f64, 0.1);
@@ -296,7 +295,7 @@ fn dual_published_edge_reaches_the_consumer_after_the_fold() {
         child: base_link(),
         parent: odom(),
     };
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(agent())
         .add_node(Box::new(EdgeProducerNode::new(
             "estimator",
             edge.clone(),
@@ -312,10 +311,10 @@ fn dual_published_edge_reaches_the_consumer_after_the_fold() {
         )))
         .build()
         .expect("producer + consumer build");
-    // The drain list is derived from the graph's own tf-edge outputs, so the
-    // service folds exactly what the estimator dual-publishes — no hand-authored
-    // second list to drift from the graph.
-    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![]);
+    // The service drains every instance of `tf`, so it folds exactly what the
+    // estimator dual-publishes — no hand-authored list to drift from the graph.
+    let mut service = TfService::new(window(), vec![], &FrameConventions::default())
+        .expect("the seeds form a valid tree");
 
     // `now` is held constant so a single dynamic sample (which answers only at
     // its exact stamp) is queryable across both ticks; the latency here is driven
@@ -353,7 +352,7 @@ fn aiding_chain_composes_static_mount_with_folded_dynamic_edge() {
         child: base_link(),
         parent: odom(),
     };
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(agent())
         .add_node(Box::new(EdgeProducerNode::new(
             "estimator",
             edge.clone(),
@@ -369,7 +368,8 @@ fn aiding_chain_composes_static_mount_with_folded_dynamic_edge() {
         )))
         .build()
         .expect("producer + consumer build");
-    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![imu_mount()]);
+    let mut service = TfService::new(window(), vec![imu_mount()], &FrameConventions::default())
+        .expect("the seeds form a valid tree");
 
     // Tick 1: the static mount resolves, but base_link → odom has not folded yet,
     // so the chain to odom is broken — the static leg alone cannot reach it.

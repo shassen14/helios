@@ -1,0 +1,158 @@
+//! _Post-step._ [`EvaluationReportEntry`]: what one evaluation derived over
+//! a run, and from what.
+
+use crate::{
+    assertion::AssertionTarget,
+    evaluation::{derived::Coverage, kind::Cap},
+    report::ReportedUnit,
+};
+
+use helios_runtime::port::{Provenance, Writer};
+
+use serde::Serialize;
+
+/// _Post-step._ One evaluation's report: its kind and the parameters it was
+/// given, the series each role read and who wrote it, how many base values
+/// the run gave, how many some input didn't cover and how many it couldn't
+/// compute, and every metric it offers, with the series of each one read.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EvaluationReportEntry {
+    /// The evaluation's name: an inline entry's own, or a suite's entry as
+    /// `agent.<agent>.<application>.<entry>`, so it is unique in the report.
+    pub name: String,
+    /// The name the run file applied the entry's suite under, as `name`
+    /// spells it; `None` for an inline entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application: Option<String>,
+    /// The agent a suite's entry was bound to; `None` for an inline entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    pub kind: String,
+    /// Base values stamped within the run, one sample of every metric each
+    /// unless uncovered.
+    pub samples: usize,
+    /// Base values the evaluation couldn't compute, such as poses in roots
+    /// nothing relates, or between two truth poses it can't blend. Any one
+    /// fails the run, under `[recording]`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub refused: u64,
+    /// Base values some input had no value for, each input's by where they
+    /// fell under [`InputReport`]. Reported, never failed.
+    pub uncovered: usize,
+    /// The entry's `[evaluate.params]`, as the run file gave them: what
+    /// shaped the numbers, such as a frame policy.
+    #[serde(skip_serializing_if = "toml::Table::is_empty")]
+    pub params: toml::Table,
+    /// What binding fixed beside the parameters that shapes the numbers,
+    /// in its own table, so no key of it can shadow one of the entry's:
+    /// under `align = "declared"`, `roots`, how the two roots relate.
+    #[serde(skip_serializing_if = "toml::Table::is_empty")]
+    pub binding: toml::Table,
+    /// In role order, the base first.
+    pub inputs: Vec<InputReport>,
+    pub metrics: Vec<MetricReport>,
+}
+
+/// _Post-step._ One role's input: the selector the run file gave, or a
+/// suite's agent series and the selector it was bound to, the instance it
+/// named, who wrote it, its cap and how it covered the base:
+/// another role's cap is the widest gap it spanned, and the base values it
+/// had none for are counted by where they fell (before its first value, in
+/// a gap wider than its cap, after its last); the base's cap is the gap its
+/// own values were found to drop out at, and its gaps are counted. A body's
+/// channel says how its values were produced, so a grade against an exact
+/// oracle reads apart from one against a modeled sensor.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InputReport {
+    pub role: String,
+    /// The agent series a suite's entry read, which `target` is the
+    /// selector of on its agent; `None` for an inline entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
+    pub target: AssertionTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    pub writer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<&'static str>,
+    /// `None` for a role held however old.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cap: Option<Cap>,
+    /// Values the evaluation refused. Any one fails the run, under
+    /// `[recording]`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub refused: u64,
+    /// `None` when the evaluation derived nothing for its roles.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<Coverage>,
+}
+
+impl InputReport {
+    /// `writer` as the report spells it, with a body channel's provenance.
+    pub fn writer_of(writer: Option<&Writer>) -> (String, Option<&'static str>) {
+        match writer {
+            Some(Writer::Body { provenance, .. }) => (
+                writer_spelled(writer),
+                Some(provenance_spelled(*provenance)),
+            ),
+            _ => (writer_spelled(writer), None),
+        }
+    }
+}
+
+/// _Post-step._ One metric the evaluation offers: its path, so a reader
+/// finds the entries judging it or names it in the next run, its unit, and
+/// how many samples its series holds.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MetricReport {
+    pub path: String,
+    pub unit: ReportedUnit,
+    /// `None` for a metric nothing read, which was not derived.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub samples: Option<usize>,
+}
+
+fn writer_spelled(writer: Option<&Writer>) -> String {
+    match writer {
+        Some(Writer::Body { unit, .. }) => format!("body unit {unit}"),
+        Some(Writer::Node { node }) => format!("node {node}"),
+        Some(Writer::Outside) => "outside".to_owned(),
+        None => "unknown".to_owned(),
+    }
+}
+
+fn provenance_spelled(provenance: Provenance) -> &'static str {
+    match provenance {
+        Provenance::Exact => "exact",
+        Provenance::Simulated => "simulated",
+    }
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_body_writer_carries_its_provenance_and_a_node_none() {
+        let body = Writer::Body {
+            unit: "truth".to_owned(),
+            provenance: Provenance::Exact,
+        };
+        let node = Writer::Node {
+            node: "reference_arbiter".to_owned(),
+        };
+
+        assert_eq!(
+            InputReport::writer_of(Some(&body)),
+            ("body unit truth".to_owned(), Some("exact"))
+        );
+        assert_eq!(
+            InputReport::writer_of(Some(&node)),
+            ("node reference_arbiter".to_owned(), None)
+        );
+    }
+}

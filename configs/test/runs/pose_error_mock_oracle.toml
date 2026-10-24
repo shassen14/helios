@@ -1,0 +1,90 @@
+# Pose error against an estimate that is the truth: the mock oracle
+# republishes the body's truth as its estimate, so every error is near zero.
+#
+# It covers `pose_error` end to end under `declared`: the mock pins its odom
+# to the datum through the truth it reads, so the build anchors odom there
+# and each estimate is placed in the datum through that anchor. Both inputs
+# are bound to the agent's `base_link` instance, the truth interpolated onto
+# each estimate's stamp, and every metric derived. The errors left are the
+# interpolation between truth samples (millimeters, milliradians); anything
+# past that is the anchor's, so a number that grows here means the anchor or
+# the evaluation moved, not an estimator. `pose_error_sole_instance` covers
+# `first_pose`.
+
+schema_version = "2.0"
+scenario = { from = "sim/scenarios/dev_mock_oracle.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 60.0 }
+
+[evaluation]
+gap_multiple = 3.0
+
+[[evaluate]]
+name = "est"
+kind = "pose_error"
+[evaluate.inputs]
+estimate = { path = "agent.MockOraclePro.channel.tf", instance = "agent.MockOraclePro.base_link" }
+truth = { path = "agent.MockOraclePro.channel.truth.tf", instance = "agent.MockOraclePro.base_link" }
+[evaluate.params]
+align = "declared"
+
+[[assert]]
+name = "position_held"
+target = "eval.inline.est.position"
+window = { start = 5.0 }
+condition = { less_than = 1.0 }
+
+[[measure]]
+name = "position_rms"
+target = "eval.inline.est.position"
+reduce = "rms"
+
+[[measure]]
+name = "position_max"
+target = "eval.inline.est.position"
+reduce = "max"
+
+[[measure]]
+name = "position_final"
+target = "eval.inline.est.position"
+reduce = "final"
+
+[[measure]]
+name = "z_rms"
+target = "eval.inline.est.z"
+reduce = "rms"
+
+[[measure]]
+name = "rotation_rms"
+target = "eval.inline.est.rotation"
+reduce = "rms"
+
+[[measure]]
+name = "rotation_max"
+target = "eval.inline.est.rotation"
+reduce = "max"
+
+[[measure]]
+name = "horizontal_rms"
+target = "eval.inline.est.horizontal"
+reduce = "rms"
+
+[[measure]]
+name = "vertical_rms"
+target = "eval.inline.est.vertical"
+reduce = "rms"
+
+[[measure]]
+name = "along_rms"
+target = "eval.inline.est.along"
+reduce = "rms"
+
+[[measure]]
+name = "cross_rms"
+target = "eval.inline.est.cross"
+reduce = "rms"
+
+[[measure]]
+name = "heading_rms"
+target = "eval.inline.est.heading"
+reduce = "rms"

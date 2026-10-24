@@ -1,8 +1,8 @@
 use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
 use crate::utils::serde_helpers;
 
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::transforms::Transform as CoreTransform;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::transforms::Transform as CoreTransform;
 
 use bevy::prelude::Transform;
 use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};

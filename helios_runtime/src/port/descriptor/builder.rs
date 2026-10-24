@@ -1,0 +1,806 @@
+//! [`PortDescriptorBuilder`], the one way to build a [`PortDescriptor`] from
+//! outside this crate: its fields are private and its raw constructor is
+//! crate-only.
+//!
+//! The builder starts from the class the node runs under:
+//! [`algorithm`](PortDescriptorBuilder::algorithm) or
+//! [`mock`](PortDescriptorBuilder::mock). Every channel carries its kind in its
+//! [`ChannelKey`], so the builder takes channels of every kind alike; the
+//! pipeline build checks each against the table in
+//! [`kind`](crate::port::kind) and refuses an algorithm reading truth, naming
+//! the node and the channel.
+//!
+//! An output on a keyed channel is declared with
+//! [`output_keyed`](PortDescriptorBuilder::output_keyed), which also takes
+//! the instances the node writes.
+//!
+//! An `ActuatorCommand` output is declared with
+//! [`output_actuator_command`](PortDescriptorBuilder::output_actuator_command),
+//! which also takes the actuators it drives: the actuator seam reads them off
+//! the descriptor.
+//!
+//! The builder also declares what the node can emit for watchers, one leaf
+//! per [`observable`](PortDescriptorBuilder::observable) call, each with
+//! its determinism and the SI unit it is measured in. Leaves with a
+//! config-derived part (`aiding.<entry>.nis`) are formatted by the node as it
+//! builds its descriptor.
+//!
+//! A node reading named instances of a keyed input declares each with
+//! [`reads_instance`](PortDescriptorBuilder::reads_instance), and the build
+//! refuses one no writer declares.
+//!
+//! A node that places a frame it defines in the world one of its inputs names
+//! declares it with [`pins`](PortDescriptorBuilder::pins), or
+//! [`pins_by_instance`](PortDescriptorBuilder::pins_by_instance) on a keyed
+//! channel, through an instance it reads.
+//!
+//! Every input the builder records is same-tick: [`input`](PortDescriptorBuilder::input)
+//! records a required input and [`optional`](PortDescriptorBuilder::optional)
+//! an optional one. There is no method for a previous-tick input until the
+//! pipeline can actually hand a reader the start-of-tick value.
+
+use crate::port::{
+    ChannelKey, ChannelKind, DeclaredInstances, Determinism, InstanceKey, Keyed, MountRule,
+    NodeClass, Observable, OutputPort, Pin, Pinned, PortDescriptor,
+};
+
+use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
+use helios_core::kernel::si_unit::SiUnit;
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
+
+use std::{any::TypeId, sync::Arc};
+
+/// Builder for a node's [`PortDescriptor`]. Construct with
+/// [`Self::algorithm`] or [`Self::mock`], chain the input, output and rate
+/// methods, finish with [`Self::build`].
+#[derive(Debug, Default)]
+pub struct PortDescriptorBuilder {
+    class: NodeClass,
+    required_inputs: Vec<ChannelKey>,
+    optional_inputs: Vec<ChannelKey>,
+    mount_readings: Vec<(ChannelKey, Convention)>,
+    instance_readings: Vec<(ChannelKey, InstanceKey)>,
+    outputs: Vec<OutputPort>,
+    observables: Vec<Observable>,
+    defined_frames: Vec<(FrameId, Convention)>,
+    pins: Vec<Pin>,
+    rate: Option<f64>,
+}
+
+// The full declaration vocabulary is kept deliberately, though not every
+// method is exercised by current nodes.
+impl PortDescriptorBuilder {
+    /// An empty descriptor for an algorithm node, which runs the same in sim
+    /// and on hardware: no inputs, no outputs, fires every tick.
+    pub fn algorithm() -> Self {
+        Self::default()
+    }
+
+    /// An empty descriptor for a mock node, which stands in for an algorithm
+    /// and may read truth: no inputs, no outputs, fires every tick.
+    pub fn mock() -> Self {
+        Self {
+            class: NodeClass::Mock,
+            ..Self::default()
+        }
+    }
+
+    /// Requires `channel`: the build fails unless something supplies it.
+    pub fn input(mut self, channel: ChannelKey) -> Self {
+        self.required_inputs.push(channel);
+        self
+    }
+
+    /// Reads `channel` when it holds a value; the node runs without it. The
+    /// build still fails unless something supplies it.
+    pub fn optional(mut self, channel: ChannelKey) -> Self {
+        self.optional_inputs.push(channel);
+        self
+    }
+
+    /// Requires each of `required` and reads each of `optional` when it
+    /// holds a value, in slice order: for callers that assemble their inputs
+    /// as lists, such as the input builders.
+    pub fn inputs_from_slices(mut self, required: &[ChannelKey], optional: &[ChannelKey]) -> Self {
+        self.required_inputs.extend_from_slice(required);
+        self.optional_inputs.extend_from_slice(optional);
+        self
+    }
+
+    /// Declares that the node resolves the mount of input `channel` through
+    /// the tf tree, reading the frame in the axes `convention` names. The host
+    /// refuses a mount the tree holds in other axes before the first tick.
+    /// Checked at [`build`](Self::build): `channel` must be declared as an
+    /// input by then.
+    pub fn reads_mount_in(mut self, channel: &ChannelKey, convention: Convention) -> Self {
+        self.mount_readings.push((channel.clone(), convention));
+        self
+    }
+
+    /// Declares that the node reads `instance` of keyed input `channel`,
+    /// spelled as `T` spells its instances: the mock oracle reads its body's
+    /// instance of the truth transforms. One input may name several. The
+    /// build refuses an instance no writer of the channel declares. Checked
+    /// at [`build`](Self::build): `channel` must be declared as an input by
+    /// then.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` is not keyed or does not carry `T`.
+    pub fn reads_instance<T: Keyed>(
+        mut self,
+        channel: &ChannelKey,
+        instance: &T::Instance,
+    ) -> Self {
+        assert!(
+            channel.is_keyed() && channel.type_id() == TypeId::of::<T>(),
+            "an instance is read from a keyed channel of {}, got {channel}",
+            std::any::type_name::<T>()
+        );
+        self.instance_readings
+            .push((channel.clone(), InstanceKey::of::<T>(instance)));
+        self
+    }
+
+    /// Declares a channel this node writes. One producer per channel.
+    ///
+    /// A node writes a measurement when it derives one without estimating (a
+    /// range field flattened to a cloud, a de-skewed scan), so consumers read
+    /// it as they would a host channel. Algorithm results (state, maps, paths,
+    /// commands) are internal.
+    pub fn output(mut self, channel: ChannelKey) -> Self {
+        self.outputs.push(OutputPort::undriven(channel));
+        self
+    }
+
+    /// Declares each of `outputs`, in slice order, as [`output`](Self::output)
+    /// does.
+    pub fn outputs_from_slice(mut self, outputs: &[ChannelKey]) -> Self {
+        self.outputs
+            .extend(outputs.iter().cloned().map(OutputPort::undriven));
+        self
+    }
+
+    /// Declares a channel this node writes, as [`output`](Self::output) does,
+    /// carrying each value of input `input` unchanged: the estimate seam's
+    /// relay forwarding the authoritative estimator's state. What describes
+    /// the input's values, such as a state's schema, describes the output's.
+    /// Checked at [`build`](Self::build): `input` must be declared as an input
+    /// by then, carrying the same type.
+    pub fn output_forwarding(mut self, channel: ChannelKey, input: ChannelKey) -> Self {
+        self.outputs
+            .push(OutputPort::undriven(channel).forwarding(input));
+        self
+    }
+
+    /// Declares a derived measurement, as [`output`](Self::output) does,
+    /// measured in the mount of `input`, which the node must read in the same
+    /// tick. The build gives the output that mount, so its readers learn the
+    /// frame from the channel without the node knowing it.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` or `input` is not a measurement: only a measurement is
+    /// measured in a mount.
+    pub fn output_at_mount_of(mut self, channel: ChannelKey, input: ChannelKey) -> Self {
+        for key in [&channel, &input] {
+            assert!(
+                key.kind() == ChannelKind::Measurement,
+                "an output at an input's mount and that input must be measurements, got {key}"
+            );
+        }
+        self.outputs
+            .push(OutputPort::undriven(channel).with_mount(MountRule::FromInput(input)));
+        self
+    }
+
+    /// Declares the `instances` of keyed channel `channel` this node writes,
+    /// each as `T` declares one (a transform by its edge) and spelled as `T`
+    /// spells its instances. The build refuses an
+    /// instance two writers declare, and the bus refuses a write of one no
+    /// writer declared. A keyed channel declared through
+    /// [`output`](Self::output) has no instances, which the build refuses.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` is not keyed or does not carry `T`.
+    pub fn output_keyed<T: Keyed>(
+        mut self,
+        channel: ChannelKey,
+        instances: impl IntoIterator<Item = T::Declared>,
+    ) -> Self {
+        assert!(
+            channel.is_keyed() && channel.type_id() == TypeId::of::<T>(),
+            "a keyed output must be a keyed channel of {}, got {channel}",
+            std::any::type_name::<T>()
+        );
+        self.outputs.push(
+            OutputPort::undriven(channel).with_instances(DeclaredInstances::of::<T>(instances)),
+        );
+        self
+    }
+
+    /// Declares an `ActuatorCommand` channel this node writes, and the
+    /// actuators its commands drive, each with the setpoint kind written
+    /// there. The actuator seam checks them against the body and against its
+    /// other members. One producer per channel.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` does not carry `ActuatorCommand`.
+    pub fn output_actuator_command(
+        mut self,
+        channel: ChannelKey,
+        drives: Vec<ActuatorDrive>,
+    ) -> Self {
+        assert!(
+            channel.type_id() == TypeId::of::<ActuatorCommand>(),
+            "actuator command output must carry ActuatorCommand, got {} for {}",
+            channel.type_name(),
+            channel.name()
+        );
+        self.outputs.push(OutputPort::new(channel, drives));
+        self
+    }
+
+    /// Declares a number the node can emit for watchers, under `leaf`
+    /// (relative to the node, e.g. `aiding.gps.nis`), measured in `si_unit`.
+    /// Declaring makes a leaf watchable; an emit of a leaf the node didn't
+    /// declare is dropped. A leaf declared twice, or one that collides with
+    /// an output channel, fails the build.
+    pub fn observable(
+        mut self,
+        leaf: impl Into<Arc<str>>,
+        determinism: Determinism,
+        si_unit: SiUnit,
+    ) -> Self {
+        self.observables
+            .push(Observable::scalar(leaf, determinism, si_unit));
+        self
+    }
+
+    /// Declares a frame this node defines, in the axes `convention`: one whose
+    /// meaning it alone gives, such as the root an estimator holds its state
+    /// in. The build refuses a frame two nodes define, or one the body or the
+    /// host owns, so the owner's convention is the frame's one convention.
+    pub fn defines_frame(mut self, frame: FrameId, convention: Convention) -> Self {
+        self.defined_frames.push((frame, convention));
+        self
+    }
+
+    /// Declares that input `channel` places `what` of `frame`, a frame this
+    /// node defines, in the world frame the channel's values are relative to:
+    /// the position of an estimator's root, pinned by a GPS fix given in the
+    /// datum. The build
+    /// refuses a pin through a channel that names no world frame, and a node
+    /// whose inputs name two. Checked at [`build`](Self::build): `frame` must
+    /// be defined and `channel` read by then.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` is keyed: a pin reads one instance of a keyed channel,
+    /// declared with [`pins_by_instance`](Self::pins_by_instance).
+    pub fn pins(mut self, frame: FrameId, what: Pinned, channel: &ChannelKey) -> Self {
+        assert!(
+            !channel.is_keyed(),
+            "a pin through keyed channel {channel} names the instance it reads"
+        );
+        self.pins.push(Pin::new(frame, what, channel.clone(), None));
+        self
+    }
+
+    /// Declares that `instance` of keyed channel `channel` places `what` of
+    /// `frame`, as
+    /// [`pins`](Self::pins) does: the world frame is the one the instance's
+    /// values are expressed in, a transform's parent. The mock oracle pins its
+    /// root through its body's instance of the truth transforms. Checked at
+    /// [`build`](Self::build): `instance` must be read with
+    /// [`reads_instance`](Self::reads_instance) by then, so the pin and the
+    /// read can't name two instances.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` is not keyed or does not carry `T`.
+    pub fn pins_by_instance<T: Keyed>(
+        mut self,
+        frame: FrameId,
+        what: Pinned,
+        channel: &ChannelKey,
+        instance: &T::Instance,
+    ) -> Self {
+        assert!(
+            channel.is_keyed() && channel.type_id() == TypeId::of::<T>(),
+            "a pin by instance must be through a keyed channel of {}, got {channel}",
+            std::any::type_name::<T>()
+        );
+        self.pins.push(Pin::new(
+            frame,
+            what,
+            channel.clone(),
+            Some(InstanceKey::of::<T>(instance)),
+        ));
+        self
+    }
+
+    /// Gates execution to `hz`. Without it the node fires every tick.
+    pub fn rate_hz(mut self, hz: f64) -> Self {
+        self.rate = Some(hz);
+        self
+    }
+
+    /// Finishes the descriptor.
+    ///
+    /// # Panics
+    ///
+    /// If [`reads_mount_in`](Self::reads_mount_in),
+    /// [`reads_instance`](Self::reads_instance) or
+    /// [`output_forwarding`](Self::output_forwarding) named a channel that is
+    /// not a declared input, a forwarded input carries another type than its
+    /// output, or a pin names a frame the node doesn't define, or a
+    /// channel or instance it doesn't read.
+    pub fn build(self) -> PortDescriptor {
+        PortDescriptor::new(
+            self.required_inputs,
+            self.optional_inputs,
+            Vec::new(),
+            self.rate,
+        )
+        .with_class(self.class)
+        .with_mount_readings(self.mount_readings)
+        .with_instance_readings(self.instance_readings)
+        .with_outputs(self.outputs)
+        .with_observables(self.observables)
+        .with_defined_frames(self.defined_frames)
+        .with_pins(self.pins)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::port::{InputNeed, InputTiming, InstanceKey};
+
+    use helios_core::control::actuators::{ActuatorId, SetpointKind};
+
+    struct State;
+    struct Reading;
+    struct Pose;
+
+    struct Edge {
+        child: String,
+    }
+
+    impl Keyed for Edge {
+        type Instance = String;
+        type Declared = String;
+
+        fn instance(&self) -> &String {
+            &self.child
+        }
+
+        fn declared_frame(&self) -> Option<&FrameId> {
+            None
+        }
+    }
+
+    fn edges() -> ChannelKey {
+        ChannelKey::keyed::<Edge>(ChannelKind::Internal, "edges")
+    }
+
+    #[test]
+    fn builder_assembles_descriptor() {
+        let d = PortDescriptorBuilder::algorithm()
+            .input(ChannelKey::measurement::<Reading>("reading"))
+            .input(ChannelKey::internal_of::<State>())
+            .output(ChannelKey::internal::<State>("smoothed"))
+            .rate_hz(50.0)
+            .build();
+        assert_eq!(d.required_inputs().count(), 2);
+        assert_eq!(d.outputs().count(), 1);
+        assert_eq!(d.rate(), Some(50.0));
+    }
+
+    #[test]
+    fn each_constructor_records_its_class() {
+        assert_eq!(
+            PortDescriptorBuilder::algorithm().build().class(),
+            NodeClass::Algorithm
+        );
+        assert_eq!(
+            PortDescriptorBuilder::mock().build().class(),
+            NodeClass::Mock
+        );
+    }
+
+    /// The builder records an oracle input for any class; the pipeline build
+    /// is what refuses one an algorithm declares.
+    #[test]
+    fn the_builder_records_every_kind() {
+        let pose = ChannelKey::oracle::<Pose>("pose");
+        let d = PortDescriptorBuilder::algorithm()
+            .input(pose.clone())
+            .build();
+        assert_eq!(d.required_inputs().collect::<Vec<_>>(), [&pose]);
+    }
+
+    #[test]
+    fn builder_keeps_observables_in_declaration_order() {
+        let d = PortDescriptorBuilder::algorithm()
+            .observable(
+                "aiding.gps.nis",
+                Determinism::Deterministic,
+                SiUnit::Dimensionless,
+            )
+            .observable(
+                format!("aiding.{}.dropped", "gps"),
+                Determinism::Nondeterministic,
+                SiUnit::Dimensionless,
+            )
+            .build();
+
+        assert_eq!(
+            d.observables(),
+            [
+                Observable::scalar(
+                    "aiding.gps.nis",
+                    Determinism::Deterministic,
+                    SiUnit::Dimensionless
+                ),
+                Observable::scalar(
+                    "aiding.gps.dropped",
+                    Determinism::Nondeterministic,
+                    SiUnit::Dimensionless
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn builder_declares_no_observables_by_default() {
+        assert!(PortDescriptorBuilder::algorithm()
+            .build()
+            .observables()
+            .is_empty());
+    }
+
+    #[test]
+    fn actuator_command_output_carries_its_drives() {
+        let command = ChannelKey::internal::<ActuatorCommand>("drive");
+        let other = ChannelKey::internal::<State>("drive");
+        let drives = vec![ActuatorDrive::new(
+            ActuatorId::new("wheels"),
+            SetpointKind::Torque,
+        )];
+        let d = PortDescriptorBuilder::algorithm()
+            .output(other.clone())
+            .output_actuator_command(command.clone(), drives.clone())
+            .build();
+
+        assert_eq!(
+            d.outputs().cloned().collect::<Vec<_>>(),
+            [other.clone(), command.clone()]
+        );
+        assert_eq!(d.drives(&command), drives);
+        assert!(d.drives(&other).is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "actuator command output must carry ActuatorCommand")]
+    fn actuator_command_output_panics_on_another_type() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .output_actuator_command(ChannelKey::internal::<State>("drive"), vec![]);
+    }
+
+    /// An output declared at an input's mount carries that rule; every other
+    /// output has none.
+    #[test]
+    fn an_output_at_an_inputs_mount_names_that_input() {
+        let range = ChannelKey::measurement::<Reading>("lidar");
+        let cloud = ChannelKey::measurement::<Reading>("lidar.cloud");
+        let d = PortDescriptorBuilder::algorithm()
+            .input(range.clone())
+            .output_at_mount_of(cloud, range.clone())
+            .output(ChannelKey::internal_of::<State>())
+            .build();
+
+        let rules: Vec<&MountRule> = d.output_ports().iter().map(OutputPort::mount).collect();
+        assert_eq!(rules, [&MountRule::FromInput(range), &MountRule::None]);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be measurements")]
+    fn an_internal_output_at_an_inputs_mount_panics() {
+        let range = ChannelKey::measurement::<Reading>("lidar");
+        let _ = PortDescriptorBuilder::algorithm()
+            .output_at_mount_of(ChannelKey::internal::<Reading>("cloud"), range);
+    }
+
+    /// An output forwarding an input names it; every other output forwards
+    /// nothing.
+    #[test]
+    fn a_forwarding_output_names_the_input_it_forwards() {
+        let source = ChannelKey::internal::<State>("primary");
+        let forwarded = ChannelKey::internal::<State>("estimate");
+        let d = PortDescriptorBuilder::algorithm()
+            .input(source.clone())
+            .output_forwarding(forwarded, source.clone())
+            .output(ChannelKey::internal::<State>("other"))
+            .build();
+        let forwards: Vec<Option<&ChannelKey>> =
+            d.output_ports().iter().map(OutputPort::forwards).collect();
+        assert_eq!(forwards, [Some(&source), None]);
+    }
+
+    #[test]
+    #[should_panic(expected = "which the node does not read")]
+    fn forwarding_an_unread_channel_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .output_forwarding(
+                ChannelKey::internal::<State>("estimate"),
+                ChannelKey::internal::<State>("primary"),
+            )
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "which carries another type")]
+    fn forwarding_a_channel_of_another_type_panics() {
+        let source = ChannelKey::internal::<Reading>("primary");
+        let _ = PortDescriptorBuilder::algorithm()
+            .input(source.clone())
+            .output_forwarding(ChannelKey::internal::<State>("estimate"), source)
+            .build();
+    }
+
+    /// Each stated mount reading is kept, in order, one channel as often as
+    /// it is stated: two parts of one node may read the same mount.
+    #[test]
+    fn a_keyed_output_carries_its_instances_in_order() {
+        let d = PortDescriptorBuilder::algorithm()
+            .output_keyed::<Edge>(edges(), ["wheel".to_string(), "base".to_string()])
+            .output(ChannelKey::internal::<State>("state"))
+            .build();
+        let spelled: Vec<&str> = d.output_ports()[0]
+            .instances()
+            .iter()
+            .map(InstanceKey::as_str)
+            .collect();
+        assert_eq!(spelled, ["wheel", "base"]);
+        assert!(d.output_ports()[1].instances().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "a keyed output must be a keyed channel")]
+    fn a_keyed_output_on_a_single_value_channel_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .output_keyed::<Edge>(ChannelKey::internal::<Edge>("edges"), ["base".to_string()]);
+    }
+
+    #[test]
+    fn mount_readings_are_kept_for_the_inputs_they_name() {
+        let imu = ChannelKey::measurement::<Reading>("imu");
+        let gps = ChannelKey::measurement::<Reading>("gps");
+        let d = PortDescriptorBuilder::algorithm()
+            .inputs_from_slices(std::slice::from_ref(&imu), std::slice::from_ref(&gps))
+            .reads_mount_in(&imu, Convention::Flu)
+            .reads_mount_in(&imu, Convention::Enu)
+            .build();
+
+        let readings: Vec<(&ChannelKey, Convention)> = d
+            .mount_readings()
+            .iter()
+            .map(|reading| (reading.channel(), reading.convention()))
+            .collect();
+        assert_eq!(readings, [(&imu, Convention::Flu), (&imu, Convention::Enu)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "which the node does not read")]
+    fn a_mount_reading_for_a_channel_not_read_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .reads_mount_in(&ChannelKey::measurement::<Reading>("gps"), Convention::Flu)
+            .build();
+    }
+
+    fn root() -> FrameId {
+        FrameId::global("root")
+    }
+
+    #[test]
+    fn pins_are_kept_with_the_instance_they_read() {
+        let gps = ChannelKey::measurement::<Reading>("gps");
+        let d = PortDescriptorBuilder::algorithm()
+            .optional(gps.clone())
+            .input(edges())
+            .reads_instance::<Edge>(&edges(), &"base".to_string())
+            .defines_frame(root(), Convention::Enu)
+            .pins(root(), Pinned::Position, &gps)
+            .pins_by_instance::<Edge>(root(), Pinned::Position, &edges(), &"base".to_string())
+            .build();
+
+        let pins: Vec<(&FrameId, &ChannelKey, Option<&InstanceKey>)> = d
+            .pins()
+            .iter()
+            .map(|pin| (pin.frame(), pin.channel(), pin.instance()))
+            .collect();
+        let base = InstanceKey::of::<Edge>(&"base".to_string());
+        assert_eq!(
+            pins,
+            [(&root(), &gps, None), (&root(), &edges(), Some(&base))]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "the node does not define it")]
+    fn a_pin_of_a_frame_the_node_does_not_define_panics() {
+        let gps = ChannelKey::measurement::<Reading>("gps");
+        let _ = PortDescriptorBuilder::algorithm()
+            .optional(gps.clone())
+            .pins(root(), Pinned::Position, &gps)
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "which the node does not read")]
+    fn a_pin_through_a_channel_not_read_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .defines_frame(root(), Convention::Enu)
+            .pins(
+                root(),
+                Pinned::Position,
+                &ChannelKey::measurement::<Reading>("gps"),
+            )
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "names the instance it reads")]
+    fn a_pin_through_a_keyed_channel_without_an_instance_panics() {
+        let _ = PortDescriptorBuilder::algorithm().pins(root(), Pinned::Position, &edges());
+    }
+
+    #[test]
+    #[should_panic(expected = "a pin by instance must be through a keyed channel")]
+    fn a_pin_by_instance_on_a_single_value_channel_panics() {
+        let _ = PortDescriptorBuilder::algorithm().pins_by_instance::<Edge>(
+            root(),
+            Pinned::Position,
+            &ChannelKey::internal::<Edge>("edges"),
+            &"base".to_string(),
+        );
+    }
+
+    /// One input may name several instances, each kept once, in order.
+    #[test]
+    fn an_input_keeps_the_instances_it_reads() {
+        let d = PortDescriptorBuilder::algorithm()
+            .optional(edges())
+            .reads_instance::<Edge>(&edges(), &"wheel".to_string())
+            .reads_instance::<Edge>(&edges(), &"base".to_string())
+            .reads_instance::<Edge>(&edges(), &"wheel".to_string())
+            .build();
+
+        let input = d.inputs().next().expect("edges is read");
+        let spelled: Vec<&str> = input.instances().iter().map(InstanceKey::as_str).collect();
+        assert_eq!(spelled, ["wheel", "base"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "but the node does not read that channel")]
+    fn an_instance_of_a_channel_not_read_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .reads_instance::<Edge>(&edges(), &"base".to_string())
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "an instance is read from a keyed channel")]
+    fn an_instance_of_a_single_value_channel_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .reads_instance::<Edge>(&ChannelKey::internal::<Edge>("edges"), &"base".to_string());
+    }
+
+    /// The pin and the read name one instance, or the node is wrong.
+    #[test]
+    #[should_panic(expected = "a pin is declared through instance \"odom\"")]
+    fn a_pin_by_an_instance_not_read_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .input(edges())
+            .reads_instance::<Edge>(&edges(), &"base".to_string())
+            .defines_frame(root(), Convention::Enu)
+            .pins_by_instance::<Edge>(root(), Pinned::Position, &edges(), &"odom".to_string())
+            .build();
+    }
+
+    #[test]
+    fn outputs_from_slice_keeps_order() {
+        let outputs = vec![
+            ChannelKey::measurement::<Reading>("cloud"),
+            ChannelKey::internal_of::<State>(),
+        ];
+        let d = PortDescriptorBuilder::algorithm()
+            .outputs_from_slice(&outputs)
+            .build();
+        assert_eq!(d.outputs().cloned().collect::<Vec<_>>(), outputs);
+    }
+
+    // --- Input records ---
+
+    fn needs_and_timings(d: &PortDescriptor) -> Vec<(ChannelKey, InputNeed, InputTiming)> {
+        d.inputs()
+            .map(|i| (i.channel().clone(), i.need(), i.timing()))
+            .collect()
+    }
+
+    #[test]
+    fn input_methods_record_need_with_same_tick_timing() {
+        let imu = ChannelKey::measurement::<Reading>("imu");
+        let state = ChannelKey::internal_of::<State>();
+        let gps = ChannelKey::measurement::<Reading>("gps");
+        let reference = ChannelKey::internal::<State>("reference");
+        let d = PortDescriptorBuilder::algorithm()
+            .input(imu.clone())
+            .optional(gps.clone())
+            .input(state.clone())
+            .optional(reference.clone())
+            .build();
+
+        // Required inputs come first, then optional, each in call order.
+        assert_eq!(
+            needs_and_timings(&d),
+            vec![
+                (imu, InputNeed::Required, InputTiming::SameTick),
+                (state, InputNeed::Required, InputTiming::SameTick),
+                (gps, InputNeed::Optional, InputTiming::SameTick),
+                (reference, InputNeed::Optional, InputTiming::SameTick),
+            ]
+        );
+    }
+
+    #[test]
+    fn inputs_from_slices_records_need_from_slice_and_keeps_order() {
+        let required = vec![
+            ChannelKey::internal::<State>("b"),
+            ChannelKey::measurement::<Reading>("a"),
+        ];
+        let optional = vec![ChannelKey::internal::<State>("c")];
+        let d = PortDescriptorBuilder::algorithm()
+            .inputs_from_slices(&required, &optional)
+            .build();
+
+        assert_eq!(
+            needs_and_timings(&d),
+            vec![
+                (
+                    required[0].clone(),
+                    InputNeed::Required,
+                    InputTiming::SameTick
+                ),
+                (
+                    required[1].clone(),
+                    InputNeed::Required,
+                    InputTiming::SameTick
+                ),
+                (
+                    optional[0].clone(),
+                    InputNeed::Optional,
+                    InputTiming::SameTick
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_builder_input_is_previous_tick() {
+        let d = PortDescriptorBuilder::mock()
+            .input(ChannelKey::measurement::<Reading>("reading"))
+            .input(ChannelKey::oracle::<Pose>("pose"))
+            .optional(ChannelKey::internal::<State>("opt"))
+            .optional(ChannelKey::oracle::<Pose>("twist"))
+            .build();
+
+        assert!(d.inputs().all(|i| i.timing() == InputTiming::SameTick));
+    }
+}

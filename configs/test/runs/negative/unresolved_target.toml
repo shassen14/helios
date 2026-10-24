@@ -1,0 +1,16 @@
+# Failure-path proof: an assertion whose target no agent produces.
+#
+# No agent named `nobody` reports `no_such_node.value`, so `on_pipeline_built`
+# returns `UnusableAssertions` — a legitimate test FAILURE (exit 1), not a crash.
+# Confirms the failing exit code flows through the same report path as a pass.
+
+schema_version = "2.0"
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 2.0 }
+
+[[assert]]
+name = "unresolvable"
+target = "agent.nobody.node.no_such_node.value"
+reduce = "final"
+condition = { less_than = 1.0 }
