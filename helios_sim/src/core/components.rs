@@ -1,6 +1,7 @@
 use crate::core::run_clock::RunClock;
 
 use helios_core::control::actuators::ActuatorCommand;
+use helios_core::interchange::perception::object_instance::ObjectInstanceId;
 use helios_core::interchange::perception::semantic_class::SemanticClass;
 use helios_core::prelude::{MonotonicTime, PlannerGoal};
 
@@ -80,11 +81,10 @@ pub struct GoalDispatched;
 #[derive(Component, Clone, Debug)]
 pub struct WorldObjectType(pub String);
 
-/// A world object's identity in ground truth, `<layout>/<placement>` (e.g.
-/// `yard/crate_a`). Stable across runs and list order; unlike `Name`, which
-/// is only a debug label, this is the key datasets are joined on.
+/// A world object's identity in ground truth. Unlike `Name`, which is only a
+/// debug label, this is the key datasets are joined on.
 #[derive(Component, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ObjectInstanceId(pub String);
+pub struct ObjectInstance(pub ObjectInstanceId);
 
 /// A world object's semantic class, from the scenario's class catalog.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]

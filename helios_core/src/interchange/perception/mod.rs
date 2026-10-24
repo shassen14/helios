@@ -9,4 +9,5 @@
 
 pub mod contact;
 pub mod map;
+pub mod object_instance;
 pub mod semantic_class;

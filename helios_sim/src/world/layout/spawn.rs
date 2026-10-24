@@ -10,7 +10,7 @@ use super::error::error_report;
 use super::geometry::{is_collider_node, GeometryError, PrefabGeometry};
 use super::gltf_nodes::read_scene;
 use super::resolved::{ResolvedBody, ResolvedWorldLayout};
-use crate::core::components::{ObjectClass, ObjectInstanceId, WorldObjectType};
+use crate::core::components::{ObjectClass, ObjectInstance, WorldObjectType};
 use crate::core::transforms::{per_axis_to_bevy, transform_bevy_to_bevy_transform, ToBevy};
 
 use helios_core::spatial::conventions::Enu;
@@ -149,8 +149,8 @@ fn spawn_objects(
 
         let instance_id = layout.instance_id(placement);
         let mut object = commands.spawn((
-            Name::new(instance_id.clone()),
-            ObjectInstanceId(instance_id),
+            Name::new(instance_id.to_string()),
+            ObjectInstance(instance_id),
             ObjectClass(prefab.class),
             WorldObjectType(prefab.key.clone()),
             prepared

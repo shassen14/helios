@@ -18,6 +18,7 @@ const ESTIMATE_POSE: &str = "estimate.pose";
 const ESTIMATE_STATE: &str = "estimate.state";
 const TRUTH_POSE: &str = "truth.pose";
 const TRUTH_TWIST: &str = "truth.twist";
+const TRUTH_CONTACTS: &str = "truth.contacts";
 const REFERENCE: &str = "reference";
 
 /// _Pre-step._ A series every agent with the matching seam or truth source
@@ -34,6 +35,8 @@ pub enum AgentSeries {
     TruthPose,
     /// `base_link`'s true velocity, expressed in it.
     TruthTwist,
+    /// What `base_link`'s body touched each tick, by identity.
+    TruthContacts,
     /// The guidance reference the controllers track, of the morphology's
     /// type.
     Reference,
@@ -41,11 +44,12 @@ pub enum AgentSeries {
 
 impl AgentSeries {
     /// Every series, in the order a message lists them.
-    const ALL: [AgentSeries; 5] = [
+    const ALL: [AgentSeries; 6] = [
         AgentSeries::EstimatePose,
         AgentSeries::EstimateState,
         AgentSeries::TruthPose,
         AgentSeries::TruthTwist,
+        AgentSeries::TruthContacts,
         AgentSeries::Reference,
     ];
 
@@ -55,6 +59,7 @@ impl AgentSeries {
             AgentSeries::EstimateState => ESTIMATE_STATE,
             AgentSeries::TruthPose => TRUTH_POSE,
             AgentSeries::TruthTwist => TRUTH_TWIST,
+            AgentSeries::TruthContacts => TRUTH_CONTACTS,
             AgentSeries::Reference => REFERENCE,
         }
     }
@@ -63,9 +68,10 @@ impl AgentSeries {
     /// for a keyed channel, `None` for one holding a single value.
     pub fn instance(self, agent: &AgentId) -> Option<FrameId> {
         match self {
-            AgentSeries::EstimatePose | AgentSeries::TruthPose | AgentSeries::TruthTwist => {
-                Some(FrameId::base_link(agent.clone()))
-            }
+            AgentSeries::EstimatePose
+            | AgentSeries::TruthPose
+            | AgentSeries::TruthTwist
+            | AgentSeries::TruthContacts => Some(FrameId::base_link(agent.clone())),
             AgentSeries::EstimateState | AgentSeries::Reference => None,
         }
     }
@@ -75,7 +81,9 @@ impl AgentSeries {
     pub fn supplier(self) -> &'static str {
         match self {
             AgentSeries::EstimatePose | AgentSeries::EstimateState => "estimate seam",
-            AgentSeries::TruthPose | AgentSeries::TruthTwist => "truth source",
+            AgentSeries::TruthPose | AgentSeries::TruthTwist | AgentSeries::TruthContacts => {
+                "truth source"
+            }
             AgentSeries::Reference => "reference seam",
         }
     }
@@ -89,6 +97,7 @@ impl AgentSeries {
             AgentSeries::EstimateState => estimate::estimate(),
             AgentSeries::TruthPose => channels::truth_tf(),
             AgentSeries::TruthTwist => channels::truth_twist(),
+            AgentSeries::TruthContacts => channels::truth_contacts(),
             AgentSeries::Reference => return Ok(control::reference::<T>()),
         };
         if key.type_id() == TypeId::of::<T>() {
@@ -134,6 +143,7 @@ mod tests {
 
     use helios_core::control::BodyTwistRef;
     use helios_core::interchange::motion::StampedTwist;
+    use helios_core::interchange::perception::contact::Contacts;
     use helios_core::spatial::conventions::Flu;
     use helios_core::spatial::transforms::tf::stamped::StampedTransform;
     use helios_core::spatial::FrameAwareState;
@@ -180,6 +190,10 @@ mod tests {
             Ok(channels::truth_twist())
         );
         assert_eq!(
+            AgentSeries::TruthContacts.key::<Contacts>(ROLE),
+            Ok(channels::truth_contacts())
+        );
+        assert_eq!(
             AgentSeries::Reference.key::<BodyTwistRef>(ROLE),
             Ok(control::reference::<BodyTwistRef>())
         );
@@ -192,6 +206,7 @@ mod tests {
         assert_eq!(AgentSeries::EstimatePose.instance(&car()), base_link);
         assert_eq!(AgentSeries::TruthPose.instance(&car()), base_link);
         assert_eq!(AgentSeries::TruthTwist.instance(&car()), base_link);
+        assert_eq!(AgentSeries::TruthContacts.instance(&car()), base_link);
         assert_eq!(AgentSeries::EstimateState.instance(&car()), None);
         assert_eq!(AgentSeries::Reference.instance(&car()), None);
     }

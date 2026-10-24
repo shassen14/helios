@@ -7,7 +7,7 @@
 //! spawner, shows them working. Driving to a goal is not checked here: that
 //! is `helios_test`'s job (`configs/test/runs/proving_ground.toml`).
 
-use helios_sim::core::components::ObjectInstanceId;
+use helios_sim::core::components::ObjectInstance;
 use helios_sim::prelude::*;
 use helios_sim::world::ResolvedWorldLayout;
 
@@ -75,7 +75,7 @@ fn descendant_names(world: &mut World, root: Entity) -> Vec<String> {
 /// The placed objects: entity and prefab key.
 fn objects(world: &mut World) -> Vec<(Entity, String)> {
     world
-        .query_filtered::<(Entity, &WorldObjectType), With<ObjectInstanceId>>()
+        .query_filtered::<(Entity, &WorldObjectType), With<ObjectInstance>>()
         .iter(world)
         .map(|(entity, prefab)| (entity, prefab.0.clone()))
         .collect()

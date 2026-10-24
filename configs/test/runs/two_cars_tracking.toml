@@ -13,6 +13,10 @@
 # reference to zero at the goal while the car still moves at speed, so
 # surge error jumps to about +5 m/s there until the stop gets an approach
 # taper.
+#
+# The contacts suite rides along: the lanes keep the cars apart and off
+# every wall, so each must end with no contact episode, no collision and no
+# time in contact.
 
 schema_version = "2.0"
 scenario = { from = "test/scenarios/two_cars.toml" }
@@ -22,6 +26,11 @@ termination = { max_simulated_seconds = 30.0 }
 [[suite]]
 name = "tracking"
 from = "test/evaluations/twist.toml"
+agents = ["NorthCar", "SouthCar"]
+
+[[suite]]
+name = "contacts"
+from = "test/evaluations/contacts.toml"
 agents = ["NorthCar", "SouthCar"]
 
 [[assert]]
@@ -44,3 +53,18 @@ reduce = "final"
 name = "yaw_rate_rms"
 target = "eval.agent.*.tracking.twist.yaw_rate"
 reduce = "rms"
+
+[[measure]]
+name = "contact_episodes"
+target = "eval.agent.*.contacts.contacts.contact_episodes"
+reduce = "final"
+
+[[measure]]
+name = "collisions"
+target = "eval.agent.*.contacts.contacts.collisions"
+reduce = "final"
+
+[[measure]]
+name = "contact_time"
+target = "eval.agent.*.contacts.contacts.in_contact"
+reduce = { time_above = 0.5 }

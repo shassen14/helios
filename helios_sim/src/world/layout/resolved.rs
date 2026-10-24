@@ -5,6 +5,7 @@ use super::error::LayoutError;
 use crate::config::structs::{BodyKind, ObjectPlacement, ObjectPrefab};
 use crate::config::LoadedWorldLayout;
 
+use helios_core::interchange::perception::object_instance::ObjectInstanceId;
 use helios_core::interchange::perception::semantic_class::{SemanticClass, SemanticTaxonomy};
 use helios_core::kernel::identifier::{is_dotted_name, is_snake_case};
 use helios_core::spatial::FrameId;
@@ -13,10 +14,6 @@ use bevy::prelude::Resource;
 use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-
-/// Separates the layout name from the placement name in an instance ID.
-/// Neither name can contain it, since both are `snake_case`.
-const INSTANCE_ID_SEPARATOR: char = '/';
 
 /// The only geometry format the object loader reads.
 pub(super) const MESH_EXTENSION: &str = "glb";
@@ -130,8 +127,8 @@ impl ResolvedWorldLayout {
 
     /// The object's identity in ground truth: `<layout>/<placement>`, e.g.
     /// `yard/crate_a`. Independent of list order and of the seed.
-    pub fn instance_id(&self, placement: &ResolvedPlacement) -> String {
-        format!("{}{INSTANCE_ID_SEPARATOR}{}", self.name, placement.name)
+    pub fn instance_id(&self, placement: &ResolvedPlacement) -> ObjectInstanceId {
+        ObjectInstanceId::new(&self.name, &placement.name)
     }
 
     /// The class catalog every label in this world comes from.

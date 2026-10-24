@@ -1,0 +1,35 @@
+# Contacts on the proving ground: how often the car hit something, and how
+# long it stayed touching. Measures only: the car is expected to hit.
+#
+# The planner plans for a point, so the route clips the barrier's corner:
+# the car hits it at about 4.7 s, bounces, hits it again and stays pinned
+# there to the end, chattering on the corner. At the suite's `merge_gap`
+# that is one contact episode and one collision (it touches only the
+# barrier), and about 55 s in contact. Once the planner keeps
+# clearance from obstacles, the car drives past, and this run's golden
+# report changes in the same commit.
+
+schema_version = "2.0"
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 60.0 }
+
+[[suite]]
+name = "contacts"
+from = "test/evaluations/contacts.toml"
+agents = ["ProvingCar"]
+
+[[measure]]
+name = "contact_episodes"
+target = "eval.agent.ProvingCar.contacts.contacts.contact_episodes"
+reduce = "final"
+
+[[measure]]
+name = "collisions"
+target = "eval.agent.ProvingCar.contacts.contacts.collisions"
+reduce = "final"
+
+[[measure]]
+name = "contact_time"
+target = "eval.agent.ProvingCar.contacts.contacts.in_contact"
+reduce = { time_above = 0.5 }

@@ -132,10 +132,10 @@ fn spawned(layout: ResolvedWorldLayout) -> App {
 }
 
 fn object(app: &mut App, instance_id: &str) -> Entity {
-    let mut query = app.world_mut().query::<(Entity, &ObjectInstanceId)>();
+    let mut query = app.world_mut().query::<(Entity, &ObjectInstance)>();
     query
         .iter(app.world())
-        .find(|(_, id)| id.0 == instance_id)
+        .find(|(_, id)| id.0.as_str() == instance_id)
         .map(|(entity, _)| entity)
         .unwrap_or_else(|| panic!("`{instance_id}` was spawned"))
 }

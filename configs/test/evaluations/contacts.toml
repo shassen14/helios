@@ -1,0 +1,26 @@
+# Contacts: how often an agent's body hit something, and how long it stayed
+# touching, from the body's true contacts. Read through the agent's truth
+# source, so it applies to any agent with one.
+#
+# `contact_episodes` counts the body touching anything, and `collisions`
+# counts each side it touched apart (a crash into a cone and a wall at once
+# is one episode and two collisions). Either way, a touch within `merge_gap`
+# seconds of the last one continues it. 1.0 s is about three
+# times the longest break a single crash has shown (a bounce off the
+# barrier, 0.32 s) and far above two ticks at any tick rate in use, so the
+# count doesn't move with the physics or the tick. `in_contact` is the raw
+# touch, never bridged.
+#
+# The gap default is how these numbers are computed, so it travels with the
+# suite: the contacts span gaps up to three periods of their declared rate.
+
+[evaluation]
+gap_multiple = 3.0
+
+[[evaluate]]
+name = "contacts"
+kind = "contacts"
+[evaluate.inputs]
+contacts = "truth.contacts"
+[evaluate.params]
+merge_gap = 1.0

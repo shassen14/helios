@@ -163,10 +163,10 @@ fn step(app: &mut App, seconds: f32) {
 
 fn object(app: &mut App, name: &str) -> Entity {
     let instance_id = format!("physics/{name}");
-    let mut query = app.world_mut().query::<(Entity, &ObjectInstanceId)>();
+    let mut query = app.world_mut().query::<(Entity, &ObjectInstance)>();
     query
         .iter(app.world())
-        .find(|(_, id)| id.0 == instance_id)
+        .find(|(_, id)| id.0.as_str() == instance_id)
         .map(|(entity, _)| entity)
         .unwrap_or_else(|| panic!("`{instance_id}` was spawned"))
 }

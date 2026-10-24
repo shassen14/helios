@@ -3,10 +3,10 @@
 //! car without an ECS handle.
 
 use crate::brain_bridge::{AgentIdComponent, AutonomyPipelineComponent};
-use crate::core::components::{GroundTruthState, ObjectClass, ObjectInstanceId};
+use crate::core::components::{GroundTruthState, ObjectClass, ObjectInstance};
 use crate::core::ground_truth::{stamped_now, warn_dropped_truth};
 
-use helios_core::interchange::perception::contact::{Contacts, Touched};
+use helios_core::interchange::perception::contact::{Contact, Contacts, Touched};
 use helios_core::prelude::AgentId;
 use helios_core::spatial::FrameId;
 use helios_runtime::channels::truth_contacts;
@@ -42,7 +42,7 @@ pub fn publish_truth_contacts_system(
     bodies: Query<&ColliderOf>,
     identities: Query<(
         Option<&AgentIdComponent>,
-        Option<&ObjectInstanceId>,
+        Option<&ObjectInstance>,
         Option<&ObjectClass>,
         Option<&Name>,
     )>,
@@ -80,7 +80,7 @@ pub fn publish_truth_contacts_system(
                     name.map_or("unnamed", Name::as_str),
                 );
             }
-            touched
+            Contact { other: touched }
         });
         let contacts = Contacts::new(
             FrameId::base_link(agent.0.clone()),
@@ -102,7 +102,7 @@ pub fn publish_truth_contacts_system(
 /// unknown.
 fn identify(
     agent: Option<&AgentIdComponent>,
-    instance: Option<&ObjectInstanceId>,
+    instance: Option<&ObjectInstance>,
     class: Option<&ObjectClass>,
 ) -> Touched {
     match (agent, instance, class) {
@@ -119,12 +119,13 @@ fn identify(
 mod tests {
     use super::*;
 
+    use helios_core::interchange::perception::object_instance::ObjectInstanceId;
     use helios_core::interchange::perception::semantic_class::SemanticClass;
 
     #[test]
     fn an_agent_is_named_by_its_id_and_an_object_by_instance_and_class() {
         let agent = AgentIdComponent(AgentId::new("truck"));
-        let instance = ObjectInstanceId("yard/wall_a".to_string());
+        let instance = ObjectInstance(ObjectInstanceId::new("yard", "wall_a"));
         let class = ObjectClass(SemanticClass::UNLABELED);
 
         assert_eq!(
@@ -134,7 +135,7 @@ mod tests {
         assert_eq!(
             identify(None, Some(&instance), Some(&class)),
             Touched::Object {
-                instance: "yard/wall_a".to_string(),
+                instance: ObjectInstanceId::new("yard", "wall_a"),
                 class: SemanticClass::UNLABELED,
             }
         );
@@ -142,7 +143,7 @@ mod tests {
 
     #[test]
     fn a_side_without_a_full_identity_is_unknown() {
-        let instance = ObjectInstanceId("yard/wall_a".to_string());
+        let instance = ObjectInstance(ObjectInstanceId::new("yard", "wall_a"));
 
         assert_eq!(identify(None, None, None), Touched::Unknown);
         assert_eq!(identify(None, Some(&instance), None), Touched::Unknown);

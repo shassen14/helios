@@ -156,7 +156,7 @@ fn valid_layout_resolves() {
     let (cone, cone_prefab) = object(&layout, "cone_a");
     assert_eq!(cone_prefab.class.id(), 15);
     assert_eq!(cone_prefab.key, "entities.objects.traffic_cone");
-    assert_eq!(layout.instance_id(cone), "yard/cone_a");
+    assert_eq!(layout.instance_id(cone).as_str(), "yard/cone_a");
     assert_eq!(cone.pose.translation.vector, Vector3::new(1.0, 2.0, 0.0));
     assert_eq!(cone.scale, Vector3::new(1.0, 1.0, 1.0));
     assert_eq!(cone.body, ResolvedBody::Static);
