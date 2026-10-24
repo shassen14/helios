@@ -75,7 +75,7 @@ pub const AGENT_SCOPE: &str = "agent";
 /// (frame scope, determinism seeding, observability paths) — a reserved string
 /// whose sides must agree. Backed by `Arc<str>` so cloning it (onto a `FrameId`,
 /// for instance) is cheap; it serializes as (and loads from) a plain string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AgentId(Arc<str>);
 
 impl AgentId {

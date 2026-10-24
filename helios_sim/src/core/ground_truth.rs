@@ -6,6 +6,7 @@ use crate::core::transforms::{
 };
 
 use helios_core::interchange::motion::StampedTwist;
+use helios_core::interchange::perception::contact::Contacts;
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::quantities::FreeVector;
@@ -14,7 +15,7 @@ use helios_core::spatial::transforms::{
     Convention, ConventionOf, ErasedTransform, Transform as CoreTransform,
 };
 use helios_core::spatial::FrameId;
-use helios_runtime::channels::{truth_tf, truth_twist};
+use helios_runtime::channels::{truth_contacts, truth_tf, truth_twist};
 use helios_runtime::port::{ChannelError, ChannelKey};
 use helios_runtime::{BodyChannel, Health, Provenance, Stamped, HOST_PRODUCER_ID};
 
@@ -87,16 +88,19 @@ pub fn ground_truth_sync_system(
     }
 }
 
-/// The channels [`publish_truth_channels_system`] writes for `agent`, as
-/// the body publishes them: `truth.tf` and `truth.twist`, each with one
-/// instance, the agent's `base_link` (its pose expressed in the world's
-/// `datum`, its twist relative to it), exact because the simulator is ground
-/// truth, and written every tick, at the host's `tick_rate_hz`.
+/// The channels the truth rig writes for `agent`, as the body publishes
+/// them: `truth.tf` and `truth.twist` ([`publish_truth_channels_system`])
+/// and `truth.contacts`
+/// ([`publish_truth_contacts_system`](crate::core::truth_contacts::publish_truth_contacts_system)),
+/// each with one instance, the agent's `base_link` (its pose expressed in
+/// the world's `datum`, its twist relative to it, what it touched), exact
+/// because the simulator is ground truth, and written every tick, at the
+/// host's `tick_rate_hz`.
 pub fn truth_body_channels(
     agent: &AgentId,
     datum: &FrameId,
     tick_rate_hz: f64,
-) -> [BodyChannel; 2] {
+) -> [BodyChannel; 3] {
     let base_link = FrameId::base_link(agent.clone());
     [
         BodyChannel::new(truth_tf(), TRUTH_RIG_UNIT, Provenance::Exact)
@@ -106,8 +110,11 @@ pub fn truth_body_channels(
             }])
             .with_rate(tick_rate_hz),
         BodyChannel::new(truth_twist(), TRUTH_RIG_UNIT, Provenance::Exact)
-            .with_instances::<StampedTwist<Flu>>([base_link])
+            .with_instances::<StampedTwist<Flu>>([base_link.clone()])
             .with_reference(datum.clone())
+            .with_rate(tick_rate_hz),
+        BodyChannel::new(truth_contacts(), TRUTH_RIG_UNIT, Provenance::Exact)
+            .with_instances::<Contacts>([base_link])
             .with_rate(tick_rate_hz),
     ]
 }
@@ -214,7 +221,7 @@ fn truth_messages(
 }
 
 /// `value` stamped at `now` by the host.
-fn stamped_now<T>(value: T, now: MonotonicTime) -> Stamped<T> {
+pub(crate) fn stamped_now<T>(value: T, now: MonotonicTime) -> Stamped<T> {
     Stamped {
         value,
         timestamp: now,
@@ -224,7 +231,7 @@ fn stamped_now<T>(value: T, now: MonotonicTime) -> Stamped<T> {
 }
 
 /// Warns about a refused truth write, once per agent and channel.
-fn warn_dropped_truth(
+pub(crate) fn warn_dropped_truth(
     agent: &AgentId,
     key: ChannelKey,
     result: Result<(), ChannelError>,
@@ -297,7 +304,8 @@ mod tests {
     fn the_twist_is_stated_relative_to_the_datum() {
         const TICK_RATE_HZ: f64 = 100.0;
         let datum = FrameId::global("datum");
-        let [pose, twist] = truth_body_channels(&AgentId::new("car"), &datum, TICK_RATE_HZ);
+        let [pose, twist, _contacts] =
+            truth_body_channels(&AgentId::new("car"), &datum, TICK_RATE_HZ);
 
         assert_eq!(pose.reference(), None);
         assert_eq!(twist.reference(), Some(&datum));

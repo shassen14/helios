@@ -7,8 +7,8 @@
 //! ([`prng`]); the run's clock every stamp reads ([`run_clock`]); the
 //! run-length cutoff a driver may add ([`run_duration`]); and
 //! the per-tick systems that bridge physics to the rest of the
-//! sim — ground-truth sync and oracle publishing ([`ground_truth`]) plus the TF
-//! tree ([`transforms`]).
+//! sim — ground-truth sync and oracle publishing ([`ground_truth`],
+//! [`truth_contacts`]) plus the TF tree ([`transforms`]).
 //!
 //! All cross-boundary frame conversions delegate to [`transforms`].
 
@@ -24,5 +24,6 @@ pub mod run_duration;
 pub mod simulation_setup;
 pub mod spawn_requests;
 pub mod transforms;
+pub mod truth_contacts;
 
 pub use ground_truth::{ground_truth_sync_system, publish_truth_channels_system};

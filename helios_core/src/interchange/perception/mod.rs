@@ -7,5 +7,6 @@
 //! *production*: a perception noun can be born only in a perception domain, so a
 //! forward sensor model structurally cannot emit one.
 
+pub mod contact;
 pub mod map;
 pub mod semantic_class;

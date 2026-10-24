@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use avian3d::prelude::PhysicsSystems;
+use avian3d::prelude::{CollidingEntities, CollisionEventsEnabled, PhysicsSystems};
 use bevy::time::TimeUpdateStrategy;
 use bevy::transform::TransformSystems;
 use rand::rngs::OsRng;
@@ -15,6 +15,7 @@ use crate::core::ground_truth_sync_system;
 use crate::core::host::TimePolicy;
 use crate::core::prng::MasterSeed;
 use crate::core::run_clock::RunClock;
+use crate::core::truth_contacts::publish_truth_contacts_system;
 use crate::prelude::*;
 
 use helios_core::prelude::AgentId;
@@ -65,6 +66,10 @@ impl Plugin for SimulationSetupPlugin {
                     .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
                 publish_truth_channels_system
+                    .after(ground_truth_sync_system)
+                    .in_set(SimulationSet::StateSync)
+                    .run_if(in_state(AppState::Running)),
+                publish_truth_contacts_system
                     .after(ground_truth_sync_system)
                     .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
@@ -301,6 +306,12 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>, clock
                 ..default()
             },
             start_transform,
+            // What the truth rig reads to publish `truth.contacts`: Avian
+            // reports touches only for a body that asks, and fills
+            // `CollidingEntities` only on a collider that carries it, the
+            // agent's root.
+            CollisionEventsEnabled,
+            CollidingEntities::default(),
             // We clone the agent_config to move ownership into the component.
             // This is necessary because multiple systems in your spawning pipeline
             // (for sensors, estimators, etc.) will need to read from it.
