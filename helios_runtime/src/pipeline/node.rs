@@ -1,7 +1,8 @@
 use crate::observe::buffer::NodeObservations;
 use crate::observe::key::RecordedKey;
 use crate::observe::observation::ObservedValue;
-use crate::port::{PortBus, PortDescriptor};
+use crate::pipeline::build::StateDescription;
+use crate::port::{ChannelKey, PortBus, PortDescriptor};
 
 use helios_core::prelude::TfProvider;
 use helios_core::spatial::primitives::MonotonicTime;
@@ -31,6 +32,15 @@ pub trait PipelineNode: Send + Sync {
     /// execution rate. Returned by reference because the descriptor is
     /// immutable after construction.
     fn port_descriptor(&self) -> &PortDescriptor;
+
+    /// What the states this node writes on `output`, one of its declared
+    /// outputs, are: their schema and root, fixed once the node is built.
+    /// `None` for an output carrying no state, the default. The build asks
+    /// for each output, so a node describing a state writes it nowhere else.
+    fn state_description(&self, output: &ChannelKey) -> Option<StateDescription> {
+        let _ = output;
+        None
+    }
 
     /// Run one iteration. Called by [`AutonomyPipeline::tick`](super::AutonomyPipeline::tick).
     fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext);

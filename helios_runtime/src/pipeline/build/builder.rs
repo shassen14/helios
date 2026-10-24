@@ -7,6 +7,7 @@ use super::{
     declaration::{NodeDeclaration, NodePlan},
     mounts::{check_mount_readings, resolve_mounts},
     ordering::order_into_levels,
+    states::describe_states,
     wiring::check_wiring,
 };
 
@@ -199,6 +200,9 @@ impl PipelineBuilder {
     ///    - [`PipelineBuildError::ConstructedNodeMisnamed`] — a plan built a
     ///      node under another name.
     ///
+    ///    Once built, each state channel is described by the schema and root
+    ///    its node gives, or its forwarded input's.
+    ///
     /// Within a level, nodes are sorted by name, so levels and [`NodeId`](crate::NodeId)s
     /// do not depend on the order nodes were added.
     ///
@@ -242,6 +246,7 @@ impl PipelineBuilder {
         let bus = PortBus::new(&descriptions);
 
         let levels = construct_levels(levels, &descriptions, &self.agent)?;
+        let state_schemas = describe_states(&levels);
         let host_writes = HostWrites::new(&self.agent, &descriptions);
 
         Ok(AutonomyPipeline {
@@ -252,6 +257,7 @@ impl PipelineBuilder {
             descriptions,
             frame_conventions,
             frame_placements,
+            state_schemas,
         })
     }
 

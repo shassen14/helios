@@ -109,7 +109,14 @@ impl EstimatorPlan {
                 None => Aiding::new(&name, source),
             })
             .collect();
-        let node = RecursiveEstimatorNode::new(ctx.node_name(), filter, input, aiding, descriptor);
+        let node = RecursiveEstimatorNode::new(
+            ctx.node_name(),
+            ctx.frames().root.clone(),
+            filter,
+            input,
+            aiding,
+            descriptor,
+        );
         Ok(Box::new(node))
     }
 }

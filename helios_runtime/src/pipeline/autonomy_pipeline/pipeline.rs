@@ -8,7 +8,7 @@ use super::{
 
 use crate::{
     channels::{control, estimate::estimate},
-    pipeline::{FrameConventions, FramePlacement},
+    pipeline::{FrameConventions, FramePlacement, StateSchemas},
     port::{ChannelDescription, ChannelKey, InputPort, MountReading, PortBus, Writer},
     prelude::{Stamped, TickContext},
 };
@@ -52,6 +52,8 @@ pub struct AutonomyPipeline {
     pub(in crate::pipeline) frame_conventions: FrameConventions,
     /// Where each frame a node defines sits in the world.
     pub(in crate::pipeline) frame_placements: Vec<FramePlacement>,
+    /// Each state channel's schema and root, as its writer built them.
+    pub(in crate::pipeline) state_schemas: StateSchemas,
 }
 
 impl AutonomyPipeline {
@@ -93,6 +95,15 @@ impl AutonomyPipeline {
     /// tree it serves.
     pub fn frame_placements(&self) -> &[FramePlacement] {
         &self.frame_placements
+    }
+
+    /// Each channel carrying a state, with the schema its states are built
+    /// on and the root they are held in, as the node writing it built them:
+    /// each estimator's output, and the estimate the seam forwards from the
+    /// authoritative one. Fixed for the run, so a reader knows a state's
+    /// blocks before the first arrives.
+    pub fn state_schemas(&self) -> &StateSchemas {
+        &self.state_schemas
     }
 
     /// The inputs declared as sent from outside the robot (goals, teleop

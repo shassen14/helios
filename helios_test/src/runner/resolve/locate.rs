@@ -20,8 +20,9 @@ use helios_runtime::{
         key::{RecordedKey, Subject},
         path::channel_path,
     },
-    pipeline::{FrameConventions, FramePlacement},
-    port::{ChannelDescription, ChannelKey, Determinism, Observable, ObservableValue},
+    pipeline::{FrameConventions, FramePlacement, StateSchemas},
+    port::{ChannelDescription, ChannelKey, Determinism, Observable, ObservableValue, Writer},
+    AutonomyPipeline,
 };
 
 /// What one agent reports, listed once for every assertion to search.
@@ -37,9 +38,31 @@ pub(super) struct Catalog<'a> {
     pub frame_conventions: &'a FrameConventions,
     /// Where each frame a node defines sits in the world.
     pub frame_placements: &'a [FramePlacement],
+    /// Each state channel's schema and root, as its writer built them.
+    pub state_schemas: &'a StateSchemas,
 }
 
-impl Catalog<'_> {
+impl<'a> Catalog<'a> {
+    /// What `agent`'s `pipeline` reports.
+    pub(super) fn new(agent: &'a AgentId, pipeline: &'a AutonomyPipeline) -> Self {
+        Self {
+            agent,
+            observables: pipeline.observables().collect(),
+            node_written: pipeline
+                .descriptions()
+                .iter()
+                .filter_map(|description| match description.writer() {
+                    Writer::Node { node } => Some((node.as_str(), description.key())),
+                    _ => None,
+                })
+                .collect(),
+            descriptions: pipeline.descriptions(),
+            frame_conventions: pipeline.frame_conventions(),
+            frame_placements: pipeline.frame_placements(),
+            state_schemas: pipeline.state_schemas(),
+        }
+    }
+
     /// Every entry `subject`, a target's subject, names: at most one
     /// emission, or every instance of a channel. A target spells a channel
     /// by name alone, which is enough: the build refuses one name for two

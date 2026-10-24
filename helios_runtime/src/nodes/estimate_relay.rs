@@ -67,7 +67,7 @@ impl EstimateRelay {
         let output = estimate::estimate();
         let descriptor = PortDescriptorBuilder::algorithm()
             .input(source.clone())
-            .output(output.clone())
+            .output_forwarding(output.clone(), source.clone())
             .output_keyed::<StampedTransform>(tf(), [edge.clone()])
             .build();
 

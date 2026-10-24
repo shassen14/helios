@@ -48,6 +48,7 @@ use super::throttle::passes_warn_throttle;
 use crate::channels::estimate::estimator_output;
 use crate::nodes::estimation::{AssembledInput, EstimatorInputBuilder};
 use crate::pipeline::node::{PipelineNode, TickContext};
+use crate::pipeline::StateDescription;
 use crate::port::{ChannelKey, Pinned, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::{Health, Stamped};
 
@@ -70,6 +71,8 @@ use tracing::warn;
 pub(crate) struct RecursiveEstimatorNode {
     name: String,
     output: ChannelKey,
+    /// What every state it writes is, from the filter as built.
+    state: StateDescription,
     filter: Mutex<Running>,
     input: Box<dyn EstimatorInputBuilder>,
     aiding: Vec<Aiding>,
@@ -120,10 +123,12 @@ impl RecursiveEstimatorNode {
 
     /// A node named `name` that runs `filter`, predicting from what `input`
     /// assembles and correcting from each of `aiding`, in order. It writes its
-    /// state on the channel named after it, and has the ports `descriptor`,
-    /// declared by [`declare_ports`](Self::declare_ports) for the same parts.
+    /// state, held in `root`, on the channel named after it, and has the ports
+    /// `descriptor`, declared by [`declare_ports`](Self::declare_ports) for
+    /// the same parts.
     pub(crate) fn new(
         name: impl Into<String>,
+        root: FrameId,
         filter: Box<dyn GaussianStateEstimator>,
         input: Box<dyn EstimatorInputBuilder>,
         aiding: Vec<Aiding>,
@@ -131,10 +136,12 @@ impl RecursiveEstimatorNode {
     ) -> Self {
         let name = name.into();
         let output = estimator_output(&name);
+        let state = StateDescription::new(root, filter.state().schema().clone());
 
         Self {
             name,
             output,
+            state,
             filter: Mutex::new(Running {
                 filter,
                 predict_fault: None,
@@ -155,6 +162,13 @@ impl PipelineNode for RecursiveEstimatorNode {
 
     fn port_descriptor(&self) -> &PortDescriptor {
         &self.descriptor
+    }
+
+    /// The filter's schema and the root the node holds its state in. The
+    /// filter keeps its schema for the run, so every state it writes is
+    /// built on it.
+    fn state_description(&self, output: &ChannelKey) -> Option<StateDescription> {
+        (*output == self.output).then(|| self.state.clone())
     }
 
     fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext) {

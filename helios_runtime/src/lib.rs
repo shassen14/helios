@@ -23,7 +23,7 @@ pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER
 pub use crate::pipeline::{
     AutonomyPipeline, ChannelUses, CycleEdge, FrameConventions, FrameOwner, FramePlacement,
     InputMounts, MountLookupError, MountRefusal, NodeConstructor, NodePlan, PipelineBuildError,
-    PipelineBuilder, Placement, ReadMount, Unanchored,
+    PipelineBuilder, Placement, ReadMount, StateDescription, StateSchemas, Unanchored,
 };
 pub use crate::port::{
     ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, MountReading,

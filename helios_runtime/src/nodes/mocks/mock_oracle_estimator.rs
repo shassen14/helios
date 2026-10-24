@@ -49,6 +49,7 @@
 use crate::channels::estimate::estimator_output;
 use crate::channels::{truth_tf, truth_twist};
 use crate::pipeline::node::{PipelineNode, TickContext};
+use crate::pipeline::StateDescription;
 use crate::port::{
     ChannelKey, InstanceKey, Pinned, PortBus, PortDescriptor, PortDescriptorBuilder,
 };
@@ -176,6 +177,12 @@ impl PipelineNode for MockOracleEstimatorNode {
 
     fn port_descriptor(&self) -> &PortDescriptor {
         &self.descriptor
+    }
+
+    /// The carrier schema, held in the root the node defines.
+    fn state_description(&self, output: &ChannelKey) -> Option<StateDescription> {
+        (*output == self.output)
+            .then(|| StateDescription::new(self.frames.root.clone(), self.schema.clone()))
     }
 
     fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {

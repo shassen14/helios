@@ -19,7 +19,7 @@ use crate::{
 };
 
 use helios_core::prelude::{AgentId, MonotonicTime};
-use helios_runtime::{observe::key::RecordedKey, port::Writer, AutonomyPipeline};
+use helios_runtime::{observe::key::RecordedKey, AutonomyPipeline};
 
 use std::collections::HashMap;
 
@@ -266,21 +266,7 @@ pub(in crate::runner) fn resolve(
 ) -> Result<ResolvedPlan, Unusable> {
     let catalogs: Vec<Catalog> = pipelines
         .iter()
-        .map(|(agent, pipeline)| Catalog {
-            agent,
-            observables: pipeline.observables().collect(),
-            node_written: pipeline
-                .descriptions()
-                .iter()
-                .filter_map(|description| match description.writer() {
-                    Writer::Node { node } => Some((node.as_str(), description.key())),
-                    _ => None,
-                })
-                .collect(),
-            descriptions: pipeline.descriptions(),
-            frame_conventions: pipeline.frame_conventions(),
-            frame_placements: pipeline.frame_placements(),
-        })
+        .map(|(agent, pipeline)| Catalog::new(agent, pipeline))
         .collect();
 
     let mut unusable = Unusable::default();

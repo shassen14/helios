@@ -137,6 +137,14 @@ mod tests {
         let outputs: Vec<ChannelKey> = descriptor.outputs().cloned().collect();
         assert!(outputs.contains(&estimate()));
         assert!(outputs.contains(&tf()));
+        // The estimate is the source's state, so whatever describes the
+        // source's states describes it.
+        let forwarded = descriptor
+            .output_ports()
+            .iter()
+            .find(|port| port.channel() == &estimate())
+            .and_then(|port| port.forwards());
+        assert_eq!(forwarded, Some(&estimator_output("shadow")));
         // The relay writes base_link's edge.
         let instances: Vec<&InstanceKey> = descriptor
             .output_ports()

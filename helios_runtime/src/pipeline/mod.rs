@@ -26,6 +26,6 @@ pub(crate) use build::NodeDeclaration;
 pub use build::{
     ChannelUses, CycleEdge, FrameConventions, FrameOwner, FramePlacement, InputMounts,
     MountLookupError, MountRefusal, NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
-    Placement, Unanchored,
+    Placement, StateDescription, StateSchemas, Unanchored,
 };
 pub use node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};

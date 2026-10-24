@@ -139,8 +139,29 @@ impl PortDescriptor {
     }
 
     /// Replaces the outputs with full records, drives included. For the
-    /// builder, which checks each command channel's type before recording it.
+    /// builder, which checks each command channel's type before recording it,
+    /// after the inputs.
+    ///
+    /// # Panics
+    ///
+    /// If an output forwards a channel that is not a declared input, or one
+    /// of another type: a node forwarding what it never reads is a bug in the
+    /// node.
     pub(crate) fn with_outputs(mut self, outputs: Vec<OutputPort>) -> Self {
+        for port in &outputs {
+            if let Some(input) = &port.forwards {
+                assert!(
+                    self.inputs().any(|read| read.channel == *input),
+                    "{} forwards {input}, which the node does not read",
+                    port.channel
+                );
+                assert!(
+                    input.type_id() == port.channel.type_id(),
+                    "{} forwards {input}, which carries another type",
+                    port.channel
+                );
+            }
+        }
         self.outputs = outputs;
         self
     }
@@ -473,8 +494,8 @@ pub enum Pinned {
 
 /// One declared output of a node: which channel it writes, the actuators its
 /// commands drive when the channel carries `ActuatorCommand`, the rule that
-/// gives the channel's mount, and the instances it writes when the channel is
-/// keyed.
+/// gives the channel's mount, the instances it writes when the channel is
+/// keyed, and the input whose values it writes unchanged, if it forwards one.
 ///
 /// Only the descriptor builder creates records, so only an `ActuatorCommand`
 /// output carries drives and only a keyed output carries instances.
@@ -484,6 +505,7 @@ pub struct OutputPort {
     drives: Vec<ActuatorDrive>,
     mount: MountRule,
     instances: DeclaredInstances,
+    forwards: Option<ChannelKey>,
 }
 
 impl OutputPort {
@@ -494,6 +516,7 @@ impl OutputPort {
             drives,
             mount: MountRule::None,
             instances: DeclaredInstances::default(),
+            forwards: None,
         }
     }
 
@@ -520,6 +543,12 @@ impl OutputPort {
         self
     }
 
+    /// The output writing each value of `input` unchanged.
+    pub(crate) fn forwarding(mut self, input: ChannelKey) -> Self {
+        self.forwards = Some(input);
+        self
+    }
+
     /// The actuators this output's commands drive. Empty unless the channel
     /// carries `ActuatorCommand`.
     pub fn drives(&self) -> &[ActuatorDrive] {
@@ -541,6 +570,12 @@ impl OutputPort {
     /// expressed in when the payload names one.
     pub fn declared_instances(&self) -> &DeclaredInstances {
         &self.instances
+    }
+
+    /// The input whose values this output writes unchanged, if it forwards
+    /// one, so whatever describes the input's values describes its own.
+    pub fn forwards(&self) -> Option<&ChannelKey> {
+        self.forwards.as_ref()
     }
 }
 

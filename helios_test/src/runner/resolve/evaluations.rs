@@ -27,6 +27,7 @@ use crate::{
 use helios_core::prelude::AgentId;
 use helios_runtime::{
     observe::key::{RecordedKey, Subject},
+    pipeline::StateDescription,
     port::{Determinism, ObservableValue, Writer},
 };
 
@@ -446,7 +447,8 @@ fn locate_input(
     }
 
     // An emission has no description: its node writes it, at no declared
-    // rate, in no declared frame.
+    // rate, in no declared frame. A keyed instance is expressed in the frame
+    // its writer declared it with, a state in the root its writer holds it in.
     let (writer, rate_hz, expressed_in) = match subject {
         Subject::Emission { node, .. } => (
             Some(Writer::Node {
@@ -472,6 +474,12 @@ fn locate_input(
                     instance
                         .as_ref()
                         .and_then(|instance| description.expressed_in(instance))
+                        .or_else(|| {
+                            catalog
+                                .state_schemas
+                                .of_channel(channel)
+                                .map(StateDescription::root)
+                        })
                         .cloned(),
                 )
             }),
@@ -529,12 +537,23 @@ mod tests {
     use helios_core::interchange::motion::StampedTwist;
     use helios_core::prelude::FrameId;
     use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
+    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::FrameAwareState;
     use helios_runtime::{
-        channels,
-        observe::sink::{ObservationSink, WatchRequest},
+        build_pipeline,
+        channels::{self, estimate},
+        observe::{
+            path::channel_path,
+            sink::{ObservationSink, WatchRequest},
+        },
+        pipeline::Placement,
         port::Provenance,
-        AutonomyPipeline, BodyCapabilities, BodyChannel, PipelineBuilder,
+        AutonomyPipeline, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities, BodyChannel,
+        HostDeclaration, PipelineBuilder,
     };
+
+    use std::collections::HashMap;
 
     const CAR: &str = "car";
     const TRUCK: &str = "truck";
@@ -640,6 +659,74 @@ mod tests {
             panic!("one refused evaluation: {unusable}");
         };
         evaluation.clone()
+    }
+
+    /// `CAR`'s pipeline with a mock oracle as its estimate, pinned through
+    /// its truth to [`datum`]: the relay forwards its state onto the estimate.
+    fn oracle_estimate() -> AutonomyPipeline {
+        let agent = AgentId::new(CAR);
+        let stack: AutonomyStackConfig = toml::from_str(
+            r#"
+            [nodes.truth]
+            kind = "MockOracle"
+
+            [estimate]
+            source = "truth"
+            "#,
+        )
+        .expect("a valid stack");
+        let body = BodyCapabilities {
+            publishes: vec![
+                BodyChannel::new(channels::truth_tf(), "truth", Provenance::Exact)
+                    .with_instances::<StampedTransform>([FrameEdge {
+                        child: FrameId::base_link(agent.clone()),
+                        parent: datum(),
+                    }]),
+                BodyChannel::new(channels::truth_twist(), "truth", Provenance::Exact)
+                    .with_instances::<StampedTwist<Flu>>([FrameId::base_link(agent.clone())]),
+            ],
+            ..Default::default()
+        };
+        let host = HostDeclaration {
+            tick_rate_hz: TRUTH_RATE_HZ,
+            world_frames: HashMap::from([(datum(), Convention::Enu)]),
+        };
+        build_pipeline(&stack, &AutonomyRegistry::default(), agent, body, host)
+            .unwrap_or_else(|errors| panic!("an oracle estimate builds: {errors:?}"))
+    }
+
+    fn datum() -> FrameId {
+        FrameId::global("datum")
+    }
+
+    /// The estimate seam's state is held in `odom`, which its writer gives
+    /// before the first state arrives, so a role reading it learns the frame,
+    /// its axes and its anchor at setup.
+    #[test]
+    fn the_estimates_state_is_bound_in_the_root_its_source_holds_it_in() {
+        let agent = AgentId::new(CAR);
+        let pipeline = oracle_estimate();
+        let catalogs = [Catalog::new(&agent, &pipeline)];
+        let target = AssertionTarget::parse(channel_path(CAR, &estimate::estimate()))
+            .expect("a valid target");
+
+        let bound = locate_input(
+            &target,
+            &Role::of::<FrameAwareState>("estimate"),
+            Some(AgentSeries::EstimateState),
+            &catalogs,
+        )
+        .unwrap_or_else(|problems| panic!("the estimate binds: {problems:?}"));
+
+        let odom = FrameId::odom(agent);
+        assert_eq!(bound.facts.expressed_in, Some(odom.clone()));
+        assert_eq!(bound.facts.convention, Some(Convention::Enu));
+        let placement = bound.facts.placement.expect("the oracle defines odom");
+        assert_eq!(placement.frame(), &odom);
+        let Placement::Anchored(anchor) = placement.placement() else {
+            panic!("odom is pinned through the truth: {placement:?}");
+        };
+        assert_eq!(anchor.parent, datum());
     }
 
     #[test]

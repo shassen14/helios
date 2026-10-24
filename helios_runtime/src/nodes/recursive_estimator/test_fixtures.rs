@@ -276,6 +276,7 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
     );
     let node = RecursiveEstimatorNode::new(
         "primary",
+        FrameId::odom(agent()),
         Box::new(filter),
         Box::new(input),
         vec![match nis {

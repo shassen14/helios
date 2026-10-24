@@ -144,9 +144,9 @@ pub struct Metric {
 pub struct BoundInput {
     pub agent: AgentId,
     pub instance: Option<String>,
-    /// The frame the instance's values are expressed in, when its writer
-    /// declared one apart from the instance: a transform edge's parent, the
-    /// root of the tree it belongs to.
+    /// The frame the series' values are expressed in, when its writer
+    /// declared one apart from the values: a transform edge's parent, the
+    /// root of the tree it belongs to, or the root a state is held in.
     pub expressed_in: Option<FrameId>,
     /// `expressed_in`'s axis convention, as the frame's owner gives it in the
     /// agent's pipeline. `None` when no frame is declared or no owner gives

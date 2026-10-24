@@ -162,6 +162,18 @@ impl PortDescriptorBuilder {
         self
     }
 
+    /// Declares a channel this node writes, as [`output`](Self::output) does,
+    /// carrying each value of input `input` unchanged: the estimate seam's
+    /// relay forwarding the authoritative estimator's state. What describes
+    /// the input's values, such as a state's schema, describes the output's.
+    /// Checked at [`build`](Self::build): `input` must be declared as an input
+    /// by then, carrying the same type.
+    pub fn output_forwarding(mut self, channel: ChannelKey, input: ChannelKey) -> Self {
+        self.outputs
+            .push(OutputPort::undriven(channel).forwarding(input));
+        self
+    }
+
     /// Declares a derived measurement, as [`output`](Self::output) does,
     /// measured in the mount of `input`, which the node must read in the same
     /// tick. The build gives the output that mount, so its readers learn the
@@ -321,9 +333,11 @@ impl PortDescriptorBuilder {
     ///
     /// # Panics
     ///
-    /// If [`reads_mount_in`](Self::reads_mount_in) or
-    /// [`reads_instance`](Self::reads_instance) named a channel that is not a
-    /// declared input, or a pin names a frame the node doesn't define, or a
+    /// If [`reads_mount_in`](Self::reads_mount_in),
+    /// [`reads_instance`](Self::reads_instance) or
+    /// [`output_forwarding`](Self::output_forwarding) named a channel that is
+    /// not a declared input, a forwarded input carries another type than its
+    /// output, or a pin names a frame the node doesn't define, or a
     /// channel or instance it doesn't read.
     pub fn build(self) -> PortDescriptor {
         PortDescriptor::new(
@@ -501,6 +515,43 @@ mod tests {
         let range = ChannelKey::measurement::<Reading>("lidar");
         let _ = PortDescriptorBuilder::algorithm()
             .output_at_mount_of(ChannelKey::internal::<Reading>("cloud"), range);
+    }
+
+    /// An output forwarding an input names it; every other output forwards
+    /// nothing.
+    #[test]
+    fn a_forwarding_output_names_the_input_it_forwards() {
+        let source = ChannelKey::internal::<State>("primary");
+        let forwarded = ChannelKey::internal::<State>("estimate");
+        let d = PortDescriptorBuilder::algorithm()
+            .input(source.clone())
+            .output_forwarding(forwarded, source.clone())
+            .output(ChannelKey::internal::<State>("other"))
+            .build();
+        let forwards: Vec<Option<&ChannelKey>> =
+            d.output_ports().iter().map(OutputPort::forwards).collect();
+        assert_eq!(forwards, [Some(&source), None]);
+    }
+
+    #[test]
+    #[should_panic(expected = "which the node does not read")]
+    fn forwarding_an_unread_channel_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .output_forwarding(
+                ChannelKey::internal::<State>("estimate"),
+                ChannelKey::internal::<State>("primary"),
+            )
+            .build();
+    }
+
+    #[test]
+    #[should_panic(expected = "which carries another type")]
+    fn forwarding_a_channel_of_another_type_panics() {
+        let source = ChannelKey::internal::<Reading>("primary");
+        let _ = PortDescriptorBuilder::algorithm()
+            .input(source.clone())
+            .output_forwarding(ChannelKey::internal::<State>("estimate"), source)
+            .build();
     }
 
     /// Each stated mount reading is kept, in order, one channel as often as

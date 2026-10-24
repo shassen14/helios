@@ -1,14 +1,15 @@
 // Assembler integration tests: build_pipeline topology resolution.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use helios_runtime::channels::{control, estimate, truth_tf, truth_twist};
 use helios_runtime::port::ChannelKey;
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
-    build_pipeline, ActuatorSeamConfig, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
-    BodyChannel, CommandFoldConfig, EstimateSeamConfig, PipelineAssemblyError, PipelineBuildError,
-    Provenance, ReferenceSeamConfig, HOST_PRODUCER_ID,
+    build_pipeline, ActuatorSeamConfig, AutonomyPipeline, AutonomyRegistry, AutonomyStackConfig,
+    BodyCapabilities, BodyChannel, CommandFoldConfig, EstimateSeamConfig, PipelineAssemblyError,
+    PipelineBuildError, Provenance, ReferenceSeamConfig, HOST_PRODUCER_ID,
 };
 
 use helios_core::control::actuation_model::{ActuationModel, ActuatorSpec, SignConvention};
@@ -1891,21 +1892,16 @@ fn mock_oracle(name: &str) -> (String, toml::Table) {
     node_entry(name, r#"kind = "MockOracle""#)
 }
 
-#[test]
-fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
-    // The mock oracle is the estimate, so it holds its state in odom. The
-    // magnetometer-aided EKF runs in shadow and holds its state in
-    // `nav_ekf.odom`: its dynamics, its aiding model and its pose prior all
-    // take that root, or the build's model-against-state check or the
-    // seeding would refuse it.
-    let agent = AgentId::new("test_agent");
+/// `agent`'s pipeline with a mock oracle named `truth` as its estimate and a
+/// magnetometer-aided EKF named `nav_ekf` in shadow.
+fn oracle_beside_shadow(agent: &AgentId) -> AutonomyPipeline {
     let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([mock_oracle("truth"), mag_aided_imu_ekf("mag.primary")]),
         estimate: Some(estimate_seam("truth")),
         ..Default::default()
     };
     let body = body_publishing(channels_with_imu(
-        &agent,
+        agent,
         vec![
             measurement_channel::<MagneticField>("mag.primary", MAG_UNIT)
                 .with_mount(FrameId::agent(agent.clone(), "mag.primary")),
@@ -1918,14 +1914,25 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
                 .with_instances::<StampedTwist<Flu>>([FrameId::base_link(agent.clone())]),
         ],
     ));
-    let pipeline = build_pipeline(
+    build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
         agent.clone(),
         body,
         host(),
     )
-    .expect("an estimate beside a shadow builds");
+    .expect("an estimate beside a shadow builds")
+}
+
+#[test]
+fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
+    // The mock oracle is the estimate, so it holds its state in odom. The
+    // magnetometer-aided EKF runs in shadow and holds its state in
+    // `nav_ekf.odom`: its dynamics, its aiding model and its pose prior all
+    // take that root, or the build's model-against-state check or the
+    // seeding would refuse it.
+    let agent = AgentId::new("test_agent");
+    let pipeline = oracle_beside_shadow(&agent);
     // The oracle and the shadow each give the root they define its
     // convention.
     let conventions = pipeline.frame_conventions();
@@ -1974,4 +1981,71 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
         shadow.value.reference_frame(),
         Some(FrameId::agent(agent, "nav_ekf.odom"))
     );
+}
+
+#[test]
+fn each_state_channel_is_described_by_its_writers_schema_and_root_before_the_first_tick() {
+    // The relay forwards the oracle's state, so the estimate takes the
+    // oracle's description; the shadow describes its own. Both are known at
+    // build, and every state each node then writes is built on its schema.
+    let agent = AgentId::new("test_agent");
+    let pipeline = oracle_beside_shadow(&agent);
+    let states = pipeline.state_schemas();
+
+    let described: Vec<&ChannelKey> = states.iter().map(|(channel, _)| channel).collect();
+    assert_eq!(
+        described,
+        [
+            &estimate::estimator_output("nav_ekf"),
+            &estimate::estimator_output("truth"),
+            &estimate::estimate(),
+        ],
+        "each state channel once, in level order, and nothing else"
+    );
+    let oracle = states
+        .of_channel(&estimate::estimator_output("truth"))
+        .expect("the oracle describes its state");
+    let relayed = states
+        .of_channel(&estimate::estimate())
+        .expect("the estimate takes its source's description");
+    assert_eq!(relayed.root(), &FrameId::odom(agent.clone()));
+    assert!(Arc::ptr_eq(relayed.schema(), oracle.schema()));
+    let shadow = states
+        .of_channel(&estimate::estimator_output("nav_ekf"))
+        .expect("the shadow describes its state");
+    assert_eq!(
+        shadow.root(),
+        &FrameId::agent(agent.clone(), "nav_ekf.odom")
+    );
+
+    pipeline
+        .bus()
+        .write_keyed(
+            truth_tf(),
+            Stamped {
+                value: StampedTransform {
+                    parent: FrameId::global("datum"),
+                    child: FrameId::base_link(agent.clone()),
+                    stamp: MonotonicTime(0.0),
+                    transform: ErasedTransform::erase(Transform::<Flu, Enu>::from_isometry(
+                        Isometry3::identity(),
+                    )),
+                },
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: HOST_PRODUCER_ID,
+            },
+        )
+        .expect("the body's truth.tf instance exists");
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
+
+    let estimate = pipeline
+        .read_state()
+        .expect("the oracle's state is the estimate");
+    assert!(Arc::ptr_eq(estimate.value.schema(), relayed.schema()));
+    let written = pipeline
+        .bus()
+        .read::<FrameAwareState>(estimate::estimator_output("nav_ekf"))
+        .expect("an estimator publishes its seeded state on its first tick");
+    assert!(Arc::ptr_eq(written.value.schema(), shadow.schema()));
 }

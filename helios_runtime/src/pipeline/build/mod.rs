@@ -19,6 +19,8 @@
 //!   pin's world frame;
 //! - `anchors` places each frame a node defines in the world, anchored at
 //!   the world frame a pin of its position names or free with the reason;
+//! - `states` describes each state channel by its writer's schema and root,
+//!   once the nodes are built;
 //! - `builder` allocates bus slots from the declared ports, builds each plan
 //!   with the mounts of its inputs, adds rate timers, and hands back the
 //!   pipeline.
@@ -36,6 +38,7 @@ mod mounts;
 mod ordering;
 mod owners;
 mod references;
+mod states;
 mod wiring;
 
 pub use anchors::{FramePlacement, Placement, Unanchored};
@@ -45,3 +48,4 @@ pub use declaration::{NodeConstructor, NodePlan};
 pub use error::{ChannelUses, CycleEdge, FrameOwner, MountRefusal, PipelineBuildError};
 pub use mounts::{InputMounts, MountLookupError};
 pub use owners::FrameConventions;
+pub use states::{StateDescription, StateSchemas};
