@@ -1,0 +1,103 @@
+schema_version = "2.0"
+run_name = "acceptance"
+scenario = "sim/scenarios/01_proving_ground.toml"
+status = "passed"
+simulated_duration_secs = 20.0
+assertions = []
+
+[terminated_by]
+kind = "time_budget"
+
+[[measures]]
+name = "final_x"
+target = "eval.inline.pose.x"
+reduce = "final"
+covered = true
+value = -2.124697208404541
+unit = "m"
+samples = 8001
+max_gap_secs = 0.002500000000001279
+final_age_secs = 0.0
+
+[[measures]]
+name = "final_y"
+target = "eval.inline.pose.y"
+reduce = "final"
+covered = true
+value = -3.5433835983276376
+unit = "m"
+samples = 8001
+max_gap_secs = 0.002500000000001279
+final_age_secs = 0.0
+
+[[measures]]
+name = "final_speed"
+target = "eval.inline.twist.speed"
+reduce = "final"
+covered = true
+value = 0.004217945394298808
+unit = "m/s"
+samples = 8001
+max_gap_secs = 0.002500000000001279
+final_age_secs = 0.0
+
+[[evaluations]]
+name = "pose"
+kind = "pose"
+samples = 8001
+uncovered = 0
+
+[[evaluations.inputs]]
+role = "pose"
+instance = "agent.ProvingCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.ProvingCar.channel.truth.tf"
+instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.metrics]]
+path = "eval.inline.pose.x"
+unit = "m"
+samples = 8001
+
+[[evaluations.metrics]]
+path = "eval.inline.pose.y"
+unit = "m"
+samples = 8001
+
+[[evaluations.metrics]]
+path = "eval.inline.pose.z"
+unit = "m"
+
+[[evaluations]]
+name = "twist"
+kind = "twist"
+samples = 8001
+uncovered = 0
+
+[[evaluations.inputs]]
+role = "twist"
+instance = "agent.ProvingCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.ProvingCar.channel.truth.twist"
+instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.speed"
+unit = "m/s"
+samples = 8001

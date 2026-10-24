@@ -1,0 +1,36 @@
+# configs/sim/catalog/worlds/two_lanes.toml
+# Bare ground with a long wall along each side: two east-west lanes, open
+# between the walls, for scenarios that run agents side by side.
+#
+# Each wall is there to be seen. The occupancy grid builds no map until its
+# lidar hits something, so a car on bare ground never plans. A wall within
+# reach of every car's first scan lets each car map and drive on its own,
+# without needing to see another car.
+#
+# The ground is 100 x 100 m centred on the origin, top face at z = 0. The
+# walls run along y = ±20 from x = -30 to 30, so a lane between them is
+# open for 60 m east to west.
+name = "two_lanes"
+
+# The origin every position here is measured from: the global frame
+# `global.two_lanes`, ENU axes, root of the world's truth frames.
+[datum]
+name = "two_lanes"
+
+[[objects]]
+name     = "ground"
+prefab   = "entities.objects.ground_100m"
+position = [0.0, 0.0, 0.0]
+
+# One 4 m wall stretched 15x along its length (60 m).
+[[objects]]
+name     = "north_wall"
+prefab   = "entities.objects.wall_4m"
+position = [0.0, 20.0, 0.0]
+scale    = [15.0, 1.0, 1.0]
+
+[[objects]]
+name     = "south_wall"
+prefab   = "entities.objects.wall_4m"
+position = [0.0, -20.0, 0.0]
+scale    = [15.0, 1.0, 1.0]

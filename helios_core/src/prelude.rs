@@ -1,15 +1,27 @@
 // --- Core Abstractions (The main contracts of the library) ---
-pub use crate::data::envelope::SensorReading;
-pub use crate::data::messages::{Odometry, Twist};
-pub use crate::data::ports::TfProvider;
-pub use crate::data::primitives::MonotonicTime;
-pub use crate::data::sensor::SensorPayload;
-pub use crate::data::sensor::{
+pub use crate::interchange::measurement::attribute::canonical::{INTENSITY, RING};
+pub use crate::interchange::measurement::attribute::key::{
+    AttributeDescriptor, AttributeKey, BlankPolicy, TransformMarker,
+};
+pub use crate::interchange::measurement::attribute::schema::{
+    check_agreement, AttributeSchema, DefinitionConflict, RequirementError, SchemaError,
+};
+pub use crate::interchange::measurement::cloud::{PointCloud, PointCloudBuilder};
+pub use crate::interchange::measurement::envelope::SensorReading;
+pub use crate::interchange::measurement::range_field::{
+    BeamAngles, DirectionModel, RangeField, RangeFieldBuildError, RangeFieldBuilder, ScanTiming,
+    SphericalAngular, NOTHING_RETURNED, NO_INFORMATION,
+};
+pub use crate::interchange::measurement::sensor::SensorPayload;
+pub use crate::interchange::measurement::sensor::{
     Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, RgbImage,
 };
+pub use crate::interchange::motion::Odometry;
+pub use crate::spatial::primitives::{AgentId, MonotonicDuration, MonotonicTime};
+pub use crate::spatial::tf::TfProvider;
 
 // --- Core Data Structures (The "nouns" of the library) ---
-pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
+pub use crate::spatial::{FrameAwareState, FrameId, StateVariable};
 
 // --- Control Abstractions ---
 pub use crate::control::dynamics::ControlDynamics;
@@ -21,9 +33,10 @@ pub use crate::estimation::measurement::MeasurementModel;
 pub use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 
 // --- Planning ---
-pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
+pub use crate::interchange::path::{Path, PlannerGoal};
+pub use crate::planning::types::{PlannerResult, PlannerStatus};
 pub use crate::planning::SearchPlanner;
 pub use crate::planning::SearchPlannerInputs;
 
 // Path Following
-pub use crate::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
+pub use crate::following::{PathFollower, PathFollowerInputs, PathFollowerResult};

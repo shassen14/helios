@@ -1,5 +1,7 @@
 use crate::control::{
-    actuators::{ActuatorCommand, ActuatorId, ActuatorSetpoint, SetpointValue},
+    actuators::{
+        ActuatorCommand, ActuatorDrive, ActuatorId, ActuatorSetpoint, SetpointKind, SetpointValue,
+    },
     allocation::Allocator,
     commands::DriveForce,
 };
@@ -58,11 +60,18 @@ impl Allocator for WheelTorqueAllocator {
 
         ActuatorCommand::new(setpoints)
     }
+
+    /// The drive actuator, in torque.
+    fn drives(&self) -> Vec<ActuatorDrive> {
+        vec![ActuatorDrive::new(self.drive.clone(), SetpointKind::Torque)]
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::control::allocation::assert_declared;
 
     const WHEEL_RADIUS: f64 = 0.3;
 
@@ -121,5 +130,14 @@ mod tests {
         let only = &cmd.setpoints()[0];
         assert_eq!(only.actuator(), &ActuatorId::new("drive"));
         assert!(matches!(only.value(), SetpointValue::Torque(_)));
+    }
+
+    #[test]
+    fn drives_declares_what_allocate_writes() {
+        let mut allocator = allocator();
+        for force in [-100.0, 0.0, 100.0] {
+            let cmd = allocator.allocate(&DriveForce::new(force), &());
+            assert_declared(&allocator, &cmd);
+        }
     }
 }

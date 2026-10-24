@@ -1,9 +1,8 @@
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
-use crate::port::{ChannelError, InternalChannel, PortBus};
-use crate::{ChannelKey, Health, PipelineNode, PortDescriptor, Stamped, TickContext};
+use crate::port::{ChannelKey, PortBus, PortDescriptorBuilder};
+use crate::{Health, PipelineNode, PortDescriptor, Stamped, TickContext};
 
 use helios_core::control::allocation::Allocator;
-use helios_core::data::TfProvider;
+use helios_core::prelude::TfProvider;
 
 use std::sync::Mutex;
 
@@ -19,20 +18,20 @@ impl<A: Allocator> AllocatorNode<A> {
     pub fn new(
         name: impl Into<String>,
         allocator: A,
-        input: InternalChannel,
-        output: InternalChannel,
+        input: ChannelKey,
+        output: ChannelKey,
     ) -> Self {
-        let descriptor = AlgorithmNodePortDescriptor::new()
-            .input_internal(input.clone())
-            .output_internal(output.clone())
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .input(input.clone())
+            .output_actuator_command(output.clone(), allocator.drives())
             .build();
 
         Self {
             name: name.into(),
             allocator: Mutex::new(allocator),
             descriptor,
-            input_key: input.into(),
-            output_key: output.into(),
+            input_key: input,
+            output_key: output,
         }
     }
 }
@@ -61,7 +60,7 @@ where
 
         let out = allocator.allocate(&command.value, &());
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(
+        if let Err(error) = bus.write(
             self.output_key.clone(),
             Stamped {
                 value: out,
@@ -70,7 +69,7 @@ where
                 producer: tick.node_id,
             },
         ) {
-            tracing::warn!(channel = %self.output_key, "allocator output channel is not wired into the DAG");
+            tracing::warn!(channel = %self.output_key, error = %error, "allocator output channel write failed");
         }
     }
 }
@@ -88,17 +87,17 @@ mod tests {
     //!   - mirrors its command input and actuator output in its descriptor
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
+    use helios_core::spatial::FrameId;
 
     use helios_core::control::actuators::{
-        ActuatorCommand, ActuatorId, ActuatorSetpoint, SetpointValue,
+        ActuatorCommand, ActuatorDrive, ActuatorId, ActuatorSetpoint, SetpointKind, SetpointValue,
     };
     use helios_core::control::commands::BodyTwist;
-    use helios_core::data::primitives::MonotonicTime;
-    use helios_core::frames::quantities::FluVector;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::quantities::FluVector;
 
-    use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
 
     // --- Mock TfProvider (the allocator ignores it, but `execute` needs one) ---
@@ -112,11 +111,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
-                Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 
@@ -135,16 +130,24 @@ mod tests {
             *self.seen_vel_x.lock().unwrap() = Some(command.linear().x());
             self.output.clone()
         }
+
+        fn drives(&self) -> Vec<ActuatorDrive> {
+            vec![drive()]
+        }
     }
 
     // --- Helpers ---
 
-    fn command_channel() -> InternalChannel {
-        InternalChannel::of::<BodyTwist>()
+    fn command_channel() -> ChannelKey {
+        ChannelKey::internal_of::<BodyTwist>()
     }
 
-    fn actuator_channel() -> InternalChannel {
-        InternalChannel::of::<ActuatorCommand>()
+    fn actuator_channel() -> ChannelKey {
+        ChannelKey::internal_of::<ActuatorCommand>()
+    }
+
+    fn drive() -> ActuatorDrive {
+        ActuatorDrive::new(ActuatorId::new("drive"), SetpointKind::Velocity)
     }
 
     fn canned_command() -> ActuatorCommand {
@@ -167,21 +170,17 @@ mod tests {
     }
 
     fn make_bus(node: &AllocatorNode<StubAllocator>) -> PortBus {
-        PortBus::new([node.port_descriptor()])
+        PortBus::of_descriptors([node.port_descriptor()])
     }
 
-    fn tick_at(now: f64, dt: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt,
-            node_id: 7,
-        }
+    fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), dt, 7)
     }
 
     fn write_command(bus: &PortBus, vel_x: f64) {
         let twist = BodyTwist::new(FluVector::new(vel_x, 0.0, 0.0), FluVector::zeros());
         bus.write(
-            command_channel().into(),
+            command_channel(),
             Stamped {
                 value: twist,
                 timestamp: MonotonicTime(1.0),
@@ -198,14 +197,29 @@ mod tests {
     fn descriptor_reads_command_and_outputs_actuator_command() {
         let node = node(Arc::new(StdMutex::new(None)));
         assert_eq!(
-            node.port_descriptor().required_inputs,
-            vec![command_channel().into()]
+            node.port_descriptor()
+                .required_inputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![command_channel()]
         );
         assert_eq!(
-            node.port_descriptor().outputs,
-            vec![actuator_channel().into()]
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![actuator_channel()]
         );
-        assert!(node.port_descriptor().rate.is_none());
+        assert!(node.port_descriptor().rate().is_none());
+    }
+
+    #[test]
+    fn descriptor_carries_the_allocators_drives_on_its_output() {
+        let node = node(Arc::new(StdMutex::new(None)));
+        assert_eq!(
+            node.port_descriptor().drives(&actuator_channel()),
+            [drive()]
+        );
     }
 
     #[test]
@@ -217,7 +231,7 @@ mod tests {
         node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
 
         let published = bus
-            .read::<ActuatorCommand>(actuator_channel().into())
+            .read::<ActuatorCommand>(actuator_channel())
             .expect("allocator must publish when a command is present");
         assert!((published.timestamp.0 - 2.5).abs() < 1e-9);
         assert_eq!(published.producer, 7);
@@ -248,9 +262,7 @@ mod tests {
 
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
 
-        assert!(bus
-            .read::<ActuatorCommand>(actuator_channel().into())
-            .is_none());
+        assert!(bus.read::<ActuatorCommand>(actuator_channel()).is_none());
         assert!(
             seen.lock().unwrap().is_none(),
             "allocate must not run without a command"

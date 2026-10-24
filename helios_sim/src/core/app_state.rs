@@ -41,7 +41,7 @@ pub enum SceneBuildSet {
     /// Pass 1: Create agent shells and attach the main request component.
     CreateRequests,
 
-    /// Pass 2: Spawn all static world objects (signs, buildings, terrain features).
+    /// Pass 2: Spawn the world layout's objects, the ground included.
     /// Runs before agent processing so sensors can reference world geometry at setup time.
     ProcessWorldObjects,
 
@@ -57,24 +57,31 @@ pub enum SceneBuildSet {
 
     /// Pass 5: Build each agent's `AutonomyPipeline` and attach
     /// `AutonomyPipelineComponent`. Runs after `ProcessSensors` because pipeline
-    /// assembly reads the sensors' `SensorPublishChannel` to wire the DAG's inputs.
+    /// assembly collects the sensors' `SensorPublishChannel` descriptions into
+    /// the body.
     SpawnPipeline,
 
-    /// Pass 6: Bind host-side ECS state to the freshly-spawned pipeline — the
-    /// odom-frame entity that tracks its pose estimate and the
-    /// `ActuatorCommandComponent` the vehicle plugin drains. Both consumers only
-    /// require `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
+    /// Pass 6: A sink whose request depends on what the pipelines declare
+    /// sets itself up against them, such as a test run binding the series
+    /// it reads. Runs after `SpawnPipeline`, so every pipeline exists, and
+    /// before `BindPipeline`, where each sink is asked what to record.
+    SetUpSinks,
+
+    /// Pass 7: Bind host-side ECS state to the freshly-spawned pipeline — the
+    /// `ActuatorCommandComponent` the vehicle plugin drains, and the watch set
+    /// the observation sinks asked for. Both only require
+    /// `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
     /// independent of each other, so they share this one pass.
     BindPipeline,
 
-    /// Pass 7: Attach all physical bodies (RigidBody, Collider).
+    /// Pass 8: Attach all physical bodies (RigidBody, Collider).
     Physics,
 
-    /// Pass 8: Snapshot the static TF tree now that the full entity hierarchy
+    /// Pass 9: Snapshot the static TF tree now that the full entity hierarchy
     /// exists, so pose lookups have a complete frame graph before `Running`.
     Finalize,
 
-    /// Pass 9: Remove all temporary request components, then transition to `Running`.
+    /// Pass 10: Remove all temporary request components, then transition to `Running`.
     Cleanup,
 }
 
@@ -84,18 +91,30 @@ pub enum SceneBuildSet {
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimulationSet {
-    /// Prepare per-frame data before anything reads it: rebuild the TF tree from
-    /// the current physics transforms. Runs first.
+    /// Reserved: per-frame data prepared before anything reads it. Nothing runs
+    /// here yet. Runs first.
     Precomputation,
 
-    /// Simulate raw physical sensors (IMU, GPS, LiDAR, …) and publish
-    /// `SensorReading` batches to the pipeline bus.
+    /// Apply the command the brain decided last step as physical forces
+    /// (vehicle plugin → Avian3D `ConstantForce` / `ConstantTorque`). Physics
+    /// runs right after, carrying the world from the last step's instant to
+    /// this one's.
+    Actuation,
+
+    /// Sync ground truth from Avian3D after the physics step and transform
+    /// propagation, setting `GroundTruthState::at` to the step's instant, and
+    /// publish the truth channels stamped with it.
+    StateSync,
+
+    /// Simulate raw physical sensors (IMU, GPS, LiDAR, …) on the post-step
+    /// world and publish `SensorReading` batches to the pipeline bus, stamped
+    /// with their agent's `GroundTruthState::at`.
     Sensors,
 
     /// The whole-brain tick: `run_pipeline_tick` fires every DAG node (estimator,
     /// mapper, planner, path-follower, controller) in topological order, each
-    /// gated by its own `RateTimer`. This is the entire autonomy pipeline for
-    /// every agent, not just estimation.
+    /// gated by its own `RateTimer`, at `now = GroundTruthState::at`. This is
+    /// the entire autonomy pipeline for every agent, not just estimation.
     BrainTick,
 
     /// Host → pipeline input glue: feeds the pipeline's mission-goal slot
@@ -105,18 +124,16 @@ pub enum SimulationSet {
     BrainInput,
 
     /// Pipeline → host output glue: copies `pipeline.read_actuators()` into
-    /// `ActuatorCommandComponent` for the vehicle plugin to apply.
+    /// `ActuatorCommandComponent` for the next step's `Actuation` to apply.
     BrainOutput,
 
-    /// Apply the actuator command as physical forces (vehicle plugin → Avian3D
-    /// `ExternalForce` / `ExternalTorque`).
-    Actuation,
+    /// Hand the tick's observation batch to every registered sink. Before
+    /// `Validation`, so a per-tick check reads sinks that already hold the
+    /// tick.
+    Observation,
 
-    /// Sync ground-truth state back from Avian3D after the physics step.
-    StateSync,
-
-    /// Post-`StateSync` observation slot: runs last, once ground-truth state and
-    /// the oracle channels are fresh. External harnesses, data logging, and
+    /// The step's last slot: runs once ground truth, the brain's tick and the
+    /// oracle channels all describe the step's instant. External harnesses, data logging, and
     /// per-tick checks read the buses here. Empty within this crate itself —
     /// it exists so downstream consumers have a set that provably runs after
     /// everything else in the tick.

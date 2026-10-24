@@ -1,0 +1,10 @@
+schema_version = "2.0"
+run_name = "unbuilt_pipeline"
+scenario = "test/scenarios/unbuilt_pipeline.toml"
+status = "failed"
+setup_failures = ["""agent 'BrokenCar' has no autonomy pipeline: pipeline graph errors: node "local_path" reads channel [internal] helios_core::interchange::perception::map::MapData @ "local" (required) but nothing supplies it: no node writes it, the body does not publish it, and it is not declared as an outside input"""]
+simulated_duration_secs = 0.0
+assertions = []
+
+[terminated_by]
+kind = "aborted"

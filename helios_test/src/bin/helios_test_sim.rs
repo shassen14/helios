@@ -3,7 +3,8 @@
 //!
 //! Exit codes are the contract:
 //! - `0` — the run passed.
-//! - `1` — the run ran but an assertion failed (or a target was unresolved).
+//! - `1` — the run ran but an assertion failed, or setup found one it can't
+//!   judge.
 //! - `2` — the run file is malformed: unreadable, unparseable, incoherent, or
 //!   it names a scenario that doesn't exist. Detected *before* the sim starts.
 //!
@@ -12,15 +13,16 @@
 //! pass/fail into the exit code (`run()` empties the App, so the world can't be
 //! read afterward).
 
+use helios_sim::core::simulation_setup::StepsPerUpdate;
 use helios_sim::prelude::*;
+use helios_sim::world::LoadingHold;
 use helios_test::{
     monte_carlo::seed_for_run,
-    report::aggregate::{console::print, toml_writer::write},
+    report::aggregate::{console::print, toml_writer::write, BatchRun},
     sim::{
-        ActiveRunner, MetricsCollector, MetricsPlugin, ReportOutputPath, RunMetadata, RunOutcome,
-        RunVerdict, WallClockStart,
+        ReportOutputPath, ReportSlot, RunOutcome, RunSeed, RunVerdict, TestRunAppExt,
+        WallClockStart,
     },
-    statistics::{standard_statistics, StatId},
     AggregateReport, Runner,
 };
 
@@ -37,8 +39,8 @@ struct SimCli {
     #[arg(long)]
     pub run: PathBuf,
 
-    /// Root directory for all Helios config files; the run's scenario `from` is
-    /// resolved relative to this.
+    /// Root directory for all Helios config files; the run's scenario `from`
+    /// and each suite's `from` are resolved relative to this.
     #[arg(long, default_value = "configs")]
     pub config_root: PathBuf,
 
@@ -56,6 +58,24 @@ struct SimCli {
     /// entropy), which leaves a batch unseeded and near-identical run to run.
     #[arg(long)]
     pub seed: Option<u64>,
+
+    /// Watch every observable and log per-agent observation rates. Watching
+    /// never changes what a run computes, so the verdict and metrics match a
+    /// run without it.
+    #[arg(long, default_value_t = false)]
+    pub watch_stats: bool,
+
+    /// Stay in asset loading this many updates after every asset has loaded.
+    /// A test hook: how long loading lasts must change nothing a run
+    /// computes, and this varies it on purpose.
+    #[arg(long, hide = true)]
+    pub hold_loading: Option<u32>,
+
+    /// Run this many fixed steps per update instead of the derived batch.
+    /// A test hook: how many steps a frame runs must change nothing a run
+    /// computes, and this varies it on purpose.
+    #[arg(long, hide = true)]
+    pub steps_per_update: Option<u32>,
 }
 
 fn main() {
@@ -66,7 +86,7 @@ fn main() {
     // --- Pre-flight: prove the run file is sane before spinning up a sim. ---
     // Any failure here is exit 2 ("the run file is wrong"), distinct from a
     // test that runs and fails (exit 1).
-    let run = match helios_test::run::load(&args.run) {
+    let run = match helios_test::run::load(&args.run, &args.config_root) {
         Ok(run) => run,
         Err(e) => {
             eprintln!("malformed run: {e}");
@@ -116,6 +136,7 @@ fn main() {
             // a caller may slow down and skew the wall-clock timings with.
             speed: None,
             seed,
+            watch_stats: args.watch_stats,
         };
 
         app.add_plugins(HeliosHost::new(
@@ -125,17 +146,23 @@ fn main() {
         ));
 
         // Created out here so the bin keeps its own clone: the world's clone (below)
-        // is dropped when `run()` drains the App, but this one keeps the collected
-        // metrics alive to be read afterward.
-        let collector = MetricsCollector::new();
+        // is dropped when `run()` drains the App, but this one keeps the finished
+        // report alive to be read afterward.
+        let report_slot = ReportSlot::new();
 
-        // The test layer wraps the host: resources first, then the plugin that
-        // registers the three runner systems against them.
-        app.insert_resource(collector.clone()); // the world's clone of the collector
-        app.insert_resource(RunMetadata::new(i as u32, seed));
+        // The test layer wraps the host: the run's resources, and the runner
+        // with the systems that pump it.
+        app.insert_resource(report_slot.clone()); // the world's clone of the slot
+        app.insert_resource(RunSeed::new(seed));
+        if let Some(updates) = args.hold_loading {
+            app.insert_resource(LoadingHold(updates));
+        }
+        if let Some(steps) = args.steps_per_update {
+            app.insert_resource(StepsPerUpdate(steps));
+        }
 
         // Fresh runner per run: `Runner::new` re-validates and allocates fresh
-        // per-run state (empty registry, pending latches). Pre-flight already
+        // per-run state (awaiting its pipelines, pending latches). Pre-flight already
         // proved coherence, so an Err here is unexpected — treat it as exit 2.
         let runner = match Runner::new(run.clone()) {
             Ok(runner) => runner,
@@ -144,7 +171,9 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        app.insert_resource(ActiveRunner::new(runner));
+        // The runner and the collector it reads go in together: the collector
+        // asks the host to record every value the run's assertions name.
+        app.add_test_run(runner);
         app.insert_resource(WallClockStart::new(std::time::Instant::now()));
         app.insert_resource(RunOutcome::new(run_name.clone()));
         app.init_resource::<RunVerdict>(); // defaults to Failed (fail-closed)
@@ -152,8 +181,6 @@ fn main() {
                                            // each run gets a `.run{i}` suffix so the N single-run reports don't
                                            // clobber each other (and `--out` stays free for the aggregate below).
         app.insert_resource(ReportOutputPath::new(per_run_report_path(&args.out, i, n)));
-        app.add_plugins(helios_test::sim::TestRunnerPlugin);
-        app.add_plugins(MetricsPlugin);
 
         // `run()` returns the AppExit that `finalize` wrote (it carries the verdict
         // as its exit code). We can't read RunVerdict from the world here because
@@ -161,22 +188,20 @@ fn main() {
         let exit = app.run();
         all_passed &= exit.is_success();
 
-        // The world is drained now, but the bin's clone still points at the metrics
-        // the summarizer stored before flush. `take` empties the slot; `None` means
-        // the summarizer never ran (e.g. the run aborted before reaching flush).
-        if let Some(m) = collector.take() {
-            runs.push(m);
+        // The world is drained now, but the bin's clone still points at the report
+        // finalize stored. `None` means the run never finalized; the aggregate
+        // counts it, with its seed, as a run that passed nothing.
+        let report = report_slot.take();
+        if report.is_none() {
+            eprintln!("run {i} produced no report");
         }
+        runs.push(BatchRun { seed, report });
     }
 
     // Only a batch produces an aggregate; a single run's artifact is its own
-    // report, already written by `finalize`. Build the reducer set lazily so a
-    // single run does no aggregation work.
+    // report, already written by `finalize`.
     if n > 1 {
-        let stat_table = standard_statistics();
-        let stat_ids = ["mean", "std", "max", "min"].map(StatId::new);
-
-        let aggregate_report = AggregateReport::from_runs(&runs, &stat_table, &stat_ids);
+        let aggregate_report = AggregateReport::from_runs(&runs);
 
         // A failed write is an I/O problem, not a test failure: log it and carry
         // on, exactly as the single-run report path does. It must not flip the
@@ -252,13 +277,11 @@ mod tests {
 
     #[test]
     fn scenario_path_joins_under_config_root() {
-        let path = resolve_scenario_path(
-            Path::new("configs"),
-            "sim/scenarios/00_tutorial_showcase.toml",
-        );
+        let path =
+            resolve_scenario_path(Path::new("configs"), "sim/scenarios/01_proving_ground.toml");
         assert_eq!(
             path,
-            PathBuf::from("configs/sim/scenarios/00_tutorial_showcase.toml")
+            PathBuf::from("configs/sim/scenarios/01_proving_ground.toml")
         );
     }
 

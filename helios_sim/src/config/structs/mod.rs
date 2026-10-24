@@ -8,13 +8,13 @@
 
 mod autonomy;
 mod camera;
+mod conditions;
 mod pose;
 mod scenario;
 mod sensors;
 mod simulation;
-mod terrain;
 mod vehicle;
-mod world_object;
+mod world_layout;
 
 // The whole `helios_runtime` config vocabulary is surfaced here unchanged. The
 // glob *is* the curation ("expose all of runtime config under this facade"), not
@@ -22,16 +22,21 @@ mod world_object;
 pub use autonomy::*;
 
 pub use camera::CameraVantage;
+pub use conditions::{AtmosphereConfig, MagneticFieldConfig};
 pub use pose::Pose;
 pub use scenario::{
     AgentConfig, RawScenarioConfig, ScenarioCommon, ScenarioConfig, Simulation, World,
 };
-pub use sensors::{GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorConfig};
+pub use sensors::{
+    GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorDeviceConfig,
+    SensorInstallationConfig, ACCEL_CHANNEL_FIELD, CHANNEL_FIELD, GYRO_CHANNEL_FIELD,
+};
 pub use simulation::MetricsConfig;
-pub use terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig};
 pub use vehicle::{
     AxleConfig, BoxVisual, CollisionConfig, MountConfig, PlantConfig, SuspensionConfig, TireConfig,
     TopologyConfig, Vehicle, VisualConfig, WheelConfig, WheelVisual, CUBOID, RAYCAST_WHEELS,
     RIGID_BODY_WITH_MOUNT, WHEELED_PRIMITIVES,
 };
-pub use world_object::{WorldObjectCollider, WorldObjectPlacement, WorldObjectPrefab};
+pub use world_layout::{
+    BodyKind, CatalogRef, DatumConfig, ObjectPlacement, ObjectPrefab, WorldLayout,
+};

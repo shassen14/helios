@@ -4,7 +4,7 @@
 //!
 //! A schema is assembled once from an ordered list of [`StateSchemaBlock`]s (via
 //! [`StateSchema::compose`]) and is immutable thereafter. It is the shape of the
-//! state, never its values: a [`crate::frames::FrameAwareState`] pairs an
+//! state, never its values: a [`crate::spatial::FrameAwareState`] pairs an
 //! `Arc<StateSchema>` with the mutable `(mean, covariance)` it describes, so one
 //! schema is shared cheaply across every snapshot of a run.
 //!
@@ -20,9 +20,11 @@
 //! moment a curved block enters.
 
 use crate::{
-    frames::{transforms::Convention, FrameId, StateVariable},
-    manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
-    state::Quantity,
+    kernel::manifold::{
+        euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise,
+    },
+    spatial::state::Quantity,
+    spatial::{transforms::Convention, FrameId, StateVariable},
 };
 
 use nalgebra::{DMatrix, DVector, DVectorView};
@@ -152,6 +154,11 @@ impl StateSchemaBlock {
 
     pub fn variables(&self) -> Vec<StateVariable> {
         self.quantity.variables()
+    }
+
+    /// Whether the block is flat; see [`StateBlock::is_euclidean`].
+    pub fn is_euclidean(&self) -> bool {
+        self.block.is_euclidean()
     }
 }
 
@@ -388,6 +395,16 @@ impl StateSchema {
             .map(|i| self.storage_offsets[i])
     }
 
+    /// The start index of `quantity`'s block in **tangent** space, or `None`
+    /// if the schema holds no such block. Index a covariance through here,
+    /// never through [`storage_offset_of_block`](Self::storage_offset_of_block).
+    pub fn tangent_offset_of_block(&self, quantity: &Quantity) -> Option<usize> {
+        self.blocks
+            .iter()
+            .position(|b| &b.quantity == quantity)
+            .map(|i| self.tangent_offsets[i])
+    }
+
     pub fn block_of(&self, quantity: &Quantity) -> Option<&Arc<dyn StateBlock>> {
         self.blocks
             .iter()
@@ -415,9 +432,12 @@ impl StateSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::AgentId;
-    use crate::manifold::TangentNoise;
-    use crate::state::Component;
+    use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::AgentId;
+    use crate::spatial::state::Component;
+
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
 
     fn agent() -> AgentId {
         AgentId::new("test_agent")
@@ -435,7 +455,7 @@ mod tests {
         // each kind's exact ordered spelling is pinned here rather than left to
         // transitive coverage. A reordering or a wrong axis tag would silently
         // desync every name lookup built on top of it.
-        let f = FrameId::world();
+        let f = FrameId::global(DATUM);
         let b = FrameId::base_link(agent());
 
         // A block's stored names are `StateVariable { quantity, component }` for
@@ -485,7 +505,7 @@ mod tests {
         // The one curved kind: four stored components against a three-DOF tangent.
         let quantity = Quantity::Orientation {
             from: FrameId::base_link(agent()),
-            to: FrameId::world(),
+            to: FrameId::global(DATUM),
         };
 
         let block = block_for(
@@ -501,7 +521,7 @@ mod tests {
     #[test]
     fn manifold_flat_kind_is_an_equal_dim_euclidean_block() {
         // Every non-orientation kind is Euclidean: storage and tangent coincide.
-        let quantity = Quantity::Velocity(FrameId::world());
+        let quantity = Quantity::Velocity(FrameId::global(DATUM));
 
         let block = block_for(
             &quantity,
@@ -517,7 +537,7 @@ mod tests {
     fn manifold_flat_kind_without_noise_carries_no_process_noise() {
         // `None` on a flat kind routes to `EuclideanBlock::without_noise`: a fixed
         // prior with no random walk (a position seeded from GPS, say).
-        let quantity = Quantity::Position(FrameId::world());
+        let quantity = Quantity::Position(FrameId::global(DATUM));
         let block = block_for(&quantity, None, DVector::zeros(3), DMatrix::identity(3, 3));
         assert!(block.process_noise().is_none());
     }
@@ -532,7 +552,7 @@ mod tests {
         // panic rather than fabricate zero process noise.
         let quantity = Quantity::Orientation {
             from: FrameId::base_link(agent()),
-            to: FrameId::world(),
+            to: FrameId::global(DATUM),
         };
 
         block_for(
@@ -550,13 +570,16 @@ mod tests {
         // A flat kind touches one frame, so `new` records exactly one
         // (frame, convention) entry: the quantity's frame in the given convention.
         let block = StateSchemaBlock::new(
-            Quantity::Velocity(FrameId::world()),
+            Quantity::Velocity(FrameId::global(DATUM)),
             Convention::Enu,
             noise(0.5),
             DVector::zeros(3),
             DMatrix::identity(3, 3),
         );
-        assert_eq!(block.conventions, vec![(FrameId::world(), Convention::Enu)]);
+        assert_eq!(
+            block.conventions,
+            vec![(FrameId::global(DATUM), Convention::Enu)]
+        );
     }
 
     #[test]
@@ -642,7 +665,7 @@ mod tests {
             Some(Convention::Flu)
         );
         // A frame no block declares has no entry.
-        assert_eq!(schema.convention_of(&FrameId::world()), None);
+        assert_eq!(schema.convention_of(&FrameId::global(DATUM)), None);
     }
 
     #[test]
@@ -653,14 +676,14 @@ mod tests {
         // refuses rather than silently keeping the last writer.
         StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::world()),
+                Quantity::Position(FrameId::global(DATUM)),
                 Convention::Enu,
                 noise(0.1),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::world()),
+                Quantity::Velocity(FrameId::global(DATUM)),
                 Convention::Flu,
                 noise(0.5),
                 DVector::zeros(3),
@@ -672,14 +695,14 @@ mod tests {
     fn pos_vel_schema() -> StateSchema {
         StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::world()),
+                Quantity::Position(FrameId::global(DATUM)),
                 Convention::Enu,
                 noise(0.1),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::world()),
+                Quantity::Velocity(FrameId::global(DATUM)),
                 Convention::Enu,
                 noise(0.5),
                 DVector::zeros(3),
@@ -731,21 +754,21 @@ mod tests {
         let s = pos_vel_schema();
         assert_eq!(
             s.storage_offset_of(&StateVariable::new(
-                Quantity::Position(FrameId::world()),
+                Quantity::Position(FrameId::global(DATUM)),
                 Component::X
             )),
             Some(0)
         );
         assert_eq!(
             s.storage_offset_of(&StateVariable::new(
-                Quantity::Velocity(FrameId::world()),
+                Quantity::Velocity(FrameId::global(DATUM)),
                 Component::X
             )),
             Some(3)
         );
         assert_eq!(
             s.storage_offset_of(&StateVariable::new(
-                Quantity::Acceleration(FrameId::world()),
+                Quantity::Acceleration(FrameId::global(DATUM)),
                 Component::Z
             )),
             None
@@ -759,7 +782,7 @@ mod tests {
         // block — the wrong-sized value desyncs storage_dim from the derived
         // variable count, which `compose` must reject.
         StateSchema::compose(vec![StateSchemaBlock::new(
-            Quantity::Position(FrameId::world()),
+            Quantity::Position(FrameId::global(DATUM)),
             Convention::Enu,
             None,
             DVector::zeros(2),
@@ -774,7 +797,7 @@ mod tests {
     const AUG_RANDOM_WALK: f64 = 0.02;
 
     fn mag_sensor() -> FrameId {
-        FrameId::sensor(agent(), "sensor0")
+        FrameId::agent(agent(), "sensor0")
     }
 
     fn mag_bias_block() -> StateSchemaBlock {

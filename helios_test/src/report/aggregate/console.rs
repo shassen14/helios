@@ -1,205 +1,216 @@
-//! _Post-step._ The aggregate's human surface: render an [`AggregateReport`] to a
-//! block of text and print it. Pure presentation over the same struct
-//! `toml_writer` serializes, so the console table and the `.toml` can never
-//! disagree.
-//!
-//! Every "how do I show this value" decision is a small private helper in this
-//! file — not an `impl Display` on the data types. `console` is a submodule of
-//! `aggregate`, so it reads `AggregateReport`'s and `MetricRow`'s private fields
-//! directly rather than widening their public surface for what is purely
-//! presentation glue.
-//!
-//! The table is a header row and one row per metric, *all* formatted through the
-//! same [`format_row`] helper — so the columns cannot drift out of alignment.
-//! The stat columns are driven by `AggregateReport::stat_ids` (the requested
-//! order), looked up in each metric's map; a metric missing a stat shows
-//! [`MISSING`], never a fabricated zero.
+//! _Post-step._ The aggregate's human surface: render an [`AggregateReport`]
+//! to text and print it. Pure presentation over the struct `toml_writer`
+//! serializes, so the console and the `.toml` can never disagree. A
+//! submodule of `aggregate`, so it reads the rows' private fields directly,
+//! and phrases entries as the single-run console does.
 
-use super::{AggregateReport, MetricRow};
+use super::{AggregateReport, AssertionAggregate, MeasureAggregate};
+use crate::report::phrase::{entry_name, reducer_phrase, rounded, with_unit};
 
-/// Width the metric-name column is padded to before the value columns begin.
-const METRIC_COLUMN: usize = 16;
-
-/// Width each value column (the `present` count and every statistic) is padded
-/// to, so the columns line up down the page.
-const STAT_COLUMN: usize = 10;
-
-/// Decimal places shown for a statistic value.
-const FLOAT_PRECISION: usize = 3;
-
-/// Shown in a stat column when a metric has no value for that statistic (the
-/// statistic was undefined for that metric's samples). A placeholder, never `0` —
-/// a zero would read as a real measurement.
-const MISSING: &str = "—";
-
-/// Print a finished aggregate report to stdout. The one sanctioned `println!` for
-/// this surface: it renders an already-decided result for a human, it does not
-/// emit metrics or telemetry (those go through the observability hook).
+/// Print a finished aggregate report to stdout. The one sanctioned
+/// `println!` for this surface: it renders an already-decided result for a
+/// human, it does not emit metrics or telemetry.
 pub fn print(report: &AggregateReport) {
     println!("{}", render(report));
 }
 
-/// Build the full table text, line by line. Split out from [`print`] so it can be
-/// unit-tested by asserting on the returned `String` without capturing stdout.
-/// Does no computation — every number was reduced upstream by the aggregator;
-/// this only arranges those numbers as aligned text.
+/// The full text, line by line: the batch, then one line per measure and
+/// one per assertion, in run-file order. Does no computation; every number
+/// was reduced by the aggregator.
 fn render(report: &AggregateReport) -> String {
-    // Collect each line, then join with newlines at the end — simpler than
-    // pushing `\n` by hand and it can't leave stray blank or trailing-space lines.
-    let mut lines: Vec<String> = Vec::new();
-
-    // Summary header: how many runs the table aggregates.
-    lines.push(format!("[mc] {} runs", report.run_count));
-
-    // Column header: the `present` column, then one column per requested
-    // statistic. Built from `stat_ids` so this row fixes the column order that
-    // every data row below must follow.
-    let mut header_cells: Vec<String> = Vec::with_capacity(report.stat_ids.len() + 1);
-    header_cells.push("present".to_string());
-    header_cells.extend(report.stat_ids.iter().cloned());
-    lines.push(format_row("metric", &header_cells));
-
-    // One row per metric, in the map's sorted key order (deterministic output).
-    for (name, row) in &report.metrics {
-        let mut cells: Vec<String> = Vec::with_capacity(report.stat_ids.len() + 1);
-        cells.push(row.present.to_string());
-
-        // Walk `stat_ids`, not the row's map: the columns must appear in the
-        // requested order for every row, with a placeholder where this metric
-        // never produced that statistic.
-        for stat_id in &report.stat_ids {
-            cells.push(stat_cell(row, stat_id));
-        }
-
-        lines.push(format_row(name, &cells));
-    }
-
+    let mut lines = vec![format!(
+        "[mc] {} runs{}{}",
+        report.run_count,
+        seeds_phrase(&report.seeds),
+        no_report_phrase(&report.no_report)
+    )];
+    lines.extend(report.measures.iter().map(|row| measure_line(report, row)));
+    lines.extend(report.assertions.iter().map(assertion_line));
     lines.join("\n")
 }
 
-/// Lay out one table line: the left label padded to the metric column, then each
-/// value cell padded to a value column. Header and data rows both go through
-/// here, which is what guarantees their columns align. Trailing padding on the
-/// last cell is trimmed so no line carries dangling whitespace.
-fn format_row(label: &str, cells: &[String]) -> String {
-    let mut line = format!("{:<width$}", label, width = METRIC_COLUMN);
-    for cell in cells {
-        line.push_str(&format!("{:<width$}", cell, width = STAT_COLUMN));
+/// `, seeds [1, 2]`, or nothing for an unseeded batch.
+fn seeds_phrase(seeds: &[u64]) -> String {
+    if seeds.is_empty() {
+        return String::new();
     }
-    line.trim_end().to_string()
+    let seeds: Vec<String> = seeds.iter().map(u64::to_string).collect();
+    format!(", seeds [{}]", seeds.join(", "))
 }
 
-/// The text for one metric's value under one statistic: the formatted number when
-/// the metric recorded that statistic, or [`MISSING`] when it didn't.
-fn stat_cell(row: &MetricRow, stat_id: &str) -> String {
-    match row.stats.get(stat_id) {
-        Some(value) => format_value(*value),
-        None => MISSING.to_string(),
+/// `; runs 1, 4 produced no report`, or nothing when every run did.
+fn no_report_phrase(no_report: &[usize]) -> String {
+    match no_report {
+        [] => String::new(),
+        [run] => format!("; run {run} produced no report"),
+        runs => {
+            let runs: Vec<String> = runs.iter().map(usize::to_string).collect();
+            format!("; runs {} produced no report", runs.join(", "))
+        }
     }
 }
 
-/// Render a statistic value to a fixed number of decimals, so the columns share a
-/// consistent shape.
-fn format_value(value: f64) -> String {
-    format!("{:.prec$}", value, prec = FLOAT_PRECISION)
+/// `[mc measure] <name>: <reducer> of <target> over N runs (S samples):
+/// mean … m, std … m, …`, then the runs it had no number in.
+fn measure_line(report: &AggregateReport, row: &MeasureAggregate) -> String {
+    let statistics: Vec<String> = report
+        .statistics
+        .iter()
+        .filter_map(|statistic| {
+            let value = row.statistics.get(statistic)?;
+            Some(format!(
+                "{statistic} {}",
+                with_unit(rounded(value), row.unit)
+            ))
+        })
+        .collect();
+    let mut line = format!(
+        "[mc measure] {}: {} of {} over {} runs ({} samples)",
+        entry_name(&row.name, row.agent.as_deref(), row.instance.as_deref()),
+        reducer_phrase(&row.reduce),
+        row.target,
+        row.runs,
+        row.samples,
+    );
+    if !statistics.is_empty() {
+        line.push_str(&format!(": {}", statistics.join(", ")));
+    }
+    let missing: Vec<String> = [
+        (row.not_covered, "not covered"),
+        (row.no_value, "no value"),
+        (row.not_numbers, "not a number"),
+        (row.absent, "absent"),
+        (row.no_report, "no report"),
+    ]
+    .iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, why)| format!("{count} {why}"))
+    .collect();
+    if !missing.is_empty() {
+        line.push_str(&format!(" [{}]", missing.join(", ")));
+    }
+    line
+}
+
+/// `[mc assert] <name>: <target> passed P of N runs (pass_rate …)`, then
+/// each count of the runs it didn't pass in.
+fn assertion_line(row: &AssertionAggregate) -> String {
+    let mut line = format!(
+        "[mc assert] {}: {} passed {} of {} runs",
+        entry_name(&row.name, row.agent.as_deref(), row.instance.as_deref()),
+        row.target,
+        row.passed,
+        row.runs,
+    );
+    if let Some(pass_rate) = row.pass_rate {
+        line.push_str(&format!(" (pass_rate {})", rounded(pass_rate)));
+    }
+    for (count, why) in [
+        (row.failed, "failed"),
+        (row.unjudged, "unjudged"),
+        (row.absent, "absent"),
+        (row.no_report, "no report"),
+    ] {
+        if count > 0 {
+            line.push_str(&format!(", {count} {why}"));
+        }
+    }
+    line
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::statistics::{standard_statistics, StatId, StatisticTable};
-    use crate::{MetricId, RunMetrics};
-
-    fn run_with(run_index: u32, seed: u64, recorded: &[(&str, f64)]) -> RunMetrics {
-        let mut run = RunMetrics::new(run_index, Some(seed));
-        for (id, value) in recorded {
-            run.insert(MetricId::new(*id), *value);
-        }
-        run
-    }
-
-    fn stat_ids(ids: &[&str]) -> Vec<StatId> {
-        ids.iter().map(|id| StatId::new(*id)).collect()
-    }
+    use crate::assertion::AssertionValue;
+    use crate::report::aggregate::tests::{assertion, batch, batch_with_gaps, measure};
+    use crate::report::Verdict;
 
     #[test]
-    fn renders_summary_header_and_known_rows() {
-        let runs = vec![
-            run_with(0, 0, &[("cte.mean", 5.0)]),
-            run_with(1, 1, &[("cte.mean", 5.0)]),
-        ];
-        let table = standard_statistics();
-        let report = AggregateReport::from_runs(&runs, &table, &stat_ids(&["mean", "min", "max"]));
+    fn a_measure_line_names_its_runs_samples_and_units() {
+        let report = batch(&[
+            (vec![measure("final_x", Some(1.0), 10, true)], vec![]),
+            (vec![measure("final_x", Some(3.0), 12, true)], vec![]),
+        ]);
 
         let text = render(&report);
 
+        assert!(text.starts_with("[mc] 2 runs, seeds [0, 1]"), "{text}");
         assert!(
-            text.contains("[mc] 2 runs"),
-            "missing summary header:\n{text}"
-        );
-        assert!(text.contains("metric"), "missing column header:\n{text}");
-        assert!(text.contains("present"));
-        // The metric row, with its present count and a value at the chosen precision.
-        assert!(text.contains("cte.mean"), "missing metric row:\n{text}");
-        assert!(text.contains("5.000"), "value not at 3 decimals:\n{text}");
-    }
-
-    #[test]
-    fn columns_follow_requested_order_not_alphabetical() {
-        // Deliberately request `min` before `mean` — alphabetical order would
-        // flip them, so the header proves the column order tracks `stat_ids`.
-        let runs = vec![run_with(0, 0, &[("cte.mean", 1.0)])];
-        let table = standard_statistics();
-        let report = AggregateReport::from_runs(&runs, &table, &stat_ids(&["min", "mean"]));
-
-        let header = render(&report)
-            .lines()
-            .find(|line| line.starts_with("metric"))
-            .expect("a header row")
-            .to_string();
-
-        let min_at = header.find("min").expect("min column");
-        let mean_at = header.find("mean").expect("mean column");
-        assert!(min_at < mean_at, "columns not in requested order: {header}");
-    }
-
-    #[test]
-    fn absent_statistic_renders_the_placeholder() {
-        let runs = vec![run_with(0, 0, &[("cte.mean", 1.0)])];
-
-        // A reducer that is always undefined, so its column has no value to show.
-        let mut table: StatisticTable = standard_statistics();
-        table.register(StatId::new("always_undefined"), |_| None);
-
-        let report =
-            AggregateReport::from_runs(&runs, &table, &stat_ids(&["mean", "always_undefined"]));
-
-        let text = render(&report);
-        assert!(
-            text.contains(MISSING),
-            "an undefined statistic should show the placeholder:\n{text}"
+            text.contains(
+                "[mc measure] final_x: final of eval.inline.pose.x over 2 runs (22 samples): \
+                 mean 2 m, std 1.414 m, min 1 m, max 3 m"
+            ),
+            "{text}"
         );
     }
 
     #[test]
-    fn empty_batch_still_renders_a_header() {
-        let table = standard_statistics();
-        let report = AggregateReport::from_runs(&[], &table, &stat_ids(&["mean"]));
+    fn runs_without_a_number_are_counted_by_why() {
+        let report = batch(&[
+            (vec![measure("final_x", Some(1.0), 10, false)], vec![]),
+            (vec![measure("final_x", None, 0, true)], vec![]),
+        ]);
 
         let text = render(&report);
-        assert!(text.contains("[mc] 0 runs"));
-        assert!(text.contains("metric"));
+
+        assert!(text.contains("[1 not covered, 1 no value]"), "{text}");
     }
 
     #[test]
-    fn no_line_carries_trailing_whitespace() {
-        let runs = vec![run_with(0, 0, &[("cte.mean", 1.0)])];
-        let table = standard_statistics();
-        let report = AggregateReport::from_runs(&runs, &table, &stat_ids(&["mean", "min", "max"]));
+    fn an_assertion_line_counts_its_verdicts() {
+        let passed = Verdict::Passed {
+            actual: AssertionValue::Float(1.0),
+        };
+        let unjudged = Verdict::Unjudged { actual: None };
+        let report = batch(&[
+            (vec![], vec![assertion("nis_final", passed.clone())]),
+            (vec![], vec![assertion("nis_final", passed)]),
+            (vec![], vec![assertion("nis_final", unjudged)]),
+        ]);
 
-        for line in render(&report).lines() {
-            assert_eq!(line.trim_end(), line, "trailing whitespace on: {line:?}");
-        }
+        let text = render(&report);
+
+        assert!(
+            text.contains(
+                "[mc assert] nis_final: agent.car.node.primary.aiding.gps.nis passed 2 of 3 \
+                 runs (pass_rate 0.6667), 1 unjudged"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn runs_with_no_report_are_named_and_counted_on_each_line() {
+        let passed = Verdict::Passed {
+            actual: AssertionValue::Float(1.0),
+        };
+        let report = batch_with_gaps(&[
+            Some((
+                vec![measure("final_x", Some(1.0), 10, true)],
+                vec![assertion("nis_final", passed)],
+            )),
+            None,
+            Some((vec![], vec![])),
+        ]);
+
+        let text = render(&report);
+
+        assert!(
+            text.starts_with("[mc] 3 runs, seeds [0, 1, 2]; run 1 produced no report"),
+            "{text}"
+        );
+        assert!(text.contains("[1 absent, 1 no report]"), "{text}");
+        assert!(
+            text.contains("passed 1 of 3 runs (pass_rate 0.3333), 1 absent, 1 no report"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_unseeded_empty_batch_renders_its_header_only() {
+        let report = AggregateReport::from_runs(&[]);
+
+        assert_eq!(render(&report), "[mc] 0 runs");
     }
 }

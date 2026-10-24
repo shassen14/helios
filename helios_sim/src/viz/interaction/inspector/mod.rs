@@ -9,8 +9,8 @@ use crate::{
     viz::{
         interaction::inspector::{
             gather::{
-                begin_inspection, gather_actuators, gather_controller, gather_estimator,
-                gather_identity, gather_pose, gather_reference,
+                begin_inspection, gather_actuators, gather_estimator, gather_identity, gather_pose,
+                gather_reference,
             },
             model::InspectorModel,
             render::{load_inspector_font, render_inspection},
@@ -40,7 +40,6 @@ impl Plugin for InspectorPlugin {
                 gather_identity,
                 gather_pose,
                 gather_estimator,
-                gather_controller,
                 gather_reference,
                 gather_actuators,
                 render_inspection,
@@ -59,8 +58,10 @@ pub struct CurrentInspection(pub Option<InspectorModel>);
 mod tests {
     use super::*;
 
+    use crate::core::run_clock::RunClockPlugin;
     use crate::viz::interaction::{inspector::model::SubsystemPath, selection::Selected};
 
+    use avian3d::prelude::Physics;
     use std::sync::Arc;
 
     /// Tier 3: the plugin must register `begin → gather_identity → gather_pose →
@@ -75,7 +76,9 @@ mod tests {
         app.add_plugins(bevy::state::app::StatesPlugin);
         app.insert_state(AppState::Running);
         app.init_resource::<Time>();
-        app.add_plugins(InspectorPlugin);
+        app.init_resource::<Time<Fixed>>();
+        app.init_resource::<Time<Physics>>();
+        app.add_plugins((RunClockPlugin, InspectorPlugin));
         app.world_mut().spawn((
             Name::new("robot_3"),
             Selected,

@@ -1,0 +1,24 @@
+# The estimation-only raycast car with an estimator nothing places in the
+# world: its EKF reads the IMU and the magnetometer and no GPS, so its odom
+# is free. The body still carries the GPS, unread.
+#
+# Paired with configs/test/runs/negative/pose_error_declared_free_root.toml,
+# which grades this estimate under `declared` and must be refused.
+
+[simulation]
+duration_seconds = 5.0
+seed             = 42
+
+[world.layout]
+from = "sim.catalog.worlds.open_field"
+
+[world.semantic_classes]
+from = "runtime.catalog.semantic_classes.default"
+
+[[agents]]
+from          = "sim.catalog.agents.raycast_car_estimation_only"
+name          = "DeadReckoningCar"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+
+[agents.autonomy_stack.nodes.primary]
+from = "runtime.catalog.estimators.ekf_imu_mag"

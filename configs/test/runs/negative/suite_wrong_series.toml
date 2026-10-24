@@ -1,0 +1,17 @@
+# Negative control: a suite whose role reads a series of another type.
+#
+# The suite's truth role reads twists, and it names `truth.pose`, which
+# carries transforms. The run is refused before the sim starts (exit 2),
+# naming the series and both types. A pass would mean a suite's series is
+# matched to its role by name alone, and the mismatch found only once a
+# value arrives.
+
+schema_version = "2.0"
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 2.0 }
+
+[[suite]]
+name = "tracking"
+from = "test/evaluations/negative/twist_from_truth_pose.toml"
+agents = ["ProvingCar"]

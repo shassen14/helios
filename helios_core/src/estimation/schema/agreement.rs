@@ -1,7 +1,9 @@
 use crate::{
-    estimation::schema::{MeasurementSchema, MeasurementSchemaBlock, StateSchema},
-    frames::{transforms::Convention, FrameId},
-    state::Quantity,
+    estimation::schema::{
+        InputSchema, InputSchemaBlock, MeasurementSchema, MeasurementSchemaBlock, StateSchema,
+    },
+    spatial::state::Quantity,
+    spatial::{transforms::Convention, FrameId},
 };
 
 /// Checks that a measurement schema is expressed compatibly with the state it
@@ -9,10 +11,11 @@ use crate::{
 ///
 /// For each frame a measurement block references, the state either assigns that
 /// frame a convention — which the measurement must match — or it does not, in
-/// which case the frame must be the sensor's own device frame, whose convention
-/// is the sensor model's concern and is accepted here as declared; anything else
-/// is unanchorable. This one rule subsumes both a direct readout (the state
-/// tracks the same quantity, so its frame is in the map) and a derived
+/// which case the frame must be `sensor`, the frame the model was built for,
+/// whose convention is the sensor model's concern and is accepted here as
+/// declared. Anything else is unanchorable, including another sensor's frame or
+/// another estimator's root. This one rule subsumes both a direct readout (the
+/// state tracks the same quantity, so its frame is in the map) and a derived
 /// measurement (the state tracks only the frame): both reduce to looking the
 /// frame up in the state's convention map. A disagreement is a construction-time
 /// config error, returned rather than panicked so the assembler can name the
@@ -22,18 +25,20 @@ use crate::{
 pub fn check_measurement_state_agreement(
     state: &StateSchema,
     measurement: &MeasurementSchema,
+    sensor: &FrameId,
 ) -> Result<(), MeasurementAgreementError> {
     for block in measurement.blocks() {
-        check_block(block, state)?;
+        check_block(block, state, sensor)?;
     }
     Ok(())
 }
 
 /// Checks one measurement block: every frame it references must agree with the
-/// state's convention for that frame, or be a sensor's own device frame.
+/// state's convention for that frame, or be `sensor`.
 fn check_block(
     block: &MeasurementSchemaBlock,
     state: &StateSchema,
+    sensor: &FrameId,
 ) -> Result<(), MeasurementAgreementError> {
     for (frame, convention) in &block.conventions {
         match state.convention_of(frame) {
@@ -51,11 +56,11 @@ fn check_block(
             }
             // The state anchors this frame and the conventions agree.
             Some(_) => {}
-            // Not anchored by the state, but the sensor's own device frame — its
-            // convention is the sensor model's to declare, not ours to check.
-            None if frame.is_sensor() => {}
-            // Neither anchored by the state nor a sensor frame: nothing to check
-            // against.
+            // Not anchored by the state, but the frame the model was built for —
+            // its convention is the sensor model's to declare, not ours to check.
+            None if frame == sensor => {}
+            // Neither anchored by the state nor the model's sensor: nothing to
+            // check against.
             None => {
                 return Err(MeasurementAgreementError::UnanchorableFrame {
                     quantity: block.quantity().clone(),
@@ -79,8 +84,8 @@ pub enum MeasurementAgreementError {
         state: Convention,
         measurement: Convention,
     },
-    /// The measurement's frame is neither tracked by the state nor a sensor
-    /// frame, so no convention exists to check it against.
+    /// The measurement's frame is neither tracked by the state nor the frame
+    /// the model was built for, so no convention exists to check it against.
     UnanchorableFrame { quantity: Quantity, frame: FrameId },
     /// The measurement schema's innovation length disagrees with the size of the
     /// noise matrix `R` it is paired with.
@@ -103,9 +108,10 @@ impl std::fmt::Display for MeasurementAgreementError {
             ),
             Self::UnanchorableFrame { quantity, frame } => write!(
                 f,
-                "measurement of {quantity} references {frame}, which the state neither tracks \
-                 nor recognizes as a sensor frame; there is no convention to check it against. \
-                 Add this frame to the estimator's state, or fix the sensor's target frame."
+                "measurement of {quantity} references {frame}, which the state does not track \
+                 and which is not the frame the model was built for; there is no convention to \
+                 check it against. Add this frame to the estimator's state, or fix the sensor's \
+                 target frame."
             ),
             Self::DimensionMismatch {
                 schema_dim,
@@ -121,14 +127,103 @@ impl std::fmt::Display for MeasurementAgreementError {
 
 impl std::error::Error for MeasurementAgreementError {}
 
+/// Checks that the input an input builder assembles is the input the dynamics
+/// consume: the same blocks, in the same order, each with the same quantity,
+/// frame and conventions.
+///
+/// `u` is positional, so agreement is exact equality block by block — no
+/// reordering, no conversion. Length alone is not enough: an accelerometer and
+/// a gyro block are both three long, so a swap passes a length check and then
+/// integrates angular rate as specific force. Returned rather than panicked so
+/// the assembler can name the offending estimator. Does no coordinate math:
+/// moving an input into the frame the dynamics expect is the input builder's
+/// job, and this only validates that the declarations line up.
+pub fn check_input_agreement(
+    expected: &InputSchema,
+    supplied: &InputSchema,
+) -> Result<(), InputAgreementError> {
+    for (index, (want, got)) in expected.blocks().iter().zip(supplied.blocks()).enumerate() {
+        if want != got {
+            return Err(InputAgreementError::BlockMismatch {
+                index,
+                expected: Box::new(want.clone()),
+                supplied: Box::new(got.clone()),
+            });
+        }
+    }
+
+    if expected.blocks().len() != supplied.blocks().len() {
+        return Err(InputAgreementError::BlockCountMismatch {
+            expected: expected.blocks().len(),
+            supplied: supplied.blocks().len(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Why a supplied input fails to agree with the input the dynamics consume.
+/// Every variant is a construction-time config error.
+#[derive(Debug)]
+pub enum InputAgreementError {
+    /// The block at `index` differs in quantity, frame, or convention. Boxed
+    /// to keep the `Result` small; this only arises at construction.
+    BlockMismatch {
+        index: usize,
+        expected: Box<InputSchemaBlock>,
+        supplied: Box<InputSchemaBlock>,
+    },
+    /// Every shared position agrees, but one side has more blocks.
+    BlockCountMismatch { expected: usize, supplied: usize },
+}
+
+impl std::fmt::Display for InputAgreementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BlockMismatch {
+                index,
+                expected,
+                supplied,
+            } => write!(
+                f,
+                "input block {index}: the dynamics consume {}, but the input builder \
+                 supplies {}. The input vector is positional, so both sides must declare \
+                 the same quantities, frames and conventions in the same order.",
+                describe_block(expected),
+                describe_block(supplied),
+            ),
+            Self::BlockCountMismatch { expected, supplied } => write!(
+                f,
+                "the dynamics consume {expected} input blocks, but the input builder \
+                 supplies {supplied}."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InputAgreementError {}
+
+/// A block as `quantity [frame: convention, …]`, for error messages.
+fn describe_block(block: &InputSchemaBlock) -> String {
+    let conventions: Vec<String> = block
+        .conventions()
+        .iter()
+        .map(|(frame, convention)| format!("{frame}: {convention}"))
+        .collect();
+    format!("{} [{}]", block.quantity(), conventions.join(", "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::AgentId;
     use crate::estimation::schema::StateSchemaBlock;
-    use crate::manifold::TangentNoise;
+    use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::AgentId;
 
     use nalgebra::{DMatrix, DVector};
+
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
 
     // A single agent and a sensor mounted on it. Distinct leaves so a frame
     // mixup would surface as a mismatched id rather than an accidental match.
@@ -136,8 +231,14 @@ mod tests {
         AgentId::new("test_agent")
     }
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "sensor0")
+        FrameId::agent(agent(), "sensor0")
     }
+    fn other_sensor() -> FrameId {
+        FrameId::agent(agent(), "sensor1")
+    }
+
+    /// A root other than `odom`, as a second estimator of the same body holds.
+    const OTHER_ROOT: &str = "shadow_odom";
 
     fn noise(var: f64) -> Option<TangentNoise> {
         Some(TangentNoise::from_variances(DVector::from_element(3, var)).unwrap())
@@ -145,7 +246,7 @@ mod tests {
 
     /// A state that anchors two frames' conventions: `Odom(agent) → ENU` via the
     /// position block, and `Body(agent) → FLU` via the body↦odom orientation.
-    /// `World` is deliberately left untracked so it can stand in for the
+    /// The test datum is deliberately left untracked so it can stand in for the
     /// unanchorable case. Neither block observes `SpecificForce`, so any
     /// measurement of it references a frame the state anchors without the state
     /// tracking the same quantity.
@@ -183,7 +284,7 @@ mod tests {
     fn direct_readout_with_matching_convention_agrees() {
         let state = anchored_state();
         let m = one(Quantity::Position(FrameId::odom(agent())), Convention::Enu);
-        assert!(check_measurement_state_agreement(&state, &m).is_ok());
+        assert!(check_measurement_state_agreement(&state, &m, &sensor()).is_ok());
     }
 
     #[test]
@@ -193,7 +294,7 @@ mod tests {
         let state = anchored_state();
         let m = one(Quantity::Position(FrameId::odom(agent())), Convention::Flu);
 
-        let err = check_measurement_state_agreement(&state, &m).unwrap_err();
+        let err = check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err();
         assert!(matches!(
             err,
             MeasurementAgreementError::FrameConventionMismatch { .. }
@@ -212,7 +313,7 @@ mod tests {
             Quantity::SpecificForce(FrameId::base_link(agent())),
             Convention::Flu,
         );
-        assert!(check_measurement_state_agreement(&state, &m).is_ok());
+        assert!(check_measurement_state_agreement(&state, &m, &sensor()).is_ok());
     }
 
     #[test]
@@ -228,7 +329,7 @@ mod tests {
             Convention::Enu,
         );
 
-        match check_measurement_state_agreement(&state, &m).unwrap_err() {
+        match check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err() {
             MeasurementAgreementError::FrameConventionMismatch {
                 frame,
                 state,
@@ -254,22 +355,47 @@ mod tests {
         let state = anchored_state();
         for convention in [Convention::Flu, Convention::Enu] {
             let m = one(Quantity::SpecificForce(sensor()), convention);
-            assert!(check_measurement_state_agreement(&state, &m).is_ok());
+            assert!(check_measurement_state_agreement(&state, &m, &sensor()).is_ok());
         }
     }
 
     #[test]
     fn derived_measurement_in_an_untracked_non_sensor_frame_is_unanchorable() {
-        // World is neither tracked by this state nor a sensor frame, so there is
-        // no convention to check against.
+        // The test datum is neither tracked by this state nor the model's sensor
+        // frame, so there is no convention to check against.
         let state = anchored_state();
-        let m = one(Quantity::SpecificForce(FrameId::world()), Convention::Enu);
+        let m = one(
+            Quantity::SpecificForce(FrameId::global(DATUM)),
+            Convention::Enu,
+        );
 
-        match check_measurement_state_agreement(&state, &m).unwrap_err() {
+        match check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err() {
             MeasurementAgreementError::UnanchorableFrame { frame, .. } => {
-                assert_eq!(frame, FrameId::world());
+                assert_eq!(frame, FrameId::global(DATUM));
             }
             other => panic!("expected UnanchorableFrame, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_untracked_frame_the_model_was_not_built_for_is_unanchorable() {
+        // Both are agent frames the state does not track: another sensor's
+        // mount, and the root a second estimator holds the body in. Only the
+        // model's own sensor frame is exempt.
+        let state = anchored_state();
+        for quantity in [
+            Quantity::SpecificForce(other_sensor()),
+            Quantity::Position(FrameId::agent(agent(), OTHER_ROOT)),
+        ] {
+            let m = one(quantity.clone(), Convention::Enu);
+            match check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err() {
+                MeasurementAgreementError::UnanchorableFrame {
+                    quantity: refused, ..
+                } => {
+                    assert_eq!(refused, quantity);
+                }
+                other => panic!("expected UnanchorableFrame, got {other:?}"),
+            }
         }
     }
 
@@ -285,7 +411,7 @@ mod tests {
             ),
             MeasurementSchemaBlock::new(Quantity::SpecificForce(sensor()), Convention::Flu),
         ]);
-        assert!(check_measurement_state_agreement(&state, &m).is_ok());
+        assert!(check_measurement_state_agreement(&state, &m, &sensor()).is_ok());
     }
 
     #[test]
@@ -302,8 +428,122 @@ mod tests {
         ]);
 
         assert!(matches!(
-            check_measurement_state_agreement(&state, &m).unwrap_err(),
+            check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err(),
             MeasurementAgreementError::FrameConventionMismatch { .. }
         ));
+    }
+
+    // ── Input agreement: builder vs dynamics ──────────────────────────────────
+
+    fn specific_force(convention: Convention) -> InputSchemaBlock {
+        InputSchemaBlock::new(
+            Quantity::SpecificForce(FrameId::base_link(agent())),
+            convention,
+        )
+    }
+
+    fn angular_velocity(convention: Convention) -> InputSchemaBlock {
+        InputSchemaBlock::new(
+            Quantity::AngularVelocity(FrameId::base_link(agent())),
+            convention,
+        )
+    }
+
+    /// The IMU input: specific force then angular velocity, both body FLU.
+    fn imu_input() -> InputSchema {
+        InputSchema::compose(vec![
+            specific_force(Convention::Flu),
+            angular_velocity(Convention::Flu),
+        ])
+    }
+
+    #[test]
+    fn identical_inputs_agree() {
+        assert!(check_input_agreement(&imu_input(), &imu_input()).is_ok());
+    }
+
+    #[test]
+    fn an_accel_gyro_swap_is_a_block_mismatch_at_the_first_block() {
+        // Same length, same frames, same conventions — only the order differs.
+        // A length check would pass this and integrate rate as force.
+        let swapped = InputSchema::compose(vec![
+            angular_velocity(Convention::Flu),
+            specific_force(Convention::Flu),
+        ]);
+        assert_eq!(swapped.dim(), imu_input().dim());
+
+        match check_input_agreement(&imu_input(), &swapped).unwrap_err() {
+            InputAgreementError::BlockMismatch {
+                index,
+                expected,
+                supplied,
+            } => {
+                assert_eq!(index, 0);
+                assert_eq!(*expected, specific_force(Convention::Flu));
+                assert_eq!(*supplied, angular_velocity(Convention::Flu));
+            }
+            other => panic!("expected BlockMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_convention_mismatch_is_a_block_mismatch() {
+        let enu_gyro = InputSchema::compose(vec![
+            specific_force(Convention::Flu),
+            angular_velocity(Convention::Enu),
+        ]);
+
+        assert!(matches!(
+            check_input_agreement(&imu_input(), &enu_gyro).unwrap_err(),
+            InputAgreementError::BlockMismatch { index: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn an_input_in_the_sensor_frame_is_a_block_mismatch() {
+        // Raw IMU data lives in the sensor frame; the dynamics consume it in
+        // base_link. Supplying it unrotated is exactly what this check refuses.
+        let raw = InputSchema::compose(vec![
+            InputSchemaBlock::new(Quantity::SpecificForce(sensor()), Convention::Flu),
+            InputSchemaBlock::new(Quantity::AngularVelocity(sensor()), Convention::Flu),
+        ]);
+
+        assert!(matches!(
+            check_input_agreement(&imu_input(), &raw).unwrap_err(),
+            InputAgreementError::BlockMismatch { index: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn a_missing_trailing_block_is_a_block_count_mismatch() {
+        let accel_only = InputSchema::compose(vec![specific_force(Convention::Flu)]);
+
+        match check_input_agreement(&imu_input(), &accel_only).unwrap_err() {
+            InputAgreementError::BlockCountMismatch { expected, supplied } => {
+                assert_eq!((expected, supplied), (2, 1));
+            }
+            other => panic!("expected BlockCountMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_block_mismatch_message_names_both_quantities() {
+        let swapped = InputSchema::compose(vec![
+            angular_velocity(Convention::Flu),
+            specific_force(Convention::Flu),
+        ]);
+        let message = check_input_agreement(&imu_input(), &swapped)
+            .unwrap_err()
+            .to_string();
+
+        assert!(message.contains("input block 0"), "{message}");
+        assert!(
+            message.contains(&Quantity::SpecificForce(FrameId::base_link(agent())).to_string()),
+            "{message}"
+        );
+        assert!(
+            message.contains(&Quantity::AngularVelocity(FrameId::base_link(agent())).to_string()),
+            "{message}"
+        );
     }
 }

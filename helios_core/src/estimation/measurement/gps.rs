@@ -1,17 +1,20 @@
 use nalgebra::DVector;
 
-use crate::data::ports::TfProvider;
-use crate::data::AgentId;
-use crate::data::MonotonicTime;
+use crate::estimation::frames::EstimationFrames;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::measurement::Prediction;
 use crate::estimation::measurement::Unavailable;
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
-use crate::frames::conventions::{Enu, Flu};
-use crate::frames::quantities::Point;
-use crate::frames::transforms::{Convention, Rotation};
-use crate::frames::{FrameAwareState, FrameId};
-use crate::state::Quantity;
+use crate::prelude::MonotonicTime;
+use crate::spatial::conventions::{Enu, Flu};
+use crate::spatial::quantities::Point;
+use crate::spatial::state::Quantity;
+use crate::spatial::tf::TfProvider;
+use crate::spatial::transforms::{Convention, ConventionOf, Rotation};
+use crate::spatial::{FrameAwareState, FrameId};
+
+/// The axes the model reads its sensor's mount in.
+type MountAxes = Flu;
 
 /// A measurement model for a standard GPS sensor that provides 3D position.
 ///
@@ -20,22 +23,30 @@ use crate::state::Quantity;
 /// origin via the TF tree (same pattern as [`SpecificForceModel`]).
 ///
 /// Note: `R` (measurement noise covariance) is **not** held here. It lives at
-/// the call site and is passed per `update`. See `algorithm_family_traits.md` §2.1.
+/// the call site and is passed per `update`.
 ///
 /// [`SpecificForceModel`]: crate::estimation::measurement::accelerometer::SpecificForceModel
 #[derive(Debug, Clone)]
 pub struct GpsPositionModel {
-    pub agent: AgentId,
+    /// The body the state tracks and the root it holds the body's pose in.
+    pub frames: EstimationFrames,
     /// The GPS antenna's own frame. Used to look up the antenna's offset from the
     /// body origin via the TF tree at prediction time.
     pub sensor: FrameId,
 }
 
+impl GpsPositionModel {
+    /// The axis convention this model reads its sensor's mount in. A host
+    /// checks it against the convention the tf tree holds for the mount
+    /// before the first tick.
+    pub const MOUNT_CONVENTION: Convention = MountAxes::CONVENTION;
+}
+
 impl MeasurementModel for GpsPositionModel {
-    /// One block: antenna position in the agent's odom frame (ENU), keyed by the
-    /// agent's odom `FrameId` — the same one the state carries — not the sensor.
+    /// One block: antenna position in the state's root (ENU), keyed by the root's
+    /// `FrameId` — the same one the state carries — not the sensor.
     fn schema(&self) -> MeasurementSchema {
-        let frame = FrameId::odom(self.agent.clone());
+        let frame = self.frames.root.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::Position(frame),
             Convention::Enu,
@@ -64,34 +75,28 @@ impl MeasurementModel for GpsPositionModel {
             return Prediction::Unavailable(Unavailable::NoProvider);
         };
         let Some(body_position_world) = filter_state
-            .position::<Enu>(FrameId::odom(self.agent.clone()))
+            .position::<Enu>(self.frames.root.clone())
             .map(Point::into_inner)
         else {
             return Prediction::Unavailable(Unavailable::ColdStart);
         };
         let body_orientation_world = filter_state
-            .orientation::<Flu, Enu>(
-                FrameId::base_link(self.agent.clone()),
-                FrameId::odom(self.agent.clone()),
-            )
+            .orientation::<Flu, Enu>(self.frames.body.clone(), self.frames.root.clone())
             .map(Rotation::into_inner)
             .unwrap_or_default();
 
-        let Some(erased) = tf.get_transform(
-            self.sensor.clone(),
-            FrameId::base_link(self.agent.clone()),
-            at,
-        ) else {
+        let Some(erased) = tf.get_transform(self.sensor.clone(), self.frames.body.clone(), at)
+        else {
             return Prediction::Unavailable(Unavailable::MissingTransform {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
-        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
@@ -119,13 +124,13 @@ mod tests {
     //! - Default finite-diff Jacobian has the correct shape and identity position columns.
 
     use super::*;
-    use crate::data::ports::TfProvider;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::state::{Component, Quantity};
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
+    use crate::spatial::state::{Component, Quantity};
+    use crate::spatial::tf::TfProvider;
+    use crate::spatial::transforms::{Convention, ErasedTransform, Transform};
+    use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
 
@@ -134,7 +139,7 @@ mod tests {
     }
 
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "gps_antenna")
+        FrameId::agent(agent(), "gps_antenna")
     }
 
     const AT: MonotonicTime = MonotonicTime(0.0);
@@ -168,22 +173,20 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            let iso = if from.is_sensor() {
+            let iso = if !from.is_base_link() {
                 self.0
             } else {
                 self.0.inverse()
             };
-            Some(ErasedTransform::from_parts(
-                iso,
-                Convention::Flu,
-                Convention::Flu,
+            Some(ErasedTransform::erase(
+                Transform::<Flu, Flu>::from_isometry(iso),
             ))
         }
     }
 
     fn make_model() -> GpsPositionModel {
         GpsPositionModel {
-            agent: agent(),
+            frames: EstimationFrames::odom(agent()),
             sensor: sensor(),
         }
     }
@@ -193,8 +196,10 @@ mod tests {
     // world-frame antenna position it predicts is that position plus the rotated
     // lever arm.
     fn make_state(px: f64, py: f64, pz: f64) -> FrameAwareState {
-        let mut state =
-            FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0);
+        let mut state = FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
+            MonotonicTime(0.0),
+        );
         state.set_variable(
             &StateVariable::new(Quantity::Position(FrameId::odom(agent())), Component::X),
             px,

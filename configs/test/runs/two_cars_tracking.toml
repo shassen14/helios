@@ -1,0 +1,46 @@
+# Twist tracking on two cars at once: the twist suite applied to both cars
+# of the two-lane scenario, each judged on its own series.
+#
+# The one run with more than one agent, so the one proof that recording,
+# setup and evaluation keep each agent's series apart: each car has its
+# own evaluation, named `agent.<car>.tracking.twist`. Each assertion and
+# measure names `eval.agent.*`, so it is judged once per car, each report
+# entry carrying its `agent`.
+#
+# Both routes are open, so each car must hold its reference through the
+# cruise: from 2 s, once it is up to speed, to 9 s, before it nears its
+# goal at about 10.4 s. Arrival itself is not judged: guidance drops the
+# reference to zero at the goal while the car still moves at speed, so
+# surge error jumps to about +5 m/s there until the stop gets an approach
+# taper.
+
+schema_version = "2.0"
+scenario = { from = "test/scenarios/two_cars.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 30.0 }
+
+[[suite]]
+name = "tracking"
+from = "test/evaluations/twist.toml"
+agents = ["NorthCar", "SouthCar"]
+
+[[assert]]
+name = "surge_settled"
+target = "eval.agent.*.tracking.twist.surge"
+window = { start = 2.0, end = 9.0 }
+condition = { within_range = [-1.0, 1.0] }
+
+[[measure]]
+name = "surge_rms"
+target = "eval.agent.*.tracking.twist.surge"
+reduce = "rms"
+
+[[measure]]
+name = "surge_final"
+target = "eval.agent.*.tracking.twist.surge"
+reduce = "final"
+
+[[measure]]
+name = "yaw_rate_rms"
+target = "eval.agent.*.tracking.twist.yaw_rate"
+reduce = "rms"

@@ -18,9 +18,9 @@
 //!    or more accurate.
 //! 4. Re-export from this `mod.rs`.
 
-use crate::data::{ports::TfProvider, MonotonicTime};
 use crate::estimation::schema::MeasurementSchema;
-use crate::frames::{FrameAwareState, FrameId};
+use crate::prelude::{MonotonicTime, TfProvider};
+use crate::spatial::{FrameAwareState, FrameId};
 use nalgebra::{DMatrix, DVector};
 
 /// Mathematical model of a sensor: `z = h(x) + v`.

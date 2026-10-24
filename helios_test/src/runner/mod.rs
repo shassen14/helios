@@ -1,66 +1,75 @@
-pub mod lifecycle;
+pub mod finalize;
+pub mod resolve;
+pub mod setup;
 pub mod state;
 pub mod termination_check;
 pub mod tick;
+pub mod window;
 
+#[cfg(test)]
+mod fixtures;
+
+pub use finalize::HostFacts;
 pub use tick::TickAction;
 
 use crate::{
-    assertion::{
-        extract::{standard_extractors, ExtractorTable},
-        target::TargetRegistry,
-    },
+    assertion::extract::standard_extractors,
+    collector::ObservationCollector,
+    evaluation::{standard_evaluators, EvaluatorRegistry},
     run::{
         validation::{self, ValidationError},
         Run,
     },
-    runner::state::AssertionState,
+    runner::resolve::ResolvedPlan,
 };
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 
-/// _Per-step._ The state machine the host pumps across a run: owns the run, the
-/// resolved registry, the extractor table, per-assertion state, and the clock
-/// origin.
+/// Why a run aborts when the host ticks or finishes it without having set
+/// it up.
+const NEVER_SET_UP: &str = "the host never called on_pipeline_built";
+
+/// Why a run aborts when the host hands it a collector it wasn't set up
+/// against.
+const FOREIGN_COLLECTOR: &str = "the collector is not the one the run was set up against";
+
+/// _Per-step._ The state machine the host pumps across a run: owns the run,
+/// its phase (which holds each entry's state once the run is ready), and
+/// its clock: the span its ticks have covered.
 pub struct Runner {
     run: Run,
-    registry: TargetRegistry,
-    extractors: ExtractorTable,
-    states: Vec<AssertionState>,
-    start_time: Option<MonotonicTime>,
+    /// The kinds its evaluations name, built from at setup.
+    evaluators: EvaluatorRegistry,
+    phase: Phase,
+    /// `None` until the first tick.
+    ticks: Option<TickSpan>,
     setup_failures: Vec<String>,
 }
 
 impl Runner {
     /// Build a runner from a parsed run, rejecting an incoherent one up front.
     /// Validation runs here so a bad run fails at *construction*, never partway
-    /// through a simulation. The registry starts empty — it's populated later in
-    /// `on_pipeline_built`, the one moment the pipeline exists to walk.
+    /// through a simulation. It can't tick until `on_pipeline_built`, the one
+    /// moment the pipelines exist to check its assertions against.
     pub fn new(run: Run) -> Result<Self, ValidationError> {
-        // Coherence check first: `?` bails with the validation error before any
-        // state is allocated, so an invalid run never gets a half-built runner.
-        validation::validate(&run)?;
+        Self::with_evaluators(run, standard_evaluators())
+    }
 
-        // One fresh latch per assertion, index-aligned with `run.assertions()`
-        // so the runner addresses an assertion and its state by the same index.
-        // Built from a borrow that ends here, before `run` is moved into Self.
-        let states: Vec<AssertionState> = run
-            .assertions()
-            .iter()
-            .map(|_| AssertionState::new())
-            .collect();
+    /// As [`new`](Self::new), its evaluations built from the kinds in
+    /// `evaluators` rather than the standard ones.
+    pub fn with_evaluators(
+        run: Run,
+        evaluators: EvaluatorRegistry,
+    ) -> Result<Self, ValidationError> {
+        // Coherence check first: `?` bails with the validation error, so an
+        // invalid run never gets a half-built runner.
+        validation::validate(&run, &evaluators)?;
 
         Ok(Self {
             run,
-            // Empty until `on_pipeline_built` walks each pipeline and registers
-            // its declared channels.
-            registry: TargetRegistry::new(),
-            // The standard f64/bool/i64 extractors. An empty table here would
-            // make every assertion fail with `NoExtractor`, since the evaluator
-            // couldn't turn any payload into a comparable value.
-            extractors: standard_extractors(),
-            states,
-            start_time: None,
+            evaluators,
+            phase: Phase::AwaitingPipelines,
+            ticks: None,
             // Filled only if the run is doomed before it ticks. Assertions
             // cannot speak for this class of failure: a scenario whose agent
             // has no pipeline usually has no assertion naming it either, so
@@ -69,14 +78,66 @@ impl Runner {
         })
     }
 
+    /// The collector this run reads. It requests nothing until setup binds
+    /// what the run's entries and evaluations read, so a host asks it what
+    /// to record only after [`on_pipeline_built`](Self::on_pipeline_built).
+    /// A host builds it here, beside the runner, so the two always describe
+    /// the same run.
+    pub fn collector(&self) -> ObservationCollector {
+        ObservationCollector::new(standard_extractors())
+    }
+
+    /// Whether the run was aborted before its first tick: setup refused it,
+    /// or the host recorded a failure no assertion can observe. An aborted
+    /// run judges nothing, so a host stops it and finalizes.
+    pub fn is_aborted(&self) -> bool {
+        self.phase == Phase::Aborted
+    }
+
     /// Record that the run is unfit to produce a meaningful result, and why.
     ///
     /// Called before the first tick, by the host, for conditions no assertion
     /// can observe. Any recorded failure forces the run's verdict to
     /// [`ReportStatus::Failed`] in [`Self::finalize`], independent of how the
-    /// assertions land — including when there are none.
+    /// assertions land — including when there are none. From then on the
+    /// run judges nothing, whatever phase it was in.
     pub fn fail_setup(&mut self, reason: String) {
         self.setup_failures.push(reason);
+        self.phase = Phase::Aborted;
+    }
+}
+
+/// _Per-step._ Where the run is in its life, so each step can tell whether
+/// it may judge.
+// An enum field rather than a type parameter (`Runner<Ready>`): the runner is
+// held in a Bevy resource, which can't change type in place.
+#[derive(Debug, Clone, PartialEq)]
+enum Phase {
+    /// Built, but not yet checked against the pipelines.
+    AwaitingPipelines,
+    /// Every assertion can be judged, from the series the plan names, and
+    /// the plan holds each one's state.
+    Ready(ResolvedPlan),
+    /// Setup failed; nothing is judged.
+    Aborted,
+}
+
+/// _Per-step._ The simulated time a run's ticks have covered: its first
+/// tick, where the run's clock starts (`run.start`), and its latest
+/// (`run.end`, once the run stops).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TickSpan {
+    pub first: MonotonicTime,
+    pub latest: MonotonicTime,
+}
+
+impl TickSpan {
+    /// The span of one tick at `t`.
+    fn starting_at(t: MonotonicTime) -> Self {
+        Self {
+            first: t,
+            latest: t,
+        }
     }
 }
 
@@ -84,62 +145,44 @@ impl Runner {
 mod tests {
     use super::*;
 
-    use crate::runner::state::ContinuousStatus;
-
     // Parse a `Run` from TOML, filling in the header fields every run needs so
     // each test supplies only its termination + assertion body.
     fn run_with(body: &str) -> Run {
         let toml = format!(
             r#"
-            schema_version = "1.0"
+            schema_version = "2.0"
             scenario = {{ from = "s" }}
             observation = {{ from = "o" }}
             {body}
             "#
         );
-        toml::from_str(&toml).expect("valid run toml")
+        crate::run::parse(&toml, crate::run::no_suite_files).expect("valid run toml")
     }
-
-    const ASSERT: &str = r#"
-        [[assert]]
-        when = "continuous"
-        target = "agent.car.x"
-        condition = "equals"
-        value = 0.0
-    "#;
 
     #[test]
     fn rejects_an_incoherent_run() {
-        // Empty termination never stops; `new` must surface the validation
+        // A NaN budget is never reached; `new` must surface the validation
         // error rather than build a runner that can never terminate. `matches!`
         // (not `unwrap_err`) avoids needing `Debug` on the `Ok` type `Runner`.
-        let run = run_with("termination = {}");
+        let run = run_with("termination = { max_simulated_seconds = nan }");
         assert!(matches!(
             Runner::new(run),
-            Err(ValidationError::NoTermination)
+            Err(ValidationError::UnreachableBudget(_))
         ));
     }
 
     #[test]
-    fn allocates_one_state_per_assertion() {
-        // States are index-aligned with the assertions, so the count must match.
-        let body = format!(r#"termination = {{ max_simulated_seconds = 5.0 }}{ASSERT}{ASSERT}"#);
-        let r = Runner::new(run_with(&body)).expect("valid run");
-        assert_eq!(r.states.len(), 2);
-    }
-
-    #[test]
-    fn fresh_states_start_pending() {
-        let body = format!(r#"termination = {{ max_simulated_seconds = 5.0 }}{ASSERT}"#);
-        let r = Runner::new(run_with(&body)).expect("valid run");
-        assert_eq!(r.states[0].status(), &ContinuousStatus::Pending);
-    }
-
-    #[test]
-    fn a_smoke_run_has_no_states() {
-        // Zero assertions is valid when a time budget guarantees termination.
+    fn a_new_runner_awaits_its_pipelines() {
         let r = Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }"))
             .expect("valid run");
-        assert!(r.states.is_empty());
+        assert_eq!(r.phase, Phase::AwaitingPipelines);
+    }
+
+    #[test]
+    fn a_setup_failure_aborts_the_run() {
+        let mut r = Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }"))
+            .expect("valid run");
+        r.fail_setup("no pipeline".to_string());
+        assert_eq!(r.phase, Phase::Aborted);
     }
 }

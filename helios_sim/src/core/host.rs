@@ -21,10 +21,13 @@
 //! ```
 
 use crate::{
-    asset_root, cli::Cli, config::ConfigPlugin, core::app_state::AppState, HeliosSimulationPlugin,
+    asset_root, brain_bridge::ObservationSinkAppExt, cli::Cli, config::ConfigPlugin,
+    core::app_state::AppState, core::physics_step::PhysicsStepPlugin, HeliosSimulationPlugin,
 };
 
-use avian3d::prelude::PhysicsPlugins;
+use helios_core::prelude::MonotonicDuration;
+use helios_runtime::observe::sinks::stats::StatsSink;
+
 use bevy::app::{PluginGroupBuilder, ScheduleRunnerPlugin};
 use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
@@ -38,11 +41,21 @@ use std::time::Duration;
 // once here instead of being re-pasted into each driver bin.
 const LOG_FILTER: &str = "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug";
 
+// How often a wall-paced headless run updates: the cadence a window gets from
+// vsync. The fixed loop runs as many steps as the elapsed time owes on each
+// update, so this changes how steps are grouped, never how many run or what
+// they compute. Without it the runner spins between fixed ticks, and every
+// empty update still wakes and parks the whole task pool.
+const HEADLESS_WALL_PACED_UPDATE_PERIOD: Duration = Duration::from_micros(16_667);
+
 // Guards the process-global tracing subscriber. `LogPlugin` installs a logger
 // that can only be set once per process, yet a Monte Carlo batch builds a fresh
 // `App` — and thus a fresh host — for every run. This flips to `true` the first
 // time any host is built; later hosts find it already set and skip `LogPlugin`.
 static LOG_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+// How much simulated time each `--watch-stats` report covers.
+const STATS_REPORT_PERIOD: MonotonicDuration = MonotonicDuration(1.0);
 
 pub struct HeliosHost {
     // The resolved launch config. `ConfigPlugin` reads it at startup to locate
@@ -68,7 +81,7 @@ impl HeliosHost {
         // Start from Bevy's defaults, then replace/disable individual plugins.
         let mut group = DefaultPlugins.build();
 
-        // Pin the asset root to an absolute path so terrain/object GLBs resolve
+        // Pin the asset root to an absolute path so object GLBs resolve
         // from any working directory — and from a bin in another crate — without
         // needing a `BEVY_ASSET_ROOT` override.
         group = group.set(AssetPlugin {
@@ -97,6 +110,8 @@ impl HeliosHost {
         // `ScheduleRunnerPlugin` to pump `update()` in its place — without a
         // runner, `run()` ticks once and returns. The windowless `WindowPlugin`
         // plus `DontExit` keeps the app alive despite having no primary window.
+        // The runner waits between updates only when the clock follows the
+        // wall (see `TimePolicy::headless_update_period`).
         if let Presentation::Headless = self.presentation {
             group = group
                 .set(WindowPlugin {
@@ -105,7 +120,9 @@ impl HeliosHost {
                     ..default()
                 })
                 .disable::<WinitPlugin>()
-                .add(ScheduleRunnerPlugin::run_loop(Duration::ZERO));
+                .add(ScheduleRunnerPlugin::run_loop(
+                    self.time_policy.headless_update_period(),
+                ));
         }
 
         group
@@ -128,7 +145,7 @@ impl Plugin for HeliosHost {
         // app's first update. `Cli` is inserted for `ConfigPlugin`, which reads
         // it when it loads and resolves the scenario at startup.
         app.add_plugins(group);
-        app.add_plugins(PhysicsPlugins::default());
+        app.add_plugins(PhysicsStepPlugin);
 
         app.insert_resource(self.cli.clone());
         app.init_state::<AppState>();
@@ -143,6 +160,12 @@ impl Plugin for HeliosHost {
         app.add_plugins(ConfigPlugin);
 
         app.add_plugins(HeliosSimulationPlugin);
+
+        // Watches every observable. Built here rather than handed in, so
+        // every driver that passes the flag gets the same sink.
+        if self.cli.watch_stats {
+            app.add_observation_sink(StatsSink::new(STATS_REPORT_PERIOD));
+        }
     }
 }
 
@@ -187,7 +210,10 @@ pub enum Presentation {
 ///
 /// No variant changes what a run *computes*. The fixed timestep is identical
 /// under all three, so the sim takes the same steps and produces the same
-/// numbers; only the delay before you see them differs.
+/// numbers; only the delay before you see them differs. That holds because
+/// physics and transform propagation run inside each fixed step, so nothing
+/// depends on how many steps a frame runs; `helios_test`'s golden check
+/// guards it (`steps_per_update_change_no_report`).
 // `Eq` is absent on purpose: `Scaled` carries an `f32`.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub enum TimePolicy {
@@ -216,6 +242,19 @@ impl TimePolicy {
             (None, Presentation::Headless) => TimePolicy::FastAsPossible,
         }
     }
+
+    /// The least wall time between updates of a headless run.
+    ///
+    /// A fast-forwarded run never waits: its clock is detached from the wall
+    /// and each update already batches many fixed steps. A wall-paced run
+    /// updates at a window's cadence, since updating faster only finds no
+    /// fixed step due.
+    fn headless_update_period(self) -> Duration {
+        match self {
+            TimePolicy::FastAsPossible => Duration::ZERO,
+            TimePolicy::RealTime | TimePolicy::Scaled(_) => HEADLESS_WALL_PACED_UPDATE_PERIOD,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -227,8 +266,8 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
 
     // A throwaway host. `default_plugins` selects plugins from `presentation`
-    // alone and reads neither the `Cli` fields nor the time policy, so those
-    // only need to be well-formed, not meaningful.
+    // and reads the time policy only for the headless runner's wait, never the
+    // `Cli` fields, so those only need to be well-formed, not meaningful.
     fn host(presentation: Presentation) -> HeliosHost {
         HeliosHost::new(
             Cli {
@@ -237,6 +276,7 @@ mod tests {
                 headless: true,
                 speed: None,
                 seed: None,
+                watch_stats: false,
             },
             presentation,
             TimePolicy::RealTime,
@@ -369,6 +409,27 @@ mod tests {
             TimePolicy::from_cli(None, Presentation::Headless),
             TimePolicy::FastAsPossible
         );
+    }
+
+    #[test]
+    fn a_fast_forwarded_headless_run_never_waits_between_updates() {
+        // Its clock ignores the wall, so any wait is pure lost time.
+        assert_eq!(
+            TimePolicy::FastAsPossible.headless_update_period(),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn a_wall_paced_headless_run_waits_between_updates() {
+        // Without a wait the runner spins between fixed ticks, and every empty
+        // update wakes the whole task pool for nothing.
+        for policy in [TimePolicy::RealTime, TimePolicy::Scaled(10.0)] {
+            assert!(
+                policy.headless_update_period() > Duration::ZERO,
+                "{policy:?} must not spin"
+            );
+        }
     }
 
     #[test]

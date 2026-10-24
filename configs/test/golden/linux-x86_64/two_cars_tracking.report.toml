@@ -1,0 +1,270 @@
+schema_version = "2.0"
+run_name = "two_cars_tracking"
+scenario = "test/scenarios/two_cars.toml"
+status = "passed"
+simulated_duration_secs = 30.0
+
+[terminated_by]
+kind = "time_budget"
+
+[[assertions]]
+name = "surge_settled"
+target = "eval.agent.*.tracking.twist.surge"
+agent = "NorthCar"
+unit = "m/s"
+samples = 2801
+max_gap_secs = 0.002500000000001279
+window_secs = [
+    2.0,
+    9.0,
+]
+status = "passed"
+actual = 0.03363608036287946
+
+[assertions.window]
+start = 2.0
+end = 9.0
+
+[assertions.condition]
+within_range = [
+    -1.0,
+    1.0,
+]
+
+[[assertions]]
+name = "surge_settled"
+target = "eval.agent.*.tracking.twist.surge"
+agent = "SouthCar"
+unit = "m/s"
+samples = 2801
+max_gap_secs = 0.002500000000001279
+window_secs = [
+    2.0,
+    9.0,
+]
+status = "passed"
+actual = 0.03564828039461876
+
+[assertions.window]
+start = 2.0
+end = 9.0
+
+[assertions.condition]
+within_range = [
+    -1.0,
+    1.0,
+]
+
+[[measures]]
+name = "surge_rms"
+target = "eval.agent.*.tracking.twist.surge"
+agent = "NorthCar"
+reduce = "rms"
+covered = true
+value = 0.8922843928939714
+unit = "m/s"
+samples = 11922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "surge_rms"
+target = "eval.agent.*.tracking.twist.surge"
+agent = "SouthCar"
+reduce = "rms"
+covered = true
+value = 0.8913347073485609
+unit = "m/s"
+samples = 11922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "surge_final"
+target = "eval.agent.*.tracking.twist.surge"
+agent = "NorthCar"
+reduce = "final"
+covered = true
+value = 0.05012796906369564
+unit = "m/s"
+samples = 11922
+max_gap_secs = 0.1975
+final_age_secs = 0.0
+
+[[measures]]
+name = "surge_final"
+target = "eval.agent.*.tracking.twist.surge"
+agent = "SouthCar"
+reduce = "final"
+covered = true
+value = 0.05880328564827107
+unit = "m/s"
+samples = 11922
+max_gap_secs = 0.1975
+final_age_secs = 0.0
+
+[[measures]]
+name = "yaw_rate_rms"
+target = "eval.agent.*.tracking.twist.yaw_rate"
+agent = "NorthCar"
+reduce = "rms"
+covered = true
+value = 0.0014840316660812542
+unit = "rad/s"
+samples = 11922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "yaw_rate_rms"
+target = "eval.agent.*.tracking.twist.yaw_rate"
+agent = "SouthCar"
+reduce = "rms"
+covered = true
+value = 0.0015025841725132404
+unit = "rad/s"
+samples = 11922
+max_gap_secs = 0.1975
+
+[[evaluations]]
+name = "agent.NorthCar.tracking.twist"
+application = "tracking"
+agent = "NorthCar"
+kind = "twist_tracking"
+samples = 12001
+uncovered = 79
+
+[[evaluations.inputs]]
+role = "truth"
+series = "truth.twist"
+instance = "agent.NorthCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.NorthCar.channel.truth.twist"
+instance = "agent.NorthCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.inputs]]
+role = "reference"
+series = "reference"
+target = "agent.NorthCar.channel.reference"
+writer = "node reference_arbiter"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[evaluations.inputs.uncovered]
+before_first = 79
+in_gap = 0
+after_last = 0
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.tracking.twist.surge"
+unit = "m/s"
+samples = 11922
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.tracking.twist.sway"
+unit = "m/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.tracking.twist.heave"
+unit = "m/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.tracking.twist.roll_rate"
+unit = "rad/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.tracking.twist.pitch_rate"
+unit = "rad/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.tracking.twist.yaw_rate"
+unit = "rad/s"
+samples = 11922
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.tracking.twist.speed"
+unit = "m/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.NorthCar.tracking.twist.velocity"
+unit = "m/s"
+
+[[evaluations]]
+name = "agent.SouthCar.tracking.twist"
+application = "tracking"
+agent = "SouthCar"
+kind = "twist_tracking"
+samples = 12001
+uncovered = 79
+
+[[evaluations.inputs]]
+role = "truth"
+series = "truth.twist"
+instance = "agent.SouthCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.SouthCar.channel.truth.twist"
+instance = "agent.SouthCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.inputs]]
+role = "reference"
+series = "reference"
+target = "agent.SouthCar.channel.reference"
+writer = "node reference_arbiter"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[evaluations.inputs.uncovered]
+before_first = 79
+in_gap = 0
+after_last = 0
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.tracking.twist.surge"
+unit = "m/s"
+samples = 11922
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.tracking.twist.sway"
+unit = "m/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.tracking.twist.heave"
+unit = "m/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.tracking.twist.roll_rate"
+unit = "rad/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.tracking.twist.pitch_rate"
+unit = "rad/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.tracking.twist.yaw_rate"
+unit = "rad/s"
+samples = 11922
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.tracking.twist.speed"
+unit = "m/s"
+
+[[evaluations.metrics]]
+path = "eval.agent.SouthCar.tracking.twist.velocity"
+unit = "m/s"

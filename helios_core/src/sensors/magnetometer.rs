@@ -1,7 +1,9 @@
 //! Forward model for a 3-axis magnetometer.
 
-use crate::data::sensor::MagneticField;
+use crate::interchange::measurement::sensor::MagneticField;
 use crate::sensors::noise::TriaxialGaussian;
+use crate::spatial::conventions::Flu;
+use crate::spatial::transforms::{Convention, ConventionOf};
 
 use nalgebra::{UnitQuaternion, Vector3};
 use rand::RngCore;
@@ -19,6 +21,15 @@ pub struct MagnetometerModel {
 }
 
 impl MagnetometerModel {
+    /// The axis convention of the sensor frame this model reports in, the
+    /// frame its installation names.
+    pub const FRAME_CONVENTION: Convention = Flu::CONVENTION;
+
+    /// Whether this model's output is expressed in, or relative to, the world
+    /// frame its truth is given in. The field is the world's, its north that
+    /// frame's.
+    pub const WORLD_REFERENCED: bool = true;
+
     /// Builds the model from the local geomagnetic reference. `declination` is
     /// the angle from true north toward east and `inclination` the downward dip
     /// below horizontal, both in radians; `magnitude` is the field strength.

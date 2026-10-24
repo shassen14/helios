@@ -1,0 +1,233 @@
+schema_version = "2.0"
+run_name = "twist_tracking_proving_ground"
+scenario = "sim/scenarios/01_proving_ground.toml"
+status = "failed"
+simulated_duration_secs = 60.0
+
+[terminated_by]
+kind = "time_budget"
+
+[[assertions]]
+name = "surge_tracked"
+target = "eval.inline.twist.surge"
+reduce = "rms"
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+status = "failed"
+actual = 4.8205082018881
+reason = "condition_failed"
+
+[assertions.condition]
+less_than = 0.5
+
+[[assertions]]
+name = "surge_settled"
+target = "eval.inline.twist.surge"
+unit = "m/s"
+samples = 6001
+max_gap_secs = 0.002500000000001279
+window_secs = [
+    5.0,
+    20.0,
+]
+status = "failed"
+actual = -5.1499487034024325
+reason = "condition_failed"
+failed_at_secs = 5.0
+
+[assertions.window]
+start = 5.0
+end = 20.0
+
+[assertions.condition]
+within_range = [
+    -1.0,
+    1.0,
+]
+
+[[measures]]
+name = "surge_rms"
+target = "eval.inline.twist.surge"
+reduce = "rms"
+covered = true
+value = 4.8205082018881
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "surge_max"
+target = "eval.inline.twist.surge"
+reduce = "max"
+covered = true
+value = 0.9846094140408885
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "surge_min"
+target = "eval.inline.twist.surge"
+reduce = "min"
+covered = true
+value = -5.31708310651666
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "surge_final"
+target = "eval.inline.twist.surge"
+reduce = "final"
+covered = true
+value = -4.999998456581174
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+final_age_secs = 0.0
+
+[[measures]]
+name = "sway_rms"
+target = "eval.inline.twist.sway"
+reduce = "rms"
+covered = true
+value = 0.07599866778559766
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "heave_rms"
+target = "eval.inline.twist.heave"
+reduce = "rms"
+covered = true
+value = 0.12477964089660637
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "roll_rate_rms"
+target = "eval.inline.twist.roll_rate"
+reduce = "rms"
+covered = true
+value = 0.007574987765717836
+unit = "rad/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "pitch_rate_rms"
+target = "eval.inline.twist.pitch_rate"
+reduce = "rms"
+covered = true
+value = 0.005762286494852471
+unit = "rad/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "yaw_rate_rms"
+target = "eval.inline.twist.yaw_rate"
+reduce = "rms"
+covered = true
+value = 0.3481818143455655
+unit = "rad/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "speed_rms"
+target = "eval.inline.twist.speed"
+reduce = "rms"
+covered = true
+value = 4.808338126974469
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[measures]]
+name = "velocity_rms"
+target = "eval.inline.twist.velocity"
+reduce = "rms"
+covered = true
+value = 4.822721750293903
+unit = "m/s"
+samples = 23922
+max_gap_secs = 0.1975
+
+[[evaluations]]
+name = "twist"
+kind = "twist_tracking"
+samples = 24001
+uncovered = 79
+
+[[evaluations.inputs]]
+role = "truth"
+instance = "agent.ProvingCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.ProvingCar.channel.truth.twist"
+instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.inputs]]
+role = "reference"
+target = "agent.ProvingCar.channel.reference"
+writer = "node reference_arbiter"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[evaluations.inputs.uncovered]
+before_first = 79
+in_gap = 0
+after_last = 0
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.surge"
+unit = "m/s"
+samples = 23922
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.sway"
+unit = "m/s"
+samples = 23922
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.heave"
+unit = "m/s"
+samples = 23922
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.roll_rate"
+unit = "rad/s"
+samples = 23922
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.pitch_rate"
+unit = "rad/s"
+samples = 23922
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.yaw_rate"
+unit = "rad/s"
+samples = 23922
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.speed"
+unit = "m/s"
+samples = 23922
+
+[[evaluations.metrics]]
+path = "eval.inline.twist.velocity"
+unit = "m/s"
+samples = 23922

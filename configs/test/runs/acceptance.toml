@@ -1,18 +1,20 @@
-# Part B acceptance run — proves the full seed → drive → measure chain.
+# Acceptance: proves the full seed → drive → measure chain.
 #
-# Zero assertions on purpose (like smoke). The thing under test isn't an
-# assertion target on the bus; it's the summarizer's final-position metric
-# (final_pos_e / final_pos_n), read off GroundTruthState. This run drives the
-# agent to its authored goal_pose and lets us read that final position back:
-#   - single run  → the "run metrics summarized" log line
-#   - --monte-carlo N --seed S → the aggregate report's final_pos_* stats + seeds
+# Zero assertions on purpose (like smoke). It drives the car toward its
+# authored goal for 20 s and measures where it ended and how fast it was
+# still going, from the body's truth:
+#   - single run  → the report's measures
+#   - --monte-carlo N --seed S → the aggregate's rows for the same measures,
+#     with their spread across the runs and each run's seed
 #
-# A moved agent reads far from its (0, 0) origin; a stationary one reads ~0.
+# A moved car reads far from its start at (-20, 0); a stationary one reads
+# about -20 along x. Speed is the size of the body's whole linear velocity,
+# so a car at rest reads its suspension's bounce, not zero.
 
-schema_version = "1.0"
+schema_version = "2.0"
 
 # Resolved relative to --config-root (default "configs").
-scenario = { from = "sim/scenarios/00_tutorial_showcase.toml" }
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
 
 # Carried but unused (observation presets aren't resolved yet).
 observation = { from = "default" }
@@ -21,3 +23,35 @@ observation = { from = "default" }
 # toward its goal before the run stops. Simulated seconds, measured from the
 # first tick (asset-load wall time doesn't count against it).
 termination = { max_simulated_seconds = 20.0 }
+
+[evaluation]
+gap_multiple = 3.0
+
+# The body's true pose, in the root of the truth tree.
+[[evaluate]]
+name = "pose"
+kind = "pose"
+[evaluate.inputs]
+pose = { path = "agent.ProvingCar.channel.truth.tf", instance = "agent.ProvingCar.base_link" }
+
+# The body's true velocity.
+[[evaluate]]
+name = "twist"
+kind = "twist"
+[evaluate.inputs]
+twist = { path = "agent.ProvingCar.channel.truth.twist", instance = "agent.ProvingCar.base_link" }
+
+[[measure]]
+name = "final_x"
+target = "eval.inline.pose.x"
+reduce = "final"
+
+[[measure]]
+name = "final_y"
+target = "eval.inline.pose.y"
+reduce = "final"
+
+[[measure]]
+name = "final_speed"
+target = "eval.inline.twist.speed"
+reduce = "final"

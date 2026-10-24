@@ -1,0 +1,14 @@
+# A 16-ring spinning lidar, laid out like a Velodyne VLP-16: rings every 2°
+# from -15° to +15°, a full-circle sweep. Azimuth is 1° (a real unit is ~0.2°),
+# keeping the ray count at 16 × 360 = 5,760 per scan while the sim casts rays on
+# one thread and the point-cloud view draws a sphere per point.
+kind = "Lidar"                                # <-- Matches SensorDeviceConfig::Lidar
+rate = 10.0
+range_min = 0.15                              # Blind zone: nearer returns are misses
+max_range = 50.0
+azimuth_fov = 360.0                           # Full-circle spinning scanner
+azimuth_beams = 360
+ring_elevations = [-15.0, -13.0, -11.0, -9.0, -7.0, -5.0, -3.0, -1.0, 1.0, 3.0, 5.0, 7.0, 9.0, 11.0, 13.0, 15.0]
+sweep_period = 0.1                            # One revolution per scan, matching `rate`
+range_noise_stddev = 0.03
+angular_noise_stddev = 0.1

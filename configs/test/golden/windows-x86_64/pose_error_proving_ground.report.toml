@@ -1,0 +1,225 @@
+schema_version = "2.0"
+run_name = "pose_error_proving_ground"
+scenario = "sim/scenarios/01_proving_ground.toml"
+status = "passed"
+simulated_duration_secs = 60.0
+
+[terminated_by]
+kind = "time_budget"
+
+[[assertions]]
+name = "position_held"
+target = "eval.inline.est.position"
+unit = "m"
+samples = 21962
+max_gap_secs = 0.0025000000000048317
+window_secs = [
+    5.097499999999999,
+    60.0,
+]
+status = "passed"
+actual = 0.011998800955286514
+
+[assertions.window.start]
+after = "agent.ProvingCar.node.primary.aiding.gps.nis"
+plus = 5.0
+
+[assertions.condition]
+less_than = 0.15
+
+[[measures]]
+name = "position_rms"
+target = "eval.inline.est.position"
+reduce = "rms"
+covered = true
+value = 0.0270483302652484
+unit = "m"
+samples = 21962
+max_gap_secs = 0.0025000000000048317
+window_secs = [
+    5.097499999999999,
+    60.0,
+]
+
+[measures.window.start]
+after = "agent.ProvingCar.node.primary.aiding.gps.nis"
+plus = 5.0
+
+[[measures]]
+name = "position_max"
+target = "eval.inline.est.position"
+reduce = "max"
+covered = true
+value = 0.08692278168746585
+unit = "m"
+samples = 21962
+max_gap_secs = 0.0025000000000048317
+window_secs = [
+    5.097499999999999,
+    60.0,
+]
+
+[measures.window.start]
+after = "agent.ProvingCar.node.primary.aiding.gps.nis"
+plus = 5.0
+
+[[measures]]
+name = "position_final"
+target = "eval.inline.est.position"
+reduce = "final"
+covered = true
+value = 0.011998800955286514
+unit = "m"
+samples = 21962
+max_gap_secs = 0.0025000000000048317
+final_age_secs = 0.0
+window_secs = [
+    5.097499999999999,
+    60.0,
+]
+
+[measures.window.start]
+after = "agent.ProvingCar.node.primary.aiding.gps.nis"
+plus = 5.0
+
+[[measures]]
+name = "z_rms"
+target = "eval.inline.est.z"
+reduce = "rms"
+covered = true
+value = 0.022117709015734486
+unit = "m"
+samples = 21962
+max_gap_secs = 0.0025000000000048317
+window_secs = [
+    5.097499999999999,
+    60.0,
+]
+
+[measures.window.start]
+after = "agent.ProvingCar.node.primary.aiding.gps.nis"
+plus = 5.0
+
+[[measures]]
+name = "rotation_rms"
+target = "eval.inline.est.rotation"
+reduce = "rms"
+covered = true
+value = 0.0037158383849212415
+unit = "rad"
+samples = 21962
+max_gap_secs = 0.0025000000000048317
+window_secs = [
+    5.097499999999999,
+    60.0,
+]
+
+[measures.window.start]
+after = "agent.ProvingCar.node.primary.aiding.gps.nis"
+plus = 5.0
+
+[[measures]]
+name = "rotation_max"
+target = "eval.inline.est.rotation"
+reduce = "max"
+covered = true
+value = 0.012060017975866219
+unit = "rad"
+samples = 21962
+max_gap_secs = 0.0025000000000048317
+window_secs = [
+    5.097499999999999,
+    60.0,
+]
+
+[measures.window.start]
+after = "agent.ProvingCar.node.primary.aiding.gps.nis"
+plus = 5.0
+
+[[evaluations]]
+name = "est"
+kind = "pose_error"
+samples = 24001
+uncovered = 0
+
+[evaluations.params]
+align = "declared"
+
+[evaluations.binding]
+roots = "agent.ProvingCar.odom anchored at global.proving_ground"
+
+[[evaluations.inputs]]
+role = "estimate"
+instance = "agent.ProvingCar.base_link"
+writer = "node estimate_relay"
+gaps = 0
+
+[evaluations.inputs.target]
+path = "agent.ProvingCar.channel.tf"
+instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.inputs]]
+role = "truth"
+instance = "agent.ProvingCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+
+[evaluations.inputs.target]
+path = "agent.ProvingCar.channel.truth.tf"
+instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[evaluations.inputs.uncovered]
+before_first = 0
+in_gap = 0
+after_last = 0
+
+[[evaluations.metrics]]
+path = "eval.inline.est.position"
+unit = "m"
+samples = 24001
+
+[[evaluations.metrics]]
+path = "eval.inline.est.horizontal"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.vertical"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.x"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.y"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.z"
+unit = "m"
+samples = 24001
+
+[[evaluations.metrics]]
+path = "eval.inline.est.along"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.cross"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.rotation"
+unit = "rad"
+samples = 24001
+
+[[evaluations.metrics]]
+path = "eval.inline.est.heading"
+unit = "rad"

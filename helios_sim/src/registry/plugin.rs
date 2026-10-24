@@ -1,7 +1,7 @@
 // Initialises the RuntimeAutonomyRegistry resource. Add this to
 // HeliosSimulationPlugin BEFORE WorldModelPlugin so the registry is populated
 // before any spawning runs.
-use helios_runtime::registry::AutonomyRegistry;
+use helios_runtime::AutonomyRegistry;
 
 use bevy::prelude::*;
 

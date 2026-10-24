@@ -6,6 +6,7 @@
 //! isolation. [`gather_tf_panel`] is the thin ECS shell around it: read the
 //! selection and the clock, call the builder per agent, write the resource.
 
+use crate::core::run_clock::RunClock;
 use crate::prelude::{AgentIdComponent, TfServiceComponent};
 use crate::viz::interaction::selection::Selected;
 use crate::viz::interaction::tf_panel::geometry::TfPanelHealthColors;
@@ -16,8 +17,8 @@ use crate::viz::interaction::tf_panel::model::{
 use crate::viz::interaction::tf_panel::TfPanelModel;
 use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 
-use helios_core::data::{AgentId, MonotonicTime};
-use helios_core::frames::transforms::tf::stamped::{DynamicEdgeStats, EdgeKindTag, FrameEdge};
+use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::spatial::transforms::tf::stamped::{DynamicEdgeStats, EdgeKindTag, FrameEdge};
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -111,11 +112,14 @@ impl TfPanelHealthThresholds {
 /// there is no dirty-tracking to justify.
 pub fn gather_tf_panel(
     query: Query<(&TfServiceComponent, &AgentIdComponent), With<Selected>>,
-    time: Res<Time>,
+    clock: RunClock,
     thresholds: Res<TfPanelHealthThresholds>,
     mut model: ResMut<TfPanelModel>,
 ) {
-    let now = MonotonicTime(time.elapsed_secs_f64());
+    // Runs only while `Running`, when the clock has started.
+    let Some(now) = clock.now() else {
+        return;
+    };
 
     model.0 = query
         .iter()
@@ -214,7 +218,7 @@ fn edge_health(
 mod tests {
     use super::*;
 
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::FrameId;
 
     /// A dynamic-style edge `child -> parent`; kind supplied per test.
     fn edge(child: FrameId, parent: FrameId) -> FrameEdge {
@@ -244,7 +248,7 @@ mod tests {
         let agent = AgentId::new("robot_1");
         let base_link = FrameId::base_link(agent.clone());
         let odom = FrameId::odom(agent.clone());
-        let imu = FrameId::sensor(agent.clone(), "imu");
+        let imu = FrameId::agent(agent.clone(), "imu");
 
         let graph = build_agent_graph(
             agent.clone(),

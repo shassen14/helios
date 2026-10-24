@@ -1,0 +1,19 @@
+schema_version = "2.0"
+run_name = "unresolved_target"
+scenario = "sim/scenarios/01_proving_ground.toml"
+status = "failed"
+setup_failures = ["on_pipeline_built failed: the run can't use these evaluations, assertions and measures: 'unresolvable' on 'agent.nobody.node.no_such_node.value': no agent by that name has a pipeline"]
+simulated_duration_secs = 0.0
+
+[terminated_by]
+kind = "aborted"
+
+[[assertions]]
+name = "unresolvable"
+target = "agent.nobody.node.no_such_node.value"
+reduce = "final"
+samples = 0
+status = "unjudged"
+
+[assertions.condition]
+less_than = 1.0

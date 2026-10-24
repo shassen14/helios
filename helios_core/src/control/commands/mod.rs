@@ -20,9 +20,9 @@ pub use twist::Twist;
 pub use twist_intent::TwistIntent;
 pub use wrench::Wrench;
 
-use crate::frames::conventions::Flu;
+use crate::spatial::conventions::Flu;
 
-/// A [`Wrench`] in the body [`Flu`](crate::frames::conventions::Flu) frame — the
+/// A [`Wrench`] in the body [`Flu`](crate::spatial::conventions::Flu) frame — the
 /// form actuator terminals consume.
 pub type BodyWrench = Wrench<Flu>;
 

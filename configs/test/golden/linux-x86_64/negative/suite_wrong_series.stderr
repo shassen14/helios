@@ -1,0 +1,1 @@
+invalid run: suite 'tracking' (test/evaluations/negative/twist_from_truth_pose.toml): evaluation 'twist': `truth.pose` carries helios_core::spatial::transforms::tf::stamped::StampedTransform, and the truth reads helios_core::interchange::motion::StampedTwist<helios_core::spatial::conventions::Flu>

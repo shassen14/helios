@@ -1,0 +1,19 @@
+# Negative control: a suite applied to an agent lacking one of its series.
+#
+# The twist suite reads the agent's reference, and the estimation-only car
+# runs no guidance, so it has no reference seam. Setup refuses the
+# evaluation, naming the seam (exit 1):
+#   its reference reads `reference` at agent.EstimationCar.channel.reference,
+#   and agent 'EstimationCar' has no reference seam
+# A pass would mean a suite's evaluation on an agent without its series is
+# skipped, and the run judged without it.
+
+schema_version = "2.0"
+scenario = { from = "sim/scenarios/isolation/estimation_only.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 2.0 }
+
+[[suite]]
+name = "tracking"
+from = "test/evaluations/twist.toml"
+agents = ["EstimationCar"]

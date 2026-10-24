@@ -1,11 +1,12 @@
 use helios_core::{
-    frames::FrameAwareState,
-    mapping::MapData,
+    interchange::perception::map::MapData,
     prelude::{PlannerGoal, SearchPlannerInputs},
+    spatial::FrameAwareState,
 };
 
 use crate::{
-    port::{ChannelKey, InternalChannel, PortBus},
+    channels::estimate::estimate,
+    port::{ChannelKey, PortBus},
     prelude::TickContext,
 };
 
@@ -26,7 +27,7 @@ pub(crate) trait SearchPlannerInputBuilder: Send + Sync {
     fn optional_channels(&self) -> &[ChannelKey];
 }
 
-/// Default builder: reads `FrameAwareState @ ""`, a configurable map channel,
+/// Default builder: reads the estimate (`FrameAwareState @ estimate`), a configurable map channel,
 /// and an optional `PlannerGoal` on a configurable goal channel (the planner
 /// config's `goal_channel`, defaulting to `"mission"`). Whichever host input
 /// declares that channel — a mission dispatcher, teleop, a ground-station
@@ -41,21 +42,27 @@ pub(crate) struct DefaultSearchPlannerInputBuilder {
 
 impl DefaultSearchPlannerInputBuilder {
     /// `goal_channel` is the instance name the planner's optional `PlannerGoal`
-    /// input is keyed on, resolved from `SearchPlannerConfig`'s `goal_channel`
-    /// field at assembly time. The host writes the mission goal to this same
-    /// name, so the planner and the host input agree by construction.
-    pub(crate) fn new(map_channel: InternalChannel, goal_channel: &str) -> Self {
-        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
-        let map_channel_key: ChannelKey = map_channel.into();
-        let goal_channel: ChannelKey = InternalChannel::named::<PlannerGoal>(goal_channel).into();
+    /// input is keyed on, from the section's `goal_channel`. The host writes
+    /// the mission goal to this same name, so the planner and the host input
+    /// agree by construction.
+    pub(crate) fn new(map_channel: ChannelKey, goal_channel: &str) -> Self {
+        let state_channel = estimate();
+        let goal_channel = Self::goal_key(goal_channel);
 
         Self {
             state_channel: state_channel.clone(),
-            map_channel: map_channel_key.clone(),
+            map_channel: map_channel.clone(),
             goal_channel: goal_channel.clone(),
-            required: vec![state_channel, map_channel_key],
+            required: vec![state_channel, map_channel],
             optional: vec![goal_channel],
         }
+    }
+
+    /// The key a planner's goal is read from, given the config's
+    /// `goal_channel` name. The factory declares this same key as an outside
+    /// input, so the declaration and the planner's read cannot drift apart.
+    pub(crate) fn goal_key(goal_channel: &str) -> ChannelKey {
+        ChannelKey::internal::<PlannerGoal>(goal_channel)
     }
 }
 
@@ -94,11 +101,11 @@ mod tests {
     #[test]
     fn custom_goal_channel_reaches_optional_inputs() {
         let builder = DefaultSearchPlannerInputBuilder::new(
-            InternalChannel::named::<MapData>("occupancy"),
+            ChannelKey::internal::<MapData>("occupancy"),
             "waypoints",
         );
 
-        let goal: ChannelKey = InternalChannel::named::<PlannerGoal>("waypoints").into();
+        let goal = ChannelKey::internal::<PlannerGoal>("waypoints");
 
         // The goal is an optional input on the configured channel, never required.
         assert!(builder.optional_channels().contains(&goal));
@@ -107,16 +114,17 @@ mod tests {
 
     /// The optional set carries exactly the goal channel, and the required set
     /// carries state + map — so a renamed goal channel cannot leak into the
-    /// required inputs and turn an absent goal into an `UnsatisfiedInput`.
+    /// required inputs, which would make the goal something the planner cannot
+    /// run without rather than something it waits for.
     #[test]
     fn goal_is_the_only_optional_input() {
         let builder = DefaultSearchPlannerInputBuilder::new(
-            InternalChannel::named::<MapData>("occupancy"),
+            ChannelKey::internal::<MapData>("occupancy"),
             "mission",
         );
 
         assert_eq!(builder.optional_channels().len(), 1);
-        assert_eq!(&**builder.optional_channels()[0].instance(), "mission");
+        assert_eq!(&**builder.optional_channels()[0].name(), "mission");
         assert_eq!(builder.required_channels().len(), 2);
     }
 }

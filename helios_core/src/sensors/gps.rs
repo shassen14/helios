@@ -1,7 +1,9 @@
 //! Forward model for a GPS position sensor.
 
-use crate::data::sensor::GpsPosition;
+use crate::interchange::measurement::sensor::GpsPosition;
 use crate::sensors::noise::TriaxialGaussian;
+use crate::spatial::conventions::Flu;
+use crate::spatial::transforms::{Convention, ConventionOf};
 
 use nalgebra::Vector3;
 use rand::RngCore;
@@ -14,6 +16,14 @@ pub struct GpsModel {
 }
 
 impl GpsModel {
+    /// The axis convention of the antenna's frame. A fix is a world position
+    /// and uses none of its axes, but the frame still joins the tree.
+    pub const FRAME_CONVENTION: Convention = Flu::CONVENTION;
+
+    /// Whether this model's output is expressed in, or relative to, the world
+    /// frame its truth is given in. A fix is a position in that frame.
+    pub const WORLD_REFERENCED: bool = true;
+
     /// Builds the model. Returns `None` if any component of `stddev` is not
     /// strictly positive.
     pub fn new(bias: Vector3<f64>, stddev: Vector3<f64>) -> Option<Self> {

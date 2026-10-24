@@ -31,6 +31,7 @@
 //! of one type at different mounting points are two leaf entity files, each with
 //! its own `transform` and channels, mounted under two map keys.
 
+pub mod capture_pose;
 pub mod gps;
 pub mod imu;
 pub mod magnetometer;

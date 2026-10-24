@@ -1,6 +1,8 @@
 use super::Pose;
 
 use helios_core::control::actuation_model::ActuationModel;
+use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::transforms::{Convention, ConventionOf};
 
 use serde::Deserialize;
 
@@ -44,6 +46,15 @@ impl TopologyConfig {
     pub fn mounts(&self) -> &[MountConfig] {
         match self {
             TopologyConfig::RigidBodyWithMount { mounts, .. } => mounts,
+        }
+    }
+
+    /// The axis convention of the body's frames, `base_link` and every
+    /// mount: the frame a mount's pose and a sensor's installation pose are
+    /// written in.
+    pub fn convention(&self) -> Convention {
+        match self {
+            TopologyConfig::RigidBodyWithMount { .. } => Flu::CONVENTION,
         }
     }
 }

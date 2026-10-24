@@ -1,0 +1,82 @@
+# configs/runtime/catalog/semantic_classes/default.toml
+# Default semantic class catalog: what an object *is*, never how anything
+# should treat it. Groupings (vehicle, drivable, soft / hard) belong to
+# each consumer's own mapping, not here.
+#
+# IDs are permanent. The ID is the integer written into label images and
+# per-point labels, so never change an existing ID and never reuse one
+# after its class is removed. Add a class with the next unused ID; order
+# in this file does not matter. `unlabeled` must be ID 0.
+
+[[class]]
+name = "unlabeled"
+id   = 0
+
+# Ground surfaces
+[[class]]
+name = "road"
+id   = 1
+
+[[class]]
+name = "sidewalk"
+id   = 2
+
+[[class]]
+name = "terrain"
+id   = 3
+
+# Structures
+[[class]]
+name = "building"
+id   = 4
+
+[[class]]
+name = "wall"
+id   = 5
+
+[[class]]
+name = "fence"
+id   = 6
+
+# Vegetation
+[[class]]
+name = "tree"
+id   = 7
+
+[[class]]
+name = "bush"
+id   = 8
+
+# Vehicles
+[[class]]
+name = "car"
+id   = 9
+
+[[class]]
+name = "truck"
+id   = 10
+
+[[class]]
+name = "bus"
+id   = 11
+
+[[class]]
+name = "motorcycle"
+id   = 12
+
+[[class]]
+name = "bicycle"
+id   = 13
+
+# Road furniture and loose objects
+[[class]]
+name = "traffic_sign"
+id   = 14
+
+[[class]]
+name = "traffic_cone"
+id   = 15
+
+[[class]]
+name = "crate"
+id   = 16
