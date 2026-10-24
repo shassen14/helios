@@ -2,8 +2,8 @@
 # the world.
 #
 # The car's EKF reads no GPS, so nothing pins its odom to the world's datum:
-# the build places odom free. Setup refuses the evaluation and the run fails
-# (exit 1), quoting why:
+# the build places odom free. Setup refuses the evaluation and the run is
+# aborted (exit 3), quoting why:
 #   the estimate's root 'agent.DeadReckoningCar.odom' is not placed in
 #   'global.open_field': node "primary" reads no input that pins the
 #   position of agent.DeadReckoningCar.odom

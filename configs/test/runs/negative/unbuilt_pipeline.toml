@@ -1,8 +1,8 @@
 # Failure-path proof: an agent whose autonomy pipeline cannot be assembled.
 #
 # The scenario gives its agent a planner with no mapper, so `build_pipeline`
-# rejects the graph and the agent is left with no pipeline. That is a run
-# FAILURE (exit 1), not a crash and not a pass — an agent with no brain cannot
+# rejects the graph and the agent is left with no pipeline. That aborts the
+# run (exit 3), not a crash and not a pass — an agent with no brain cannot
 # satisfy anything the run was written to check.
 #
 # Zero assertions on purpose: the point is that the run fails even when no

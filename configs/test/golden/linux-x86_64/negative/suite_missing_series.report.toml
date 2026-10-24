@@ -1,10 +1,20 @@
-schema_version = "2.0"
+schema_version = "3.0"
 run_name = "suite_missing_series"
 scenario = "sim/scenarios/isolation/estimation_only.toml"
-status = "failed"
-setup_failures = ["on_pipeline_built failed: the run can't use these evaluations, assertions and measures: evaluation 'agent.EstimationCar.tracking.twist': its reference reads `reference` at agent.EstimationCar.channel.reference, and agent 'EstimationCar' has no reference seam"]
+status = "aborted"
 simulated_duration_secs = 0.0
 assertions = []
 
 [terminated_by]
 kind = "aborted"
+
+[[terminated_by.causes]]
+kind = "unusable_entries"
+
+[[evaluations]]
+name = "agent.EstimationCar.tracking.twist"
+application = "tracking"
+agent = "EstimationCar"
+kind = "twist_tracking"
+status = "unusable"
+problems = ["its reference reads `reference` at agent.EstimationCar.channel.reference, and agent 'EstimationCar' has no reference seam"]

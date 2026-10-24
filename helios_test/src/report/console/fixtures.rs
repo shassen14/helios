@@ -64,7 +64,6 @@ pub(super) fn sample_report() -> Report {
         Some(42),
         Vec::new(),
         Vec::new(),
-        Vec::new(),
         47.3,
         4.1,
         TerminatedBy::TimeBudget,

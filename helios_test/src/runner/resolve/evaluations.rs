@@ -10,7 +10,7 @@
 //! the first tick.
 
 use super::{
-    locate::{find, spellings, Catalog},
+    locate::{find, spellings, Catalogs},
     problems::{join, TargetProblem},
 };
 use crate::{
@@ -86,6 +86,8 @@ pub struct PlannedInput {
 #[error("evaluation '{name}': {}", join(.problems, PROBLEM_SEPARATOR))]
 pub struct UnusableEvaluation {
     pub name: EvaluationName,
+    /// The kind its entry names, as the run file wrote it.
+    pub kind: String,
     pub problems: Vec<EvaluationProblem>,
 }
 
@@ -105,6 +107,9 @@ pub enum EvaluationProblem {
     /// A suite applied to an agent the run doesn't have, with those it has.
     #[error("the run has no agent by that name (it has {})", .0.join(LIST_SEPARATOR))]
     UnknownAgent(Vec<String>),
+    /// A suite applied to an agent whose pipeline wasn't built.
+    #[error("its agent's pipeline wasn't built")]
+    PipelineNotBuilt,
     /// A suite's role reading an agent series the agent doesn't write, at
     /// the selector it was bound to.
     #[error("{}", missing_series(.role, *.series, .target, .agent, .declared.as_deref()))]
@@ -134,20 +139,24 @@ pub(in crate::runner) struct RunEvaluations<'r> {
 /// Each evaluation the run can build, bound in `collector`, and each it
 /// can't, both in run-file order: the inline entries, then each suite's
 /// entries on each agent it is applied to, agent by agent (under `"*"`, in
-/// the order of `catalogs`). A role its entry gives no gap takes its own
-/// file's `[evaluation]`: the run's for an inline entry, the suite's for a
-/// suite's.
+/// the order of `catalogs`, an unbuilt agent's refused for that). A role
+/// its entry gives no gap takes its own file's `[evaluation]`: the run's
+/// for an inline entry, the suite's for a suite's.
 pub(super) fn resolve_evaluations(
     run: RunEvaluations,
     registry: &EvaluatorRegistry,
-    catalogs: &[Catalog],
+    catalogs: &Catalogs,
     collector: &mut ObservationCollector,
 ) -> (Vec<PlannedEvaluation>, Vec<UnusableEvaluation>) {
     let mut planned = Vec::new();
     let mut unusable = Vec::new();
-    let mut sort = |name: EvaluationName, result| match result {
+    let mut sort = |name: EvaluationName, kind: &str, result| match result {
         Ok(evaluation) => planned.push(evaluation),
-        Err(problems) => unusable.push(UnusableEvaluation { name, problems }),
+        Err(problems) => unusable.push(UnusableEvaluation {
+            name,
+            kind: kind.to_owned(),
+            problems,
+        }),
     };
     for evaluation in run.inline {
         let name = EvaluationName::Inline(evaluation.name.clone());
@@ -160,11 +169,11 @@ pub(super) fn resolve_evaluations(
             catalogs,
             collector,
         );
-        sort(name, result);
+        sort(name, &evaluation.kind, result);
     }
     for suite in run.suites {
         let agents: Vec<&AgentId> = match &suite.application.agents {
-            AgentSelection::Every => catalogs.iter().map(|catalog| catalog.agent).collect(),
+            AgentSelection::Every => catalogs.agents().collect(),
             AgentSelection::Listed(agents) => agents.iter().collect(),
         };
         for agent in agents {
@@ -189,7 +198,7 @@ pub(super) fn resolve_evaluations(
                         collector,
                     )
                 });
-                sort(name, result);
+                sort(name, &entry.kind, result);
             }
         }
     }
@@ -204,15 +213,18 @@ fn bind(
     entry: &Evaluation<AgentSeries>,
     agent: &AgentId,
     registry: &EvaluatorRegistry,
-    catalogs: &[Catalog],
+    catalogs: &Catalogs,
 ) -> Result<Evaluation, Vec<EvaluationProblem>> {
-    if !catalogs.iter().any(|catalog| catalog.agent == agent) {
-        return Err(vec![EvaluationProblem::UnknownAgent(
-            catalogs
-                .iter()
-                .map(|catalog| catalog.agent.as_str().to_owned())
-                .collect(),
-        )]);
+    if let Err(problem) = catalogs.of(agent) {
+        return Err(vec![match problem {
+            TargetProblem::PipelineNotBuilt => EvaluationProblem::PipelineNotBuilt,
+            _ => EvaluationProblem::UnknownAgent(
+                catalogs
+                    .agents()
+                    .map(|agent| agent.as_str().to_owned())
+                    .collect(),
+            ),
+        }]);
     }
     // Load checked the kind exists and each fixed series fits its role.
     let Some(kind) = registry.get(&entry.kind) else {
@@ -319,7 +331,7 @@ fn plan(
     origin: Origin,
     defaults: Option<&EvaluationDefaults>,
     registry: &EvaluatorRegistry,
-    catalogs: &[Catalog],
+    catalogs: &Catalogs,
     collector: &mut ObservationCollector,
 ) -> Result<PlannedEvaluation, Vec<EvaluationProblem>> {
     // Load checked the kind exists and every role has an input.
@@ -426,7 +438,7 @@ fn locate_input(
     target: &AssertionTarget,
     role: &Role,
     series: Option<AgentSeries>,
-    catalogs: &[Catalog],
+    catalogs: &Catalogs,
 ) -> Result<Bound, Vec<TargetProblem>> {
     let (catalog, selected) = find(target, catalogs)?;
     let [(subject, observable)] = selected.as_slice() else {
@@ -647,8 +659,10 @@ mod tests {
             &[],
             &standard_evaluators(),
             &pipelines,
+            &[],
             &mut collector,
-        );
+        )
+        .map_err(|unresolved| unresolved.unusable);
         (collector, plan)
     }
 
@@ -714,7 +728,8 @@ mod tests {
     fn the_estimates_state_is_bound_in_the_root_its_source_holds_it_in() {
         let agent = AgentId::new(CAR);
         let pipeline = oracle_estimate();
-        let catalogs = [Catalog::new(&agent, &pipeline)];
+        let pipelines = [(agent.clone(), &pipeline)];
+        let catalogs = Catalogs::new(&pipelines, &[]);
         let target = AssertionTarget::parse(channel_path(CAR, &estimate::estimate()))
             .expect("a valid target");
 

@@ -46,7 +46,7 @@ pub struct Unusable {
 }
 
 impl Unusable {
-    pub(super) fn is_empty(&self) -> bool {
+    pub(in crate::runner) fn is_empty(&self) -> bool {
         self.evaluations.is_empty() && self.entries.is_empty()
     }
 }
@@ -66,6 +66,9 @@ pub enum TargetProblem {
     /// The scenario has no agent of that name with a pipeline.
     #[error("no agent by that name has a pipeline")]
     UnknownAgent,
+    /// Its agent is in the scenario, and its pipeline wasn't built.
+    #[error("its agent's pipeline wasn't built")]
+    PipelineNotBuilt,
     /// Its agent reports nothing at that node and leaf, or has no channel
     /// by that name.
     #[error("its agent reports nothing there")]

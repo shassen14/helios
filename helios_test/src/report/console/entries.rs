@@ -7,7 +7,7 @@ use super::{
         AssertionReportEntry, FailureReason, MeasureReportEntry, ReportedUnit, SeriesSummary,
         Verdict,
     },
-    status_label,
+    status_label, unusable_detail,
 };
 use crate::{
     assertion::{AssertionValue, Condition},
@@ -48,6 +48,9 @@ pub(super) fn assertion_line(entry: &AssertionReportEntry) -> String {
         let detail = failure_detail(actual.as_ref(), entry.unit(), *reason, *failed_at_secs);
         line.push_str(&format!(" ({detail})"));
     }
+    if let Verdict::Unusable { problems } = entry.verdict() {
+        line.push_str(&unusable_detail(problems));
+    }
 
     // What the series held, so a silent signal shows beside a pass.
     line.push_str(&format!(
@@ -73,7 +76,9 @@ pub(super) fn measure_line(entry: &MeasureReportEntry) -> String {
         entry.target,
         series_phrase(entry.series(), entry.unit()),
     );
-    if !entry.covered() {
+    if entry.is_unusable() {
+        line.push_str(&unusable_detail(entry.problems()));
+    } else if !entry.covered() {
         line.push_str(" (not covered: the run stopped before its end)");
     }
     line

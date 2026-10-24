@@ -30,4 +30,4 @@ pub use plan::{EntryOwner, ResolvedPlan};
 pub use problems::{TargetProblem, Unusable, UnusableEntry};
 
 pub(super) use evaluations::RunEvaluations;
-pub(super) use plan::{resolve, EntryView};
+pub(super) use plan::{resolve, EntryView, Unresolved};

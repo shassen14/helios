@@ -3,7 +3,7 @@
 //! keyed channel of two instances, an evaluator kind comparing the two
 //! channels, and a collector they are reported to.
 
-use super::{state::AssertionState, Phase, Runner};
+use super::{state::AssertionState, Phase, Runner, UnbuiltPipeline};
 use crate::{
     assertion::extract::standard_extractors,
     collector::ObservationCollector,
@@ -410,6 +410,20 @@ pub(super) fn set_up(
     ObservationCollector,
     Result<(), super::setup::SetupError>,
 ) {
+    set_up_unbuilt(run, agents, &[])
+}
+
+/// As [`set_up`], each of `unbuilt` an agent whose pipeline failed with
+/// [`BUILD_ERROR`].
+pub(super) fn set_up_unbuilt(
+    run: Run,
+    agents: &[&str],
+    unbuilt: &[&str],
+) -> (
+    Runner,
+    ObservationCollector,
+    Result<(), super::setup::SetupError>,
+) {
     let mut runner = Runner::with_evaluators(run, evaluators()).expect("valid run");
     let mut extractors = standard_extractors();
     extractors.register::<Wheel, f64>(|wheel| wheel.speed, Some(SiUnit::MetersPerSecond));
@@ -422,9 +436,19 @@ pub(super) fn set_up(
         .iter()
         .map(|(agent, pipeline)| (agent.clone(), pipeline))
         .collect();
-    let setup = runner.on_pipeline_built(&pairs, &mut collector);
+    let unbuilt: Vec<UnbuiltPipeline> = unbuilt
+        .iter()
+        .map(|agent| UnbuiltPipeline {
+            agent: AgentId::new(*agent),
+            errors: vec![BUILD_ERROR.to_owned()],
+        })
+        .collect();
+    let setup = runner.on_pipeline_built(&pairs, &unbuilt, &mut collector);
     (runner, collector, setup)
 }
+
+/// What an unbuilt pipeline's host reports.
+pub(super) const BUILD_ERROR: &str = "nothing supplies the map";
 
 /// `agent`'s estimator reports `value` for [`LEAF`] at `secs`.
 pub(super) fn report(collector: &mut ObservationCollector, agent: &str, secs: f64, value: f64) {
@@ -542,6 +566,6 @@ fn observe_under(
 pub(super) fn states(runner: &Runner) -> Vec<&AssertionState> {
     match &runner.phase {
         Phase::Ready(plan) => plan.states().collect(),
-        Phase::AwaitingPipelines | Phase::Aborted => Vec::new(),
+        Phase::AwaitingPipelines | Phase::Aborted(_) => Vec::new(),
     }
 }

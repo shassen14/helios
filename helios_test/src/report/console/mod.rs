@@ -19,9 +19,16 @@ mod fixtures;
 
 use self::{
     entries::{assertion_line, measure_line},
-    evaluation::evaluation_lines,
+    evaluation::evaluation_report_lines,
 };
-use super::{phrase::entry_name, AssertionStatus, Report, ReportStatus, TerminatedBy};
+use super::{
+    phrase::entry_name, AbortCause, AssertionStatus, FaultStep, HostFault, Report, ReportStatus,
+    TerminatedBy,
+};
+
+/// Between the problems of one refused entry or evaluation, and between the
+/// causes of one abort.
+const LIST_SEPARATOR: &str = "; ";
 
 /// Print a finished report to stdout. This is the one sanctioned `println!` in
 /// the crate: it renders an already-decided result for a human, it does not emit
@@ -46,10 +53,19 @@ fn render(report: &Report) -> String {
     // Why the run stopped, plus the simulated time it stopped at.
     lines.push(format!("[run] terminated: {}", termination_line(report)));
 
-    // Setup failures come before the assertion lines: they explain why there
-    // may be no assertion lines worth reading.
-    for reason in &report.setup_failures {
-        lines.push(format!("[setup] {reason}"));
+    // Each unbuilt pipeline's errors come before the entry lines: they
+    // explain why there may be no entry lines worth reading. Every other
+    // cause is told in full by the termination line or its entries.
+    if let TerminatedBy::Aborted { causes } = &report.terminated_by {
+        for cause in causes {
+            if let AbortCause::PipelineNotBuilt { agent, errors } = cause {
+                lines.extend(
+                    errors
+                        .iter()
+                        .map(|error| format!("[setup] agent '{agent}' has no pipeline: {error}")),
+                );
+            }
+        }
     }
 
     // Refused writes too: values the wiring dropped make the assertion lines
@@ -66,7 +82,7 @@ fn render(report: &Report) -> String {
 
     // One block per evaluation, before the entries judging its metrics.
     for evaluation in report.evaluations() {
-        lines.push(evaluation_lines(evaluation));
+        lines.push(evaluation_report_lines(evaluation));
     }
 
     // One line per assertion, in run-file order.
@@ -98,11 +114,14 @@ fn render(report: &Report) -> String {
 
 /// Phrase the termination reason as "<cause> at t=<sim-seconds>s". The sim time
 /// is the report's `simulated_duration_secs`; for a `fail_fast` stop we also
-/// say which assertion failed.
+/// say which assertion failed, and for an abort every cause.
 fn termination_line(report: &Report) -> String {
     let at = format!("t={:.1}s", report.simulated_duration_secs);
     match &report.terminated_by {
-        TerminatedBy::Aborted => "aborted during setup, before the first tick".to_string(),
+        TerminatedBy::Aborted { causes } => {
+            let causes: Vec<String> = causes.iter().map(cause_phrase).collect();
+            format!("aborted untested: {}", causes.join(LIST_SEPARATOR))
+        }
         TerminatedBy::TimeBudget => format!("time budget reached at {at}"),
         TerminatedBy::AssertionFailed { name, instance, .. } => format!(
             "assertion '{}' {} at {at}",
@@ -112,21 +131,55 @@ fn termination_line(report: &Report) -> String {
     }
 }
 
+/// One cause of an abort, phrased for the termination line.
+fn cause_phrase(cause: &AbortCause) -> String {
+    match cause {
+        AbortCause::PipelineNotBuilt { agent, .. } => {
+            format!("the pipeline of agent '{agent}' wasn't built")
+        }
+        AbortCause::UnusableEntries => "the run refused what it can't use".to_string(),
+        AbortCause::HostFault(fault) => match fault {
+            HostFault::AskedBeforeSetup => {
+                "the host asked the collector what to record before setup".to_string()
+            }
+            HostFault::NeverSetUp => "the host never set the run up".to_string(),
+            HostFault::NeverTicked => "the host finalized the run without a tick".to_string(),
+            HostFault::StoppedUnasked => {
+                "the host stopped the run without being told to".to_string()
+            }
+            HostFault::ForeignCollector { at } => format!(
+                "the host handed over another run's collector {}",
+                match at {
+                    FaultStep::Tick { at_secs } => format!("at t={at_secs:.1}s"),
+                    FaultStep::Finalize => "at finalize".to_string(),
+                }
+            ),
+        },
+    }
+}
+
+/// " (unusable: <problem>; <problem>)", after a refused line.
+fn unusable_detail(problems: &[String]) -> String {
+    format!(" (unusable: {})", problems.join(LIST_SEPARATOR))
+}
+
 /// Label for a per-assertion verdict. A plain `&'static str`, no allocation.
 fn status_label(status: &AssertionStatus) -> &'static str {
     match status {
         AssertionStatus::Passed => "PASSED",
         AssertionStatus::Failed => "FAILED",
         AssertionStatus::Unjudged => "UNJUDGED",
+        AssertionStatus::Unusable => "UNUSABLE",
     }
 }
 
 /// Label for the run-level verdict. Separate from [`status_label`] because
-/// `ReportStatus` has no `Unjudged` — a finished run is only ever passed or failed.
+/// a run's statuses aren't an assertion's.
 fn run_status_label(status: &ReportStatus) -> &'static str {
     match status {
         ReportStatus::Passed => "PASSED",
         ReportStatus::Failed => "FAILED",
+        ReportStatus::Aborted => "ABORTED",
     }
 }
 
@@ -174,6 +227,47 @@ mod tests {
             text.contains("assertion 'speed_capped[instance=rear]' FAILED"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn an_aborted_run_names_every_cause_and_each_unbuilt_pipelines_errors() {
+        let mut report = sample_report();
+        report.status = ReportStatus::Aborted;
+        report.terminated_by = TerminatedBy::Aborted {
+            causes: vec![
+                AbortCause::PipelineNotBuilt {
+                    agent: "truck".to_string(),
+                    errors: vec!["nothing supplies the map".to_string()],
+                },
+                AbortCause::UnusableEntries,
+                AbortCause::HostFault(HostFault::ForeignCollector {
+                    at: FaultStep::Finalize,
+                }),
+            ],
+        };
+        report.assertions[1] = fixtures::failing_speed(super::super::Verdict::Unusable {
+            problems: vec!["its agent's pipeline wasn't built".to_string()],
+        });
+
+        let text = render(&report);
+
+        assert!(
+            text.contains(
+                "[run] terminated: aborted untested: the pipeline of agent 'truck' wasn't \
+                 built; the run refused what it can't use; the host handed over another \
+                 run's collector at finalize"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("[setup] agent 'truck' has no pipeline: nothing supplies the map"),
+            "{text}"
+        );
+        assert!(
+            text.contains("UNUSABLE (unusable: its agent's pipeline wasn't built)"),
+            "{text}"
+        );
+        assert!(text.contains("[run] result: ABORTED"), "{text}");
     }
 
     #[test]

@@ -125,6 +125,9 @@ pub struct MeasureAggregate {
     /// placed. Each run's report says why.
     #[serde(skip_serializing_if = "is_zero")]
     no_value: usize,
+    /// Runs that refused it at setup, which gave it no value either.
+    #[serde(skip_serializing_if = "is_zero")]
+    unusable: usize,
     /// Runs whose value was a bool or a string, which no statistic reduces.
     #[serde(skip_serializing_if = "is_zero")]
     not_numbers: usize,
@@ -145,7 +148,12 @@ impl MeasureAggregate {
         let first = entries.first()?;
         let mut numbers = Vec::new();
         let (mut samples, mut not_covered, mut no_value, mut not_numbers) = (0, 0, 0, 0);
+        let mut unusable = 0;
         for entry in entries {
+            if entry.is_unusable() {
+                unusable += 1;
+                continue;
+            }
             match entry.value().map(|value| value.as_number()) {
                 Some(Some(number)) => {
                     numbers.push(number);
@@ -175,6 +183,7 @@ impl MeasureAggregate {
             samples,
             not_covered,
             no_value,
+            unusable,
             not_numbers,
             absent: missing.absent,
             no_report: missing.no_report,
@@ -194,13 +203,17 @@ pub struct AssertionAggregate {
     agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<String>,
-    /// The batch's runs: `passed + failed + unjudged + absent + no_report`.
+    /// The batch's runs: `passed + failed + unjudged + unusable + absent +
+    /// no_report`.
     runs: usize,
     passed: usize,
     failed: usize,
     /// Runs that never reached the end of its window.
     #[serde(skip_serializing_if = "is_zero")]
     unjudged: usize,
+    /// Runs that refused it at setup: the test, not the robot, is broken.
+    #[serde(skip_serializing_if = "is_zero")]
+    unusable: usize,
     /// Runs whose report hasn't it: an instance of `"*"` none of its series
     /// named.
     #[serde(skip_serializing_if = "is_zero")]
@@ -242,6 +255,7 @@ impl AssertionAggregate {
             passed: count(AssertionStatus::Passed),
             failed: count(AssertionStatus::Failed),
             unjudged: count(AssertionStatus::Unjudged),
+            unusable: count(AssertionStatus::Unusable),
             absent: missing.absent,
             no_report: missing.no_report,
             // `pass_rate` reads verdicts, so it is never refused here.
@@ -408,7 +422,6 @@ mod tests {
             seed,
             Vec::new(),
             Vec::new(),
-            Vec::new(),
             20.0,
             1.0,
             TerminatedBy::TimeBudget,
@@ -565,6 +578,23 @@ mod tests {
         assert_eq!(row.runs, 4);
         assert_eq!((row.passed, row.failed, row.unjudged), (2, 1, 1));
         assert_eq!(row.pass_rate, Some(0.5));
+    }
+
+    #[test]
+    fn an_unusable_entry_is_counted_apart_never_as_a_failure() {
+        let unusable = || Verdict::Unusable {
+            problems: vec!["its agent's pipeline wasn't built".to_owned()],
+        };
+        let refused = || measure("final_x", None, 0, false).refused(vec!["refused".to_owned()]);
+        let report = batch(&[
+            (vec![refused()], vec![assertion("nis_final", unusable())]),
+            (vec![refused()], vec![assertion("nis_final", unusable())]),
+        ]);
+
+        let row = &report.assertions[0];
+        assert_eq!((row.runs, row.failed, row.unusable), (2, 0, 2));
+        let row = &report.measures[0];
+        assert_eq!((row.runs, row.no_value, row.unusable), (0, 0, 2));
     }
 
     #[test]

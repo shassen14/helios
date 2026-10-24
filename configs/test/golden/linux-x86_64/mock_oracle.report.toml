@@ -1,4 +1,4 @@
-schema_version = "2.0"
+schema_version = "3.0"
 run_name = "mock_oracle"
 scenario = "sim/scenarios/dev_mock_oracle.toml"
 status = "passed"

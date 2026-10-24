@@ -5,7 +5,7 @@ use super::report::HostFacts;
 use crate::{
     assertion::EntryName,
     collector::ObservationCollector,
-    report::{AssertionStatus, Report},
+    report::{AssertionStatus, DerivedEvaluation, Report},
     run::{termination::TerminationReason, Run},
     runner::{
         fixtures::{at, lag, lag_target, leaf_key, run_evaluating, speed_target, CAR},
@@ -44,6 +44,16 @@ pub(super) fn finalize_stopped_by(
     r.finalize(host_facts(reason, Vec::new()), collector)
 }
 
+// Build the report for a run the host stopped with no reason from the
+// runner: one it aborted, or one it never told to stop.
+pub(super) fn finalize_unstopped(r: &Runner, collector: &ObservationCollector) -> Report {
+    let host = HostFacts {
+        terminated_by_reason: None,
+        ..host_facts(TerminationReason::MaxSimulatedSeconds, Vec::new())
+    };
+    r.finalize(host, collector)
+}
+
 // What the host hands finalize: a run named "run", stopped by `reason`,
 // whose buses refused `refused_writes`.
 pub(super) fn host_facts(
@@ -54,7 +64,7 @@ pub(super) fn host_facts(
         sim_now: at(0.0),
         wall_duration_secs: 0.0,
         run_name: "run".to_string(),
-        terminated_by_reason: reason,
+        terminated_by_reason: Some(reason),
         master_seed: None,
         refused_writes,
     }
@@ -66,6 +76,13 @@ pub(super) fn failed_first() -> TerminationReason {
         name: EntryName::parse("first").expect("valid name"),
         key: leaf_key(CAR),
     }
+}
+
+/// The report's first evaluation, which derived.
+pub(super) fn derived(report: &Report) -> &DerivedEvaluation {
+    report.evaluations()[0]
+        .derived()
+        .expect("the first evaluation derived")
 }
 
 pub(super) fn statuses(report: &Report) -> Vec<AssertionStatus> {

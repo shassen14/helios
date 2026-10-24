@@ -10,28 +10,22 @@ pub mod window;
 mod fixtures;
 
 pub use finalize::HostFacts;
+pub use setup::UnbuiltPipeline;
 pub use tick::TickAction;
 
 use crate::{
     assertion::extract::standard_extractors,
     collector::ObservationCollector,
     evaluation::{standard_evaluators, EvaluatorRegistry},
+    report::{AbortCause, HostFault},
     run::{
         validation::{self, ValidationError},
         Run,
     },
-    runner::resolve::ResolvedPlan,
+    runner::resolve::{evaluations::PlannedEvaluation, ResolvedPlan, Unusable},
 };
 
 use helios_core::prelude::MonotonicTime;
-
-/// Why a run aborts when the host ticks or finishes it without having set
-/// it up.
-const NEVER_SET_UP: &str = "the host never called on_pipeline_built";
-
-/// Why a run aborts when the host hands it a collector it wasn't set up
-/// against.
-const FOREIGN_COLLECTOR: &str = "the collector is not the one the run was set up against";
 
 /// _Per-step._ The state machine the host pumps across a run: owns the run,
 /// its phase (which holds each entry's state once the run is ready), and
@@ -43,7 +37,6 @@ pub struct Runner {
     phase: Phase,
     /// `None` until the first tick.
     ticks: Option<TickSpan>,
-    setup_failures: Vec<String>,
 }
 
 impl Runner {
@@ -70,11 +63,6 @@ impl Runner {
             evaluators,
             phase: Phase::AwaitingPipelines,
             ticks: None,
-            // Filled only if the run is doomed before it ticks. Assertions
-            // cannot speak for this class of failure: a scenario whose agent
-            // has no pipeline usually has no assertion naming it either, so
-            // an assertion-only verdict reports a vacuous pass.
-            setup_failures: Vec::new(),
         })
     }
 
@@ -87,23 +75,11 @@ impl Runner {
         ObservationCollector::new(standard_extractors())
     }
 
-    /// Whether the run was aborted before its first tick: setup refused it,
-    /// or the host recorded a failure no assertion can observe. An aborted
-    /// run judges nothing, so a host stops it and finalizes.
+    /// Whether the run was aborted untested: setup refused it, or the host
+    /// broke its contract with the runner. An aborted run judges nothing, so
+    /// a host stops it and finalizes, and the report says why.
     pub fn is_aborted(&self) -> bool {
-        self.phase == Phase::Aborted
-    }
-
-    /// Record that the run is unfit to produce a meaningful result, and why.
-    ///
-    /// Called before the first tick, by the host, for conditions no assertion
-    /// can observe. Any recorded failure forces the run's verdict to
-    /// [`ReportStatus::Failed`] in [`Self::finalize`], independent of how the
-    /// assertions land — including when there are none. From then on the
-    /// run judges nothing, whatever phase it was in.
-    pub fn fail_setup(&mut self, reason: String) {
-        self.setup_failures.push(reason);
-        self.phase = Phase::Aborted;
+        matches!(self.phase, Phase::Aborted(_))
     }
 }
 
@@ -118,8 +94,54 @@ enum Phase {
     /// Every assertion can be judged, from the series the plan names, and
     /// the plan holds each one's state.
     Ready(ResolvedPlan),
-    /// Setup failed; nothing is judged.
-    Aborted,
+    /// Stopped untested, for what the abort holds; nothing is judged.
+    Aborted(Abort),
+}
+
+/// _Per-step._ Why the runner stopped a run untested, as far as it found
+/// before it stopped looking: setup checks every agent and entry at once, and
+/// a host fault ends the run where it is found.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct Abort {
+    /// Each agent whose pipeline the host couldn't build.
+    unbuilt: Vec<UnbuiltPipeline>,
+    /// The evaluations and entries setup refused.
+    unusable: Unusable,
+    /// The evaluations setup bound, which the run stopped before deriving.
+    bound: Vec<PlannedEvaluation>,
+    fault: Option<HostFault>,
+}
+
+impl Abort {
+    /// An abort for the host's `fault` alone.
+    fn fault(fault: HostFault) -> Self {
+        Self {
+            fault: Some(fault),
+            ..Self::default()
+        }
+    }
+
+    /// An abort for the host's `fault`, found once setup had bound `plan`.
+    fn fault_in(fault: HostFault, plan: &ResolvedPlan) -> Self {
+        Self {
+            bound: plan.evaluations().to_vec(),
+            ..Self::fault(fault)
+        }
+    }
+
+    /// Each cause the abort holds, as the report names it: the pipelines not
+    /// built, then the host's fault. Whether entries were refused the report
+    /// derives from the entries themselves.
+    fn causes(&self) -> Vec<AbortCause> {
+        self.unbuilt
+            .iter()
+            .map(|unbuilt| AbortCause::PipelineNotBuilt {
+                agent: unbuilt.agent.as_str().to_owned(),
+                errors: unbuilt.errors.clone(),
+            })
+            .chain(self.fault.clone().map(AbortCause::HostFault))
+            .collect()
+    }
 }
 
 /// _Per-step._ The simulated time a run's ticks have covered: its first
@@ -176,13 +198,5 @@ mod tests {
         let r = Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }"))
             .expect("valid run");
         assert_eq!(r.phase, Phase::AwaitingPipelines);
-    }
-
-    #[test]
-    fn a_setup_failure_aborts_the_run() {
-        let mut r = Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }"))
-            .expect("valid run");
-        r.fail_setup("no pipeline".to_string());
-        assert_eq!(r.phase, Phase::Aborted);
     }
 }

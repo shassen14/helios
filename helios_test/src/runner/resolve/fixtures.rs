@@ -256,9 +256,10 @@ pub(super) fn resolve_all(
         &measures,
         &standard_evaluators(),
         &[(AgentId::new(CAR), &pipeline)],
+        &[],
         &mut collector,
     )
-    .map_err(|unusable| unusable.entries);
+    .map_err(|unresolved| unresolved.unusable.entries);
     (collector, resolved)
 }
 

@@ -47,7 +47,7 @@ pub use evaluation::{standard_evaluators, EvaluatorRegistry};
 pub use report::aggregate::{AggregateReport, BatchRun};
 pub use report::{Report, ReportStatus};
 pub use run::{Run, RunLoadError};
-pub use runner::{HostFacts, Runner, TickAction};
+pub use runner::{HostFacts, Runner, TickAction, UnbuiltPipeline};
 
 // features
 #[cfg(feature = "sim")]

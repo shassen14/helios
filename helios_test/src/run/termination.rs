@@ -44,12 +44,11 @@ impl Termination {
     }
 }
 
-/// _Per-step._ Why a run actually stopped — the outcome paired with [`Termination`]'s
-/// config.
+/// _Per-step._ Why a tested run stopped — the outcome paired with
+/// [`Termination`]'s config. A run stopped untested is the runner's to
+/// explain, at finalize.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TerminationReason {
-    /// The failed setup abort.
-    Aborted,
     /// The simulated-time budget elapsed.
     MaxSimulatedSeconds,
     /// An every-sample assertion failed and the run is `fail_fast`. `name`

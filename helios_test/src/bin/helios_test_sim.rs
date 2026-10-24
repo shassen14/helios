@@ -3,14 +3,20 @@
 //!
 //! Exit codes are the contract:
 //! - `0` — the run passed.
-//! - `1` — the run ran but an assertion failed, or setup found one it can't
-//!   judge.
+//! - `1` — the run was tested and failed: an assertion failed, or its wiring
+//!   or recording dropped values.
 //! - `2` — the run file is malformed: unreadable, unparseable, incoherent, or
-//!   it names a scenario that doesn't exist. Detected *before* the sim starts.
+//!   it names a scenario that doesn't exist. Detected *before* the sim starts,
+//!   so there is no report.
+//! - `3` — the run was aborted untested: a pipeline wasn't built, the run
+//!   can't use an entry, or the host broke its contract. Its report says why.
+//!
+//! A batch exits with its worst run's code: any aborted run makes it 3,
+//! else any failed run 1.
 //!
 //! The bin owns the exit code; Bevy owns the loop. The verdict crosses that
 //! boundary as the `AppExit` that `app.run()` returns — `finalize` encodes the
-//! pass/fail into the exit code (`run()` empties the App, so the world can't be
+//! status into the exit code (`run()` empties the App, so the world can't be
 //! read afterward).
 
 use helios_sim::core::simulation_setup::StepsPerUpdate;
@@ -119,7 +125,9 @@ fn main() {
     let n = args.monte_carlo.unwrap_or(1).max(1);
 
     let mut runs = Vec::new();
-    let mut all_passed = true;
+    // The codes rank as the runs do: aborted (3) outranks failed (1), which
+    // outranks passed (0), so the batch's code is the greatest.
+    let mut batch_exit: u8 = 0;
 
     for i in 0..n {
         // --- Assemble the host body; the test layer wraps it below. ---
@@ -185,8 +193,11 @@ fn main() {
         // `run()` returns the AppExit that `finalize` wrote (it carries the verdict
         // as its exit code). We can't read RunVerdict from the world here because
         // `run()` empties the App in Bevy 0.16 — hence the AppExit channel.
-        let exit = app.run();
-        all_passed &= exit.is_success();
+        let exit = match app.run() {
+            AppExit::Success => 0,
+            AppExit::Error(code) => code.get(),
+        };
+        batch_exit = batch_exit.max(exit);
 
         // The world is drained now, but the bin's clone still points at the report
         // finalize stored. `None` means the run never finalized; the aggregate
@@ -204,8 +215,8 @@ fn main() {
         let aggregate_report = AggregateReport::from_runs(&runs);
 
         // A failed write is an I/O problem, not a test failure: log it and carry
-        // on, exactly as the single-run report path does. It must not flip the
-        // exit code (reserved for assertion pass/fail) or panic.
+        // on, exactly as the single-run report path does. It must not change
+        // the exit code (reserved for the runs' statuses) or panic.
         if let Err(e) = write(&aggregate_report, &args.out) {
             eprintln!("failed to write aggregate report: {e}");
         }
@@ -213,7 +224,7 @@ fn main() {
         print(&aggregate_report);
     }
 
-    std::process::exit(if all_passed { 0 } else { 1 });
+    std::process::exit(i32::from(batch_exit));
 }
 
 /// Derive a human-readable run name from the run file path (its file stem),

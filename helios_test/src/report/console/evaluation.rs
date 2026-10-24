@@ -1,7 +1,13 @@
 //! An evaluation's block: what it read, how well its inputs covered the
 //! base, and which metrics it computed, one fact per line.
 
-use super::super::{EvaluationReportEntry, MetricReport, ReportedUnit};
+use super::{
+    super::{
+        BoundEvaluation, DerivedEvaluation, EvaluationOutcome, EvaluationReport, MetricReport,
+        ReportedUnit,
+    },
+    unusable_detail,
+};
 use crate::evaluation::derived::Coverage;
 
 use helios_core::kernel::{identifier::LEVEL_SEPARATOR, si_unit::SiUnit};
@@ -10,26 +16,46 @@ use helios_core::kernel::{identifier::LEVEL_SEPARATOR, si_unit::SiUnit};
 /// table under its key.
 const INDENT: &str = "    ";
 
-/// "[evaluate] <name>: <kind> over <samples> samples[, <n> uncovered][, <n>
-/// not computed]", then one indented line per parameter and per fact
-/// binding fixed (a table's entries each on its own line beneath its key),
-/// one per role ("<role>: [<series> at ]<target>, <writer>[, <provenance>]
-/// [, gaps up to <seconds> s[ = <multiple> periods]][, <n> before its first
-/// value][, <n> in its gaps][, <n> after its last value]", the base's cap
-/// reading "<n> gaps past <seconds> s"), each metric read with its unit,
-/// and the metrics offered but unread. Each count but the base's gaps
-/// shows only when nonzero.
-pub(super) fn evaluation_lines(evaluation: &EvaluationReportEntry) -> String {
-    let mut head = format!(
-        "[evaluate] {}: {} over {} samples",
-        evaluation.name, evaluation.kind, evaluation.samples,
-    );
-    if evaluation.uncovered > 0 {
-        head.push_str(&format!(", {} uncovered", evaluation.uncovered));
+/// An evaluation's block: its head line, then for one setup bound, a line
+/// per fact of [`bound_lines`].
+pub(super) fn evaluation_report_lines(evaluation: &EvaluationReport) -> String {
+    let named = format!("[evaluate] {}: {}", evaluation.name, evaluation.kind);
+    match &evaluation.outcome {
+        EvaluationOutcome::Derived(derived) => {
+            bound_lines(derived_head(named, derived), &derived.bound)
+        }
+        EvaluationOutcome::Underived(bound) => bound_lines(
+            format!("{named} UNDERIVED (the run was aborted before deriving it)"),
+            bound,
+        ),
+        EvaluationOutcome::Unusable { problems } => {
+            format!("{named} UNUSABLE{}", unusable_detail(problems))
+        }
     }
-    if evaluation.refused > 0 {
-        head.push_str(&format!(", {} not computed", evaluation.refused));
+}
+
+/// "<named> over <samples> samples[, <n> uncovered][, <n> not computed]",
+/// each count showing only when nonzero.
+fn derived_head(named: String, derived: &DerivedEvaluation) -> String {
+    let mut head = format!("{named} over {} samples", derived.samples);
+    if derived.uncovered > 0 {
+        head.push_str(&format!(", {} uncovered", derived.uncovered));
     }
+    if derived.refused > 0 {
+        head.push_str(&format!(", {} not computed", derived.refused));
+    }
+    head
+}
+
+/// `head`, then one indented line per parameter and per fact binding fixed
+/// (a table's entries each on its own line beneath its key), one per role
+/// ("<role>: [<series> at ]<target>, <writer>[, <provenance>][, gaps up to
+/// <seconds> s[ = <multiple> periods]][, <n> before its first value][, <n>
+/// in its gaps][, <n> after its last value]", the base's cap reading "<n>
+/// gaps past <seconds> s"), each metric read with its unit, and the metrics
+/// offered but unread. Each count but the base's gaps shows only when
+/// nonzero.
+fn bound_lines(head: String, evaluation: &BoundEvaluation) -> String {
     let mut lines = vec![head];
     for (key, value) in evaluation.params.iter().chain(&evaluation.binding) {
         lines.extend(field_lines(key, value));
@@ -153,14 +179,74 @@ mod tests {
 
     #[test]
     fn an_evaluation_shows_its_inputs_coverage_and_the_metrics_read_then_offered() {
-        let twist = EvaluationReportEntry {
+        let twist = derived(
+            "twist",
+            "twist_tracking",
+            DerivedEvaluation {
+                samples: 100,
+                uncovered: 3,
+                refused: 0,
+                bound: twist_bound(),
+            },
+        );
+
+        assert_eq!(
+            evaluation_report_lines(&twist),
+            "[evaluate] twist: twist_tracking over 100 samples, 3 uncovered\n    \
+             truth: agent.car.channel.truth.twist[agent.car.base_link], body unit truth, \
+             exact, 2 gaps past 0.5 s\n    \
+             reference: agent.car.channel.reference, node reference_arbiter, gaps up to \
+             0.0075 s = 3 periods, 1 before its first value, 2 after its last value\n    \
+             metrics:\n        \
+             eval.inline.twist.surge in m/s\n    \
+             also offers: sway"
+        );
+    }
+
+    #[test]
+    fn an_underived_evaluation_shows_what_it_was_bound_to_and_no_count() {
+        let mut bound = twist_bound();
+        for input in &mut bound.inputs {
+            input.coverage = None;
+        }
+        for metric in &mut bound.metrics {
+            metric.samples = None;
+        }
+        let twist = EvaluationReport {
             name: "twist".to_string(),
             application: None,
             agent: None,
             kind: "twist_tracking".to_string(),
-            samples: 100,
-            uncovered: 3,
-            refused: 0,
+            outcome: EvaluationOutcome::Underived(bound),
+        };
+
+        assert_eq!(
+            evaluation_report_lines(&twist),
+            "[evaluate] twist: twist_tracking UNDERIVED (the run was aborted before deriving \
+             it)\n    \
+             truth: agent.car.channel.truth.twist[agent.car.base_link], body unit truth, \
+             exact, its gaps found past 0.5 s\n    \
+             reference: agent.car.channel.reference, node reference_arbiter, gaps up to \
+             0.0075 s = 3 periods\n    \
+             also offers: surge, sway"
+        );
+    }
+
+    /// An evaluation named `name` of `kind` that derived `derived`.
+    fn derived(name: &str, kind: &str, derived: DerivedEvaluation) -> EvaluationReport {
+        EvaluationReport {
+            name: name.to_string(),
+            application: None,
+            agent: None,
+            kind: kind.to_string(),
+            outcome: EvaluationOutcome::Derived(derived),
+        }
+    }
+
+    /// A twist tracking's binding: the truth twist against the reference,
+    /// each with its coverage, the surge metric read and the sway one not.
+    fn twist_bound() -> BoundEvaluation {
+        BoundEvaluation {
             params: toml::Table::new(),
             binding: toml::Table::new(),
             inputs: vec![
@@ -210,31 +296,12 @@ mod tests {
                     samples: None,
                 },
             ],
-        };
-
-        assert_eq!(
-            evaluation_lines(&twist),
-            "[evaluate] twist: twist_tracking over 100 samples, 3 uncovered\n    \
-             truth: agent.car.channel.truth.twist[agent.car.base_link], body unit truth, \
-             exact, 2 gaps past 0.5 s\n    \
-             reference: agent.car.channel.reference, node reference_arbiter, gaps up to \
-             0.0075 s = 3 periods, 1 before its first value, 2 after its last value\n    \
-             metrics:\n        \
-             eval.inline.twist.surge in m/s\n    \
-             also offers: sway"
-        );
+        }
     }
 
     #[test]
     fn an_evaluation_lists_its_params_and_each_table_binding_fixed_entry_by_entry() {
-        let pose = EvaluationReportEntry {
-            name: "pose".to_string(),
-            application: None,
-            agent: None,
-            kind: "pose_error".to_string(),
-            samples: 10,
-            uncovered: 0,
-            refused: 2,
+        let bound = BoundEvaluation {
             params: "align = \"declared\"".parse().expect("valid TOML"),
             binding: toml::Table::from_iter([
                 (
@@ -260,9 +327,19 @@ mod tests {
                 samples: Some(8),
             }],
         };
+        let pose = derived(
+            "pose",
+            "pose_error",
+            DerivedEvaluation {
+                samples: 10,
+                uncovered: 0,
+                refused: 2,
+                bound,
+            },
+        );
 
         assert_eq!(
-            evaluation_lines(&pose),
+            evaluation_report_lines(&pose),
             "[evaluate] pose: pose_error over 10 samples, 2 not computed\n    \
              align: declared\n    \
              graded:\n        \

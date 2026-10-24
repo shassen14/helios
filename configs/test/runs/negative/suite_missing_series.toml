@@ -2,7 +2,7 @@
 #
 # The twist suite reads the agent's reference, and the estimation-only car
 # runs no guidance, so it has no reference seam. Setup refuses the
-# evaluation, naming the seam (exit 1):
+# evaluation, naming the seam, and the run is aborted (exit 3):
 #   its reference reads `reference` at agent.EstimationCar.channel.reference,
 #   and agent 'EstimationCar' has no reference seam
 # A pass would mean a suite's evaluation on an agent without its series is

@@ -1,7 +1,7 @@
 use super::{ActiveRunner, RunOutcome, RunVerdict, WallClockStart};
-use crate::run::termination::TerminationReason;
+use crate::runner::UnbuiltPipeline;
 use crate::sim::{ReportOutputPath, ReportSlot, RunSeed};
-use crate::{HostFacts, ObservationCollector, ReportStatus, Runner, TickAction};
+use crate::{HostFacts, ObservationCollector, Runner, TickAction};
 
 use helios_core::prelude::AgentId;
 use helios_runtime::{port::RefusedWrites, AutonomyPipeline};
@@ -61,70 +61,55 @@ impl Plugin for TestRunnerPlugin {
 }
 
 /// System 1 — runs once at scene build, in `SceneBuildSet::SetUpSinks`,
-/// after every agent's pipeline exists and before the host asks the
-/// collector what to record. Hands the runner the per-agent pipelines and
-/// the run's collector, so it can check that every assertion can be judged
-/// and bind what the collector records.
+/// after every agent's pipeline exists or has failed to build, and before
+/// the host asks the collector what to record. Hands the runner the
+/// per-agent pipelines, the agents whose pipeline failed with their errors,
+/// and the run's collector, so it can check that every assertion can be
+/// judged and bind what the collector records.
 ///
-/// Two setup failures share one exit, both legitimate **test failures**
-/// (exit 1) rather than crashes: an agent whose pipeline could not be
-/// assembled at all, and an assertion the run can't judge (a target no agent
-/// reports, a payload with no extractor, a nondeterministic leaf asserted on
-/// without permission). Either aborts the runner, and
-/// [`stop_aborted_run_system`] routes it through the normal report path.
-///
-/// The unbuilt-pipeline check has to come first, and cannot be folded into
-/// the runner: an agent with no pipeline is absent from `pairs` entirely, so
-/// the runner sees a scenario that merely has fewer agents than the author
+/// An agent with no pipeline must be passed, not left out: absent, the
+/// runner would see a scenario that merely has fewer agents than the author
 /// intended — and with no assertions naming it, nothing to complain about.
+/// A refusal aborts the runner, which records why for its report;
+/// [`stop_aborted_run_system`] routes it through the normal report path.
+/// Here it is only logged.
 fn on_pipeline_built_system(
     query: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
     failed_query: Query<(&AgentIdComponent, &PipelineBuildFailed)>,
     mut collector: ResMut<RegisteredSink<ObservationCollector>>,
     mut runner: ResMut<ActiveRunner>,
 ) {
-    if !failed_query.is_empty() {
-        for (agent_id_comp, failure) in failed_query.iter() {
-            for err in &failure.errors {
-                let reason = format!(
-                    "agent '{}' has no autonomy pipeline: {}",
-                    agent_id_comp.0, err
-                );
-                tracing::error!("{reason}");
-                runner.0.fail_setup(reason);
-            }
-        }
-        return;
-    }
-
     // The query returns only agents with BOTH components — guaranteed by the
     // co-located insert in spawn_autonomy_pipeline (see AgentIdComponent docs).
     let mut pairs: Vec<(AgentId, &AutonomyPipeline)> = Vec::new();
     for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
         pairs.push((agent_id_comp.0.clone(), &autonomy_pipeline_comp.0));
     }
+    // Sorted by agent, since query order is not stable across runs and the
+    // report lists them in this order.
+    let mut unbuilt: Vec<UnbuiltPipeline> = failed_query
+        .iter()
+        .map(|(agent, failure)| UnbuiltPipeline {
+            agent: agent.0.clone(),
+            errors: failure.errors.clone(),
+        })
+        .collect();
+    unbuilt.sort_by_cached_key(|unbuilt| unbuilt.agent.to_string());
 
-    match runner.0.on_pipeline_built(&pairs, &mut collector.0) {
-        Ok(()) => (),
-        Err(e) => {
-            let reason = format!("on_pipeline_built failed: {e}");
-            tracing::error!("{reason}");
-            runner.0.fail_setup(reason);
-        }
+    if let Err(e) = runner
+        .0
+        .on_pipeline_built(&pairs, &unbuilt, &mut collector.0)
+    {
+        tracing::error!("the run can't be set up: {e}");
     }
 }
 
 /// Runs once at `OnEnter(AppState::Running)`: a run whose setup aborted
-/// marks the verdict failed and routes to `Flushing`, so it reports without
-/// ticking. Not done at setup, in scene build: its last pass sets `Running`
-/// after, and the later transition wins.
-fn stop_aborted_run_system(
-    runner: Res<ActiveRunner>,
-    mut next_state: ResMut<NextState<AppState>>,
-    mut run_verdict: ResMut<RunVerdict>,
-) {
+/// routes to `Flushing`, so it reports without ticking. Not done at setup,
+/// in scene build: its last pass sets `Running` after, and the later
+/// transition wins.
+fn stop_aborted_run_system(runner: Res<ActiveRunner>, mut next_state: ResMut<NextState<AppState>>) {
     if runner.0.is_aborted() {
-        run_verdict.set(ReportStatus::Failed);
         next_state.set(AppState::Flushing);
     }
 }
@@ -161,7 +146,11 @@ fn tick_system(
 
     match runner.0.tick(now, &collector.0) {
         TickAction::Terminate { reason } => {
-            outcome.terminate(now, reason);
+            outcome.terminate(now, Some(reason));
+            next_state.set(AppState::Flushing);
+        }
+        TickAction::Abort => {
+            outcome.terminate(now, None);
             next_state.set(AppState::Flushing);
         }
         TickAction::Continue => (),
@@ -201,11 +190,8 @@ fn finalize_system(
         .unwrap_or(RunClock::START);
     let wall_secs = wall_start.0.elapsed().as_secs_f64();
     let run_name = outcome.run_name.clone();
-    // `None` only on the "terminated before any tick" path (system 1's
-    // short-circuit): setup never produced a tick, so there is no real
-    // termination cause. `Aborted` names that case instead of borrowing a
-    // misleading stand-in like the time budget.
-    let reason = outcome.reason.clone().unwrap_or(TerminationReason::Aborted);
+    // `None` when the runner aborted the run, which it explains itself.
+    let reason = outcome.reason.clone();
 
     // Sorted by agent, since query order is not stable across runs and the
     // report must be.
@@ -245,12 +231,7 @@ fn finalize_system(
 
     // Carry the verdict out as the app's exit code. `app.run()` empties the App
     // (Bevy 0.16), so the bin cannot read RunVerdict from the world afterward —
-    // it reads the `AppExit` that `run()` returns instead. Success → exit 0,
-    // code 1 → exit 1; the bin maps that to the process exit status.
-    let exit_event = if verdict.passed() {
-        AppExit::Success
-    } else {
-        AppExit::from_code(1)
-    };
-    exit.write(exit_event);
+    // it reads the `AppExit` that `run()` returns instead, and makes its code
+    // the process's.
+    exit.write(verdict.exit());
 }

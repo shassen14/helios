@@ -5,7 +5,10 @@ mod phrase;
 pub mod toml_writer;
 pub mod unit;
 
-pub use evaluation::{EvaluationReportEntry, InputReport, MetricReport};
+pub use evaluation::{
+    BoundEvaluation, DerivedEvaluation, EvaluationOutcome, EvaluationReport, InputReport,
+    MetricReport,
+};
 pub use unit::ReportedUnit;
 
 use crate::{
@@ -18,8 +21,10 @@ use crate::{
 use serde::Serialize;
 
 /// The report format's version. A report with none is the shape before
-/// entries were named, so this starts at the second.
-const REPORT_SCHEMA_VERSION: &str = "2.0";
+/// entries were named, so this starts at the second. The third moved why a
+/// run aborted into `terminated_by` and added the `unusable` and `aborted`
+/// statuses.
+const REPORT_SCHEMA_VERSION: &str = "3.0";
 
 /// _Post-step._ The machine- and human-readable result of one run. Serialized to
 /// TOML for CI and rendered to the console for humans — both from this one
@@ -35,14 +40,6 @@ pub struct Report {
     scenario: String,
     master_seed: Option<u64>,
     status: ReportStatus,
-    /// Why the run was unfit to test, if it was — an agent whose autonomy
-    /// pipeline never assembled, an assertion naming a target no agent
-    /// produces. Present only on a run that failed before it could tick, and
-    /// omitted from the TOML entirely otherwise, so a healthy report keeps its
-    /// current shape. Without it a CI reader sees `status = "failed"` with an
-    /// empty `assertions` list and no way to tell why.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    setup_failures: Vec<String>,
     /// The writes an agent's bus refused, one line per channel: a host or
     /// node wrote a channel no writer declared, a value of another type, or
     /// a frame or instance its writers never stated. Any one fails the run,
@@ -64,7 +61,7 @@ pub struct Report {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     measures: Vec<MeasureReportEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    evaluations: Vec<EvaluationReportEntry>,
+    evaluations: Vec<EvaluationReport>,
 }
 
 impl Report {
@@ -74,18 +71,21 @@ impl Report {
     /// projections that feed it.
     ///
     /// The run's status is derived here, not passed in, so it can't disagree
-    /// with the entries: `Passed` only when every assertion passed and
-    /// nothing failed setup, was refused by a bus or was dropped by the
-    /// recording. A setup failure, a refused write or a dropped value
-    /// outranks the assertion tally: a run whose scene never became fit to
-    /// test, or whose wiring or recording dropped values, cannot pass however
-    /// its assertions came out. Measures never decide it.
+    /// with the entries: `Aborted` when the run stopped untested, else
+    /// `Passed` only when every assertion passed and nothing was refused by a
+    /// bus or dropped by the recording. A refused write or a dropped value
+    /// outranks the assertion tally: a run whose wiring or recording dropped
+    /// values cannot pass however its assertions came out. Measures never
+    /// decide it.
+    ///
+    /// So is [`AbortCause::UnusableEntries`]: an entry or evaluation the run
+    /// refused aborts it, the cause placed after any pipeline not built, so
+    /// the cause can't disagree with the entries that carry the detail.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         run_name: String,
         scenario: String,
         master_seed: Option<u64>,
-        setup_failures: Vec<String>,
         refused_writes: Vec<String>,
         recording: Vec<String>,
         simulated_duration_secs: f64,
@@ -93,16 +93,33 @@ impl Report {
         terminated_by: TerminatedBy,
         assertions: Vec<AssertionReportEntry>,
         measures: Vec<MeasureReportEntry>,
-        evaluations: Vec<EvaluationReportEntry>,
+        evaluations: Vec<EvaluationReport>,
     ) -> Self {
+        let unusable = assertions
+            .iter()
+            .any(|entry| entry.status() == AssertionStatus::Unusable)
+            || measures.iter().any(MeasureReportEntry::is_unusable)
+            || evaluations.iter().any(EvaluationReport::is_unusable);
+        let terminated_by = match terminated_by {
+            TerminatedBy::Aborted { mut causes } if unusable => {
+                let after_unbuilt = causes
+                    .iter()
+                    .take_while(|cause| matches!(cause, AbortCause::PipelineNotBuilt { .. }))
+                    .count();
+                causes.insert(after_unbuilt, AbortCause::UnusableEntries);
+                TerminatedBy::Aborted { causes }
+            }
+            _ if unusable => TerminatedBy::Aborted {
+                causes: vec![AbortCause::UnusableEntries],
+            },
+            terminated_by => terminated_by,
+        };
         let all_passed = assertions
             .iter()
             .all(|entry| entry.status() == AssertionStatus::Passed);
-        let status = if all_passed
-            && setup_failures.is_empty()
-            && refused_writes.is_empty()
-            && recording.is_empty()
-        {
+        let status = if matches!(terminated_by, TerminatedBy::Aborted { .. }) {
+            ReportStatus::Aborted
+        } else if all_passed && refused_writes.is_empty() && recording.is_empty() {
             ReportStatus::Passed
         } else {
             ReportStatus::Failed
@@ -113,7 +130,6 @@ impl Report {
             scenario,
             master_seed,
             status,
-            setup_failures,
             refused_writes,
             recording,
             simulated_duration_secs,
@@ -141,14 +157,8 @@ impl Report {
     }
 
     /// The per-evaluation lines, in run-file order.
-    pub fn evaluations(&self) -> &[EvaluationReportEntry] {
+    pub fn evaluations(&self) -> &[EvaluationReport] {
         &self.evaluations
-    }
-
-    /// Why the run was unfit to test, if it was. Empty on a run that got far
-    /// enough for its assertions to mean something.
-    pub fn setup_failures(&self) -> &[String] {
-        &self.setup_failures
     }
 
     /// The writes an agent's bus refused, one line per channel. Empty on a
@@ -174,14 +184,19 @@ impl Report {
     }
 }
 
-/// _Post-step._ Run-level outcome. A `Report` only ever describes a run that
-/// actually ran to a verdict; a run that never started (bad config, unresolved
-/// target) is surfaced by the host as an error + non-zero exit, not a report.
+/// _Post-step._ Run-level outcome. A run file refused before the run starts
+/// (bad config) is surfaced by the host as an error + non-zero exit, not a
+/// report.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportStatus {
     Passed,
+    /// The run was tested and didn't pass: the robot, or its wiring or
+    /// recording, failed.
     Failed,
+    /// The run was never tested: `terminated_by` says why. Neither a pass nor
+    /// a failure of the robot.
+    Aborted,
 }
 
 /// _Post-step._ Why the run stopped — the report's own projection of the
@@ -190,8 +205,8 @@ pub enum ReportStatus {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum TerminatedBy {
-    /// The failed setup abort.
-    Aborted,
+    /// The runner stopped the run untested, for every one of `causes`.
+    Aborted { causes: Vec<AbortCause> },
     /// The simulated-time budget elapsed.
     TimeBudget,
     /// An every-sample assertion failed in a `fail_fast` run; `name` is
@@ -209,7 +224,6 @@ pub enum TerminatedBy {
 impl From<&TerminationReason> for TerminatedBy {
     fn from(value: &TerminationReason) -> Self {
         match value {
-            TerminationReason::Aborted => TerminatedBy::Aborted,
             TerminationReason::MaxSimulatedSeconds => TerminatedBy::TimeBudget,
             TerminationReason::AssertionFailed { name, key } => TerminatedBy::AssertionFailed {
                 name: name.to_string(),
@@ -218,6 +232,54 @@ impl From<&TerminationReason> for TerminatedBy {
             },
         }
     }
+}
+
+/// _Post-step._ One reason a run was aborted untested.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum AbortCause {
+    /// `agent`'s pipeline wasn't built, for `errors`, as the host gave them.
+    PipelineNotBuilt { agent: String, errors: Vec<String> },
+    /// Some entry or evaluation is `unusable`; each says why.
+    UnusableEntries,
+    /// The host broke its contract with the runner.
+    HostFault(HostFault),
+}
+
+/// _Post-step._ How a host broke its contract with the runner.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "fault")]
+pub enum HostFault {
+    /// It asked the collector what to record before setup bound anything.
+    AskedBeforeSetup,
+    /// It ticked or finalized the run without setting it up.
+    NeverSetUp,
+    /// It set the run up and finalized it without a tick.
+    NeverTicked,
+    /// It finalized, after ticking, a run the runner never told it to stop.
+    StoppedUnasked,
+    /// It handed the runner a collector the run wasn't set up against. Found
+    /// at finalize, the stop reason the host gave is lost with it.
+    ForeignCollector { at: FaultStep },
+}
+
+/// _Post-step._ Which of the runner's steps found a host fault.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "step")]
+pub enum FaultStep {
+    /// A tick, `at_secs` simulated seconds from the run's first tick.
+    Tick {
+        at_secs: f64,
+    },
+    Finalize,
+}
+
+/// _Post-step._ A measure the run refused at setup: written as
+/// `status = "unusable"` beside every reason why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum Refused {
+    Unusable { problems: Vec<String> },
 }
 
 /// _Post-step._ One assertion's line in the report: what was asserted, the
@@ -356,6 +418,9 @@ pub struct MeasureReportEntry {
     reason: Option<FailureReason>,
     #[serde(flatten)]
     series: SeriesSummary,
+    /// Absent on a measure the run accepted.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    refused: Option<Refused>,
 }
 
 impl MeasureReportEntry {
@@ -392,11 +457,33 @@ impl MeasureReportEntry {
             unit,
             reason,
             series,
+            refused: None,
+        }
+    }
+
+    /// This line as one the run refused, for `problems`.
+    pub fn refused(self, problems: Vec<String>) -> Self {
+        Self {
+            refused: Some(Refused::Unusable { problems }),
+            ..self
         }
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether the run refused it.
+    pub fn is_unusable(&self) -> bool {
+        self.refused.is_some()
+    }
+
+    /// Why the run refused it; empty when it didn't.
+    pub fn problems(&self) -> &[String] {
+        match &self.refused {
+            Some(Refused::Unusable { problems }) => problems,
+            None => &[],
+        }
     }
 
     pub fn covered(&self) -> bool {
@@ -484,13 +571,17 @@ pub enum Verdict {
     /// assertion's window, or never placed it (a `run.end` bound after an
     /// early stop, an anchor that hadn't occurred yet), and it hadn't failed
     /// by then. Usually the run stopped early, by a `fail_fast` stop or an
-    /// aborted setup; a window anchored late enough to end past a run that
+    /// aborted run; a window anchored late enough to end past a run that
     /// ran out is the other case. Either way the run didn't test what was
     /// asked, so a run with one is never `Passed`. `actual` is the value it
     /// stopped at.
     Unjudged {
         #[serde(skip_serializing_if = "Option::is_none")]
         actual: Option<AssertionValue>,
+    },
+    /// The run refused it at setup, for `problems`, so it never ran.
+    Unusable {
+        problems: Vec<String>,
     },
 }
 
@@ -501,6 +592,7 @@ impl Verdict {
             Verdict::Passed { .. } => AssertionStatus::Passed,
             Verdict::Failed { .. } => AssertionStatus::Failed,
             Verdict::Unjudged { .. } => AssertionStatus::Unjudged,
+            Verdict::Unusable { .. } => AssertionStatus::Unusable,
         }
     }
 
@@ -509,6 +601,7 @@ impl Verdict {
         match self {
             Verdict::Passed { actual } => Some(actual),
             Verdict::Failed { actual, .. } | Verdict::Unjudged { actual } => actual.as_ref(),
+            Verdict::Unusable { .. } => None,
         }
     }
 }
@@ -538,6 +631,7 @@ pub enum AssertionStatus {
     Passed,
     Failed,
     Unjudged,
+    Unusable,
 }
 
 /// _Post-step._ Why an assertion failed — the report's own projection of the

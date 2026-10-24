@@ -1,0 +1,96 @@
+schema_version = "3.0"
+run_name = "aborted_lists_bound_evaluations"
+scenario = "sim/scenarios/01_proving_ground.toml"
+status = "aborted"
+simulated_duration_secs = 0.0
+assertions = []
+
+[terminated_by]
+kind = "aborted"
+
+[[terminated_by.causes]]
+kind = "unusable_entries"
+
+[[evaluations]]
+name = "est"
+kind = "pose_error"
+status = "underived"
+
+[evaluations.params]
+align = "declared"
+
+[evaluations.binding]
+roots = "agent.ProvingCar.odom anchored at global.proving_ground"
+
+[[evaluations.inputs]]
+role = "estimate"
+instance = "agent.ProvingCar.base_link"
+writer = "node estimate_relay"
+
+[evaluations.inputs.target]
+path = "agent.ProvingCar.channel.tf"
+instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.inputs]]
+role = "truth"
+instance = "agent.ProvingCar.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+
+[evaluations.inputs.target]
+path = "agent.ProvingCar.channel.truth.tf"
+instance = "agent.ProvingCar.base_link"
+
+[evaluations.inputs.cap]
+multiple = 3.0
+seconds = 0.0075
+
+[[evaluations.metrics]]
+path = "eval.inline.est.position"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.horizontal"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.vertical"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.x"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.y"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.z"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.along"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.cross"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.rotation"
+unit = "rad"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.heading"
+unit = "rad"
+
+[[evaluations]]
+name = "wrong"
+kind = "pose_error"
+status = "unusable"
+problems = ["its input 'estimate' on 'agent.ProvingCar.channel.estimate': it carries helios_core::spatial::FrameAwareState, and the role reads helios_core::spatial::transforms::tf::stamped::StampedTransform"]
