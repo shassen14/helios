@@ -16,6 +16,7 @@ use crate::evaluation::{
     derived::{Derived, Refused},
 };
 
+use helios_core::estimation::schema::StateSchema;
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::{AgentId, FrameId, MonotonicTime};
 use helios_core::spatial::transforms::Convention;
@@ -28,6 +29,7 @@ use serde::Serialize;
 use std::{
     any::{Any, TypeId},
     fmt,
+    sync::Arc,
 };
 
 /// _Pre-step._ An evaluator kind, registered under its name. Checked against
@@ -156,6 +158,9 @@ pub struct BoundInput {
     /// pipeline defines it: anchored at a world frame, or free and why.
     /// `None` for a world or body frame, or when no frame is declared.
     pub placement: Option<FramePlacement>,
+    /// The schema every state the series carries is built on, when its
+    /// writer describes them. `None` for any other payload.
+    pub schema: Option<Arc<StateSchema>>,
     /// How many times a second its writer writes it, nominally, as declared.
     pub rate_hz: Option<f64>,
     /// Who writes it, with a body writer's provenance. `None` only when no

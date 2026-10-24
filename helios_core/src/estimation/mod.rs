@@ -5,6 +5,7 @@
 
 pub mod augmentation;
 pub mod carrier;
+pub mod consistency;
 pub mod dynamics;
 pub mod filters;
 pub mod frames;

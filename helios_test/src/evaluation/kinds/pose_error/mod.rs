@@ -6,8 +6,8 @@
 
 pub mod config;
 #[cfg(test)]
-mod fixtures;
+pub(super) mod fixtures;
 mod kind;
-mod roots;
+pub(super) mod roots;
 
 pub use kind::PoseError;

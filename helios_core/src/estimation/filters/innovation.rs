@@ -2,7 +2,7 @@
 //! computed one way so the EKF and UKF report the same number for the same
 //! `y` and `S`.
 
-use crate::estimation::Innovation;
+use crate::estimation::{consistency::normalized_squared, Innovation};
 
 use nalgebra::{Cholesky, DVector, Dyn};
 
@@ -13,6 +13,5 @@ use nalgebra::{Cholesky, DVector, Dyn};
 /// forming `S⁻¹`. Reads only; the estimate is untouched, so computing it changes
 /// no filter output.
 pub(crate) fn measure_innovation(s_chol: &Cholesky<f64, Dyn>, y: &DVector<f64>) -> Innovation {
-    let nis = y.dot(&s_chol.solve(y));
-    Innovation::new(nis, y.nrows())
+    Innovation::new(normalized_squared(s_chol, y), y.nrows())
 }

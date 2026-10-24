@@ -612,6 +612,7 @@ mod tests {
             expressed_in: None,
             convention: None,
             placement: None,
+            schema: None,
             rate_hz: None,
             writer: None,
         }

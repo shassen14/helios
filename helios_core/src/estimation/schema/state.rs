@@ -395,6 +395,16 @@ impl StateSchema {
             .map(|i| self.storage_offsets[i])
     }
 
+    /// The start index of `quantity`'s block in **tangent** space, or `None`
+    /// if the schema holds no such block. Index a covariance through here,
+    /// never through [`storage_offset_of_block`](Self::storage_offset_of_block).
+    pub fn tangent_offset_of_block(&self, quantity: &Quantity) -> Option<usize> {
+        self.blocks
+            .iter()
+            .position(|b| &b.quantity == quantity)
+            .map(|i| self.tangent_offsets[i])
+    }
+
     pub fn block_of(&self, quantity: &Quantity) -> Option<&Arc<dyn StateBlock>> {
         self.blocks
             .iter()

@@ -1,12 +1,20 @@
 //! How `pose_error` places the estimate's root in the truth's: [`Roots`],
 //! related at bind under `declared` ([`DeclaredRoots`]), or fixed by the
 //! first sample under `first_pose` ([`FixedRoots`]), and each estimate's
-//! difference from the truth at its stamp under it.
+//! difference from the truth at its stamp under it. `nees` binds its roots
+//! here too, under `declared` alone.
 
-use crate::evaluation::{kind::InputRejection, typed::projections::RootedPose};
+use super::config::Align;
+use crate::evaluation::{
+    kind::{BoundInput, InputRejection},
+    typed::{projections::RootedPose, TwoInputs},
+};
 
 use helios_core::prelude::FrameId;
-use helios_core::spatial::transforms::{ErasedTransform, PoseDifference, RootAlignment};
+use helios_core::spatial::transforms::{
+    Convention, ErasedTransform, PoseDifference, RootAlignment,
+};
+use helios_runtime::pipeline::Placement;
 
 use std::fmt;
 
@@ -53,6 +61,77 @@ pub struct DeclaredRoots {
 }
 
 impl DeclaredRoots {
+    /// How the roots of `K`'s two inputs, `estimate` and `truth`, relate
+    /// under `declared`, or every reason they can't: a root its writer
+    /// didn't declare, or one no owner gives a convention. One frame must
+    /// be held in one convention. Two frames relate only through the
+    /// estimate's root anchored at the truth's: one anchored elsewhere,
+    /// free, or defined by no node is refused, `otherwise` closing the
+    /// refusal of an undefined one with the policy that would relate them.
+    /// Through an anchor the conventions may differ, since its edge carries
+    /// both, but its child's must be the one the estimate's root is held in.
+    pub(crate) fn bind<K: TwoInputs>(
+        estimate: &BoundInput,
+        truth: &BoundInput,
+        otherwise: &str,
+    ) -> Result<Self, Vec<String>> {
+        let [(estimate_root, estimate_axes), (truth_root, truth_axes)] =
+            roots_of::<K>(estimate, truth)?;
+        let align = Align::Declared;
+        if estimate_root == truth_root {
+            return if estimate_axes == truth_axes {
+                Ok(Self::one_frame(truth_root))
+            } else {
+                Err(vec![unlike_axes::<K>(
+                    &estimate_root,
+                    estimate_axes,
+                    &truth_root,
+                    truth_axes,
+                )])
+            };
+        }
+        let Some(placement) = estimate.placement.as_ref() else {
+            return Err(vec![format!(
+                "the {}'s root '{estimate_root}' and the {}'s root '{truth_root}' are \
+                 different frames, and align = \"{align}\" grades poses in one, or \
+                 through an anchor{otherwise}",
+                K::BASE,
+                K::OTHER,
+            )]);
+        };
+        match placement.placement() {
+            Placement::Anchored(edge)
+                if edge.parent == truth_root
+                    && edge.transform.from_convention() != estimate_axes =>
+            {
+                Err(vec![format!(
+                    "the {}'s root '{estimate_root}' is held in {estimate_axes} axes, but \
+                     its anchor at '{truth_root}' places it in {} axes: the owner that \
+                     gives its convention and the node that anchors it disagree",
+                    K::BASE,
+                    edge.transform.from_convention(),
+                )])
+            }
+            Placement::Anchored(edge) if edge.parent == truth_root => {
+                Ok(Self::anchored(estimate_root, truth_root, edge.transform))
+            }
+            Placement::Anchored(edge) => Err(vec![format!(
+                "the {}'s root '{estimate_root}' is anchored at '{}', not at the {}'s \
+                 root '{truth_root}': align = \"{align}\" relates two roots only \
+                 through an anchor at the {}'s",
+                K::BASE,
+                edge.parent,
+                K::OTHER,
+                K::OTHER,
+            )]),
+            Placement::Free(_) => Err(vec![format!(
+                "the {}'s root '{estimate_root}' is not placed in '{truth_root}': \
+                 {placement}",
+                K::BASE,
+            )]),
+        }
+    }
+
     /// Both inputs' poses in `root`.
     pub(super) fn one_frame(root: FrameId) -> Self {
         Self {
@@ -101,6 +180,32 @@ impl DeclaredRoots {
                 if estimate.pose.to_convention() == anchor.from_convention() =>
             {
                 Ok(estimate.pose.then(*anchor))
+            }
+            Relation::Anchored(_) => Err(UNLIKE_CONVENTIONS),
+        }
+    }
+
+    /// The root the estimate's poses are held in.
+    pub(crate) fn estimate_root(&self) -> &FrameId {
+        &self.estimate
+    }
+
+    /// `truth`'s pose placed in the estimate's root, or why it can't be: the
+    /// inverse of placing an estimate in the truth's, for a comparison made
+    /// in the estimate's own root.
+    pub(crate) fn truth_in_estimate_root(
+        &self,
+        truth: &RootedPose,
+    ) -> Result<ErasedTransform, InputRejection> {
+        if truth.root != self.truth {
+            return Err(InputRejection(
+                "a pose in another root than its writer declared, which bind related",
+            ));
+        }
+        match &self.relation {
+            Relation::OneFrame => Ok(truth.pose),
+            Relation::Anchored(anchor) if truth.pose.to_convention() == anchor.to_convention() => {
+                Ok(truth.pose.then(anchor.inverse()))
             }
             Relation::Anchored(_) => Err(UNLIKE_CONVENTIONS),
         }
@@ -187,6 +292,52 @@ impl Aligned {
             ))
         }
     }
+}
+
+/// The roots of `K`'s two inputs, `estimate` and `truth`, each with the
+/// axis convention its owner gives it, or every reason one can't be
+/// compared: a root its writer didn't declare, or one no owner gives a
+/// convention.
+pub(super) fn roots_of<K: TwoInputs>(
+    estimate: &BoundInput,
+    truth: &BoundInput,
+) -> Result<[(FrameId, Convention); 2], Vec<String>> {
+    let root_of = |role: &str, input: &BoundInput| match (&input.expressed_in, input.convention) {
+        (Some(root), Some(convention)) => Ok((root.clone(), convention)),
+        (Some(root), None) => Err(format!(
+            "the {role}'s root '{root}' has no axis convention: no owner in the pipeline of \
+             agent '{}' gives one",
+            input.agent
+        )),
+        (None, _) => Err(format!(
+            "the {role}'s series declares no root its poses are expressed in"
+        )),
+    };
+    match (root_of(K::BASE, estimate), root_of(K::OTHER, truth)) {
+        (Ok(estimate_root), Ok(truth_root)) => Ok([estimate_root, truth_root]),
+        (estimate_root, truth_root) => Err(estimate_root
+            .err()
+            .into_iter()
+            .chain(truth_root.err())
+            .collect()),
+    }
+}
+
+/// The refusal of `K`'s two roots held in different conventions, which only
+/// an anchor relates.
+pub(super) fn unlike_axes<K: TwoInputs>(
+    estimate_root: &FrameId,
+    estimate_axes: Convention,
+    truth_root: &FrameId,
+    truth_axes: Convention,
+) -> String {
+    format!(
+        "the {}'s root '{estimate_root}' is held in {estimate_axes} axes and the {}'s root \
+         '{truth_root}' in {truth_axes}: {} compares poses held in one axis convention",
+        K::BASE,
+        K::OTHER,
+        K::NAME,
+    )
 }
 
 #[cfg(test)]
@@ -434,5 +585,42 @@ mod tests {
 
             assert_eq!(refused, Err(UNLIKE_CONVENTIONS));
         }
+    }
+
+    #[test]
+    fn the_truth_placed_in_the_estimates_root_undoes_the_anchor() {
+        let Roots::Declared(declared) = anchored_at(10.0, Convention::Enu) else {
+            unreachable!("anchored_at declares its roots");
+        };
+        let truth = kept::<Enu>(datum(), 12.0, 1.0, 0.3);
+
+        let placed = declared
+            .truth_in_estimate_root(&truth)
+            .expect("the truth's root");
+
+        let pose = placed.isometry();
+        assert!((pose.translation.vector - Vector3::new(2.0, 1.0, 0.0)).amax() < TOL);
+        assert!((pose.rotation.angle() - 0.3).abs() < TOL);
+        assert_eq!(placed.to_convention(), Convention::Enu);
+        // Placed back through the anchor, it is the truth again.
+        let estimate = RootedPose {
+            root: odom(),
+            pose: placed,
+        };
+        let difference = declared.difference(&estimate, &truth).expect("alike");
+        assert!(difference.position() < TOL);
+        assert!(difference.rotation() < TOL);
+    }
+
+    #[test]
+    fn a_truth_in_another_root_than_bind_related_is_refused() {
+        let declared = DeclaredRoots::one_frame(datum());
+
+        let refused = declared.truth_in_estimate_root(&kept::<Enu>(odom(), 0.0, 0.0, 0.0));
+
+        assert!(refused.is_err());
+        assert!(declared
+            .truth_in_estimate_root(&kept::<Enu>(datum(), 0.0, 0.0, 0.0))
+            .is_ok());
     }
 }

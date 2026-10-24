@@ -487,6 +487,13 @@ fn locate_input(
     let convention = expressed_in
         .as_ref()
         .and_then(|frame| catalog.frame_conventions.convention_of(frame));
+    let schema = match subject {
+        Subject::Channel { channel, .. } => catalog
+            .state_schemas
+            .of_channel(channel)
+            .map(|description| description.schema().clone()),
+        Subject::Emission { .. } => None,
+    };
     let placement = expressed_in.as_ref().and_then(|frame| {
         catalog
             .frame_placements
@@ -503,6 +510,7 @@ fn locate_input(
             expressed_in,
             convention,
             placement,
+            schema,
             rate_hz,
             writer: writer.clone(),
         },
@@ -701,7 +709,7 @@ mod tests {
 
     /// The estimate seam's state is held in `odom`, which its writer gives
     /// before the first state arrives, so a role reading it learns the frame,
-    /// its axes and its anchor at setup.
+    /// its axes, its anchor and the schema its states are built on at setup.
     #[test]
     fn the_estimates_state_is_bound_in_the_root_its_source_holds_it_in() {
         let agent = AgentId::new(CAR);
@@ -727,6 +735,12 @@ mod tests {
             panic!("odom is pinned through the truth: {placement:?}");
         };
         assert_eq!(anchor.parent, datum());
+        let described = pipeline
+            .state_schemas()
+            .of_channel(&estimate::estimate())
+            .expect("the oracle describes its state");
+        let schema = bound.facts.schema.expect("a described state");
+        assert!(std::sync::Arc::ptr_eq(&schema, described.schema()));
     }
 
     #[test]

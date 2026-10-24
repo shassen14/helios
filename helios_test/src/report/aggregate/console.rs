@@ -5,7 +5,7 @@
 //! and phrases entries as the single-run console does.
 
 use super::{AggregateReport, AssertionAggregate, MeasureAggregate};
-use crate::report::phrase::{entry_name, reducer_phrase, with_unit};
+use crate::report::phrase::{entry_name, reducer_phrase, rounded, with_unit};
 
 /// Print a finished aggregate report to stdout. The one sanctioned
 /// `println!` for this surface: it renders an already-decided result for a
@@ -60,7 +60,7 @@ fn measure_line(report: &AggregateReport, row: &MeasureAggregate) -> String {
             let value = row.statistics.get(statistic)?;
             Some(format!(
                 "{statistic} {}",
-                with_unit(value.to_string(), row.unit)
+                with_unit(rounded(value), row.unit)
             ))
         })
         .collect();
@@ -103,7 +103,7 @@ fn assertion_line(row: &AssertionAggregate) -> String {
         row.runs,
     );
     if let Some(pass_rate) = row.pass_rate {
-        line.push_str(&format!(" (pass_rate {pass_rate})"));
+        line.push_str(&format!(" (pass_rate {})", rounded(pass_rate)));
     }
     for (count, why) in [
         (row.failed, "failed"),
@@ -139,7 +139,7 @@ mod tests {
         assert!(
             text.contains(
                 "[mc measure] final_x: final of eval.inline.pose.x over 2 runs (22 samples): \
-                 mean 2 m, std 1.4142135623730951 m, min 1 m, max 3 m"
+                 mean 2 m, std 1.414 m, min 1 m, max 3 m"
             ),
             "{text}"
         );
@@ -174,7 +174,7 @@ mod tests {
         assert!(
             text.contains(
                 "[mc assert] nis_final: agent.car.node.primary.aiding.gps.nis passed 2 of 3 \
-                 runs (pass_rate 0.6666666666666666), 1 unjudged"
+                 runs (pass_rate 0.6667), 1 unjudged"
             ),
             "{text}"
         );
@@ -202,9 +202,7 @@ mod tests {
         );
         assert!(text.contains("[1 absent, 1 no report]"), "{text}");
         assert!(
-            text.contains(
-                "passed 1 of 3 runs (pass_rate 0.3333333333333333), 1 absent, 1 no report"
-            ),
+            text.contains("passed 1 of 3 runs (pass_rate 0.3333), 1 absent, 1 no report"),
             "{text}"
         );
     }

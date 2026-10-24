@@ -6,6 +6,14 @@ use crate::statistics::within_run::Reducer;
 
 use helios_core::kernel::si_unit::SiUnit;
 
+/// The significant figures a measured number prints with.
+const SIGNIFICANT_FIGURES: usize = 4;
+
+/// The magnitudes a measured number prints in fixed notation: below them
+/// it would be mostly leading zeros, from their end the figures past the
+/// significant ones would print as zeros the number doesn't have.
+const FIXED_NOTATION: std::ops::Range<f64> = 1e-4..1e6;
+
 /// An entry's name, with the agent and the instance it judged where its
 /// target selected them: `surge_settled[agent=north]`,
 /// `edges[instance=base_link]`.
@@ -29,6 +37,27 @@ pub(super) fn with_unit(text: String, unit: Option<ReportedUnit>) -> String {
             format!("{text} {si_unit}")
         }
         _ => text,
+    }
+}
+
+/// A measured number to [`SIGNIFICANT_FIGURES`], trailing zeros dropped,
+/// in scientific notation outside [`FIXED_NOTATION`]. Only for a number
+/// with no bound beside it, whose last figures could cross it unseen; the
+/// TOML report keeps every figure.
+pub(super) fn rounded(value: f64) -> String {
+    if !value.is_finite() || value == 0.0 {
+        return value.to_string();
+    }
+    if !FIXED_NOTATION.contains(&value.abs()) {
+        return format!("{value:.*e}", SIGNIFICANT_FIGURES - 1);
+    }
+    let leading = value.abs().log10().floor() as i64;
+    let decimals = (SIGNIFICANT_FIGURES as i64 - 1 - leading).max(0) as usize;
+    let fixed = format!("{value:.decimals$}");
+    if fixed.contains('.') {
+        fixed.trim_end_matches('0').trim_end_matches('.').to_owned()
+    } else {
+        fixed
     }
 }
 
@@ -60,6 +89,21 @@ mod tests {
             entry_name("edges", Some("north"), Some("base")),
             "edges[agent=north][instance=base]"
         );
+    }
+
+    #[test]
+    fn a_measured_number_prints_to_four_significant_figures() {
+        assert_eq!(rounded(4.824156631304349), "4.824");
+        assert_eq!(rounded(54.99483736141082), "54.99");
+        assert_eq!(rounded(0.027054920768516195), "0.02705");
+        assert_eq!(rounded(-0.25), "-0.25");
+        assert_eq!(rounded(7.0), "7");
+        assert_eq!(rounded(0.99996), "1");
+        assert_eq!(rounded(123456.7), "123457");
+        assert_eq!(rounded(0.0000123456), "1.235e-5");
+        assert_eq!(rounded(2.5e7), "2.500e7");
+        assert_eq!(rounded(0.0), "0");
+        assert_eq!(rounded(f64::NAN), "NaN");
     }
 
     #[test]

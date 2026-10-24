@@ -3,7 +3,7 @@
 
 use super::{
     config::{Align, PoseErrorConfig},
-    roots::{DeclaredRoots, FixedRoots, Roots},
+    roots::{roots_of, unlike_axes, DeclaredRoots, FixedRoots, Roots},
 };
 use crate::evaluation::{
     kind::{BoundInput, InputRejection},
@@ -15,10 +15,7 @@ use crate::evaluation::{
 
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::FrameId;
-use helios_core::spatial::transforms::{
-    tf::stamped::StampedTransform, Convention, NoHeading, PoseDifference,
-};
-use helios_runtime::pipeline::Placement;
+use helios_core::spatial::transforms::{tf::stamped::StampedTransform, NoHeading, PoseDifference};
 
 /// A heading, along or cross of a frame that faces no way.
 const FACES_NO_WAY: InputRejection =
@@ -158,118 +155,38 @@ fn spelled(frame: Option<&FrameId>) -> String {
 }
 
 /// How the roots of `estimate` and `truth` relate under `align`, or every
-/// reason they can't: a root its writer didn't declare, or one no owner gives
-/// a convention. Under `first_pose`, and under `declared` for one frame, the
-/// two must be held in one convention. Under `declared`, two frames relate
-/// only through the estimate's root anchored at the truth's: one anchored
-/// elsewhere, free, or defined by no node is refused. Through an anchor the
-/// conventions may differ, since its edge carries both, but its child's
-/// must be the one the estimate's root is held in.
+/// reason they can't. Under `first_pose` the two must be held in one
+/// convention; under `declared`, as [`DeclaredRoots::bind`] relates them.
 fn roots(align: Align, estimate: &BoundInput, truth: &BoundInput) -> Result<Roots, Vec<String>> {
-    let root_of = |role: &str, input: &BoundInput| match (&input.expressed_in, input.convention) {
-        (Some(root), Some(convention)) => Ok((root.clone(), convention)),
-        (Some(root), None) => Err(format!(
-            "the {role}'s root '{root}' has no axis convention: no owner in the pipeline of \
-             agent '{}' gives one",
-            input.agent
-        )),
-        (None, _) => Err(format!(
-            "the {role}'s series declares no root its poses are expressed in"
-        )),
-    };
-    let ((estimate_root, estimate_axes), (truth_root, truth_axes)) = match (
-        root_of(PoseError::BASE, estimate),
-        root_of(PoseError::OTHER, truth),
-    ) {
-        (Ok(estimate_root), Ok(truth_root)) => (estimate_root, truth_root),
-        (estimate_root, truth_root) => {
-            return Err(estimate_root
-                .err()
-                .into_iter()
-                .chain(truth_root.err())
-                .collect())
-        }
-    };
-    let one_convention = |roots: Roots| {
-        if estimate_axes == truth_axes {
-            Ok(roots)
-        } else {
-            Err(vec![unlike_axes(
-                &estimate_root,
-                estimate_axes,
-                &truth_root,
-                truth_axes,
-            )])
-        }
-    };
     match align {
-        Align::FirstPose => one_convention(Roots::FirstPose),
-        Align::Declared if estimate_root == truth_root => one_convention(Roots::Declared(
-            DeclaredRoots::one_frame(truth_root.clone()),
-        )),
-        Align::Declared => match estimate.placement.as_ref() {
-            Some(placement) => match placement.placement() {
-                Placement::Anchored(edge)
-                    if edge.parent == truth_root
-                        && edge.transform.from_convention() != estimate_axes =>
-                {
-                    Err(vec![format!(
-                        "the {}'s root '{estimate_root}' is held in {estimate_axes} axes, but \
-                         its anchor at '{truth_root}' places it in {} axes: the owner that \
-                         gives its convention and the node that anchors it disagree",
-                        PoseError::BASE,
-                        edge.transform.from_convention(),
-                    )])
-                }
-                Placement::Anchored(edge) if edge.parent == truth_root => Ok(Roots::Declared(
-                    DeclaredRoots::anchored(estimate_root, truth_root, edge.transform),
-                )),
-                Placement::Anchored(edge) => Err(vec![format!(
-                    "the {}'s root '{estimate_root}' is anchored at '{}', not at the {}'s \
-                     root '{truth_root}': align = \"{align}\" relates two roots only \
-                     through an anchor at the {}'s",
-                    PoseError::BASE,
-                    edge.parent,
-                    PoseError::OTHER,
-                    PoseError::OTHER,
-                )]),
-                Placement::Free(_) => Err(vec![format!(
-                    "the {}'s root '{estimate_root}' is not placed in '{truth_root}': \
-                     {placement}",
-                    PoseError::BASE,
-                )]),
-            },
-            None => Err(vec![format!(
-                "the {}'s root '{estimate_root}' and the {}'s root '{truth_root}' are \
-                 different frames, and align = \"{align}\" grades poses in one, or \
-                 through an anchor; align = \"{}\" aligns them on their first sample, for \
-                 an estimator that starts where its body is",
-                PoseError::BASE,
-                PoseError::OTHER,
-                Align::FirstPose,
-            )]),
-        },
+        Align::FirstPose => {
+            let [(estimate_root, estimate_axes), (truth_root, truth_axes)] =
+                roots_of::<PoseError>(estimate, truth)?;
+            if estimate_axes == truth_axes {
+                Ok(Roots::FirstPose)
+            } else {
+                Err(vec![unlike_axes::<PoseError>(
+                    &estimate_root,
+                    estimate_axes,
+                    &truth_root,
+                    truth_axes,
+                )])
+            }
+        }
+        Align::Declared => DeclaredRoots::bind::<PoseError>(
+            estimate,
+            truth,
+            &format!(
+                "; align = \"{}\" aligns them on their first sample, for an estimator that \
+                 starts where its body is",
+                Align::FirstPose
+            ),
+        )
+        .map(Roots::Declared),
         Align::BestFit | Align::Relative => {
             Err(vec![format!("align = \"{align}\" is not built yet")])
         }
     }
-}
-
-/// The refusal of two roots held in different conventions, which only an
-/// anchor relates.
-fn unlike_axes(
-    estimate_root: &FrameId,
-    estimate_axes: Convention,
-    truth_root: &FrameId,
-    truth_axes: Convention,
-) -> String {
-    format!(
-        "the {}'s root '{estimate_root}' is held in {estimate_axes} axes and the {}'s root \
-         '{truth_root}' in {truth_axes}: {} compares poses held in one axis convention",
-        PoseError::BASE,
-        PoseError::OTHER,
-        PoseError::NAME,
-    )
 }
 
 /// The estimate minus the truth, read every way a run file may grade it:
@@ -326,7 +243,7 @@ mod tests {
 
     use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::conventions::{Enu, Flu};
-    use helios_core::spatial::transforms::{ErasedTransform, Transform};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform};
 
     use nalgebra::{Isometry3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
@@ -355,6 +272,7 @@ mod tests {
             expressed_in: root,
             convention,
             placement: None,
+            schema: None,
             rate_hz: None,
             writer: None,
         }

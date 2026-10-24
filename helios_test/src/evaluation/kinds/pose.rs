@@ -119,6 +119,7 @@ mod tests {
             expressed_in: root,
             convention: None,
             placement: None,
+            schema: None,
             rate_hz: None,
             writer: None,
         }

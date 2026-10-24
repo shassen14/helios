@@ -289,7 +289,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .ends_with("(there are: pose, pose_error, twist, twist_tracking)"),
+                .ends_with("(there are: nees, pose, pose_error, twist, twist_tracking)"),
             "{error}"
         );
     }

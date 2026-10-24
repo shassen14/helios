@@ -2,7 +2,9 @@
 
 use crate::evaluation::{
     kind::EvaluatorKind,
-    kinds::{pose::Pose, pose_error::PoseError, twist::Twist, twist_tracking::TwistTracking},
+    kinds::{
+        nees::Nees, pose::Pose, pose_error::PoseError, twist::Twist, twist_tracking::TwistTracking,
+    },
     typed::{OneInputKind, TwoInputsKind},
 };
 
@@ -43,6 +45,7 @@ pub fn standard_evaluators() -> EvaluatorRegistry {
     registry.register(OneInputKind::<Pose>::new());
     registry.register(OneInputKind::<Twist>::new());
     registry.register(TwoInputsKind::<PoseError>::new());
+    registry.register(TwoInputsKind::<Nees>::new());
     registry.register(TwoInputsKind::<TwistTracking>::new());
     registry
 }
@@ -59,7 +62,7 @@ mod tests {
         assert!(registry.get("goal_distance").is_none());
         assert_eq!(
             registry.names(),
-            vec!["pose", "pose_error", "twist", "twist_tracking"]
+            vec!["nees", "pose", "pose_error", "twist", "twist_tracking"]
         );
     }
 }

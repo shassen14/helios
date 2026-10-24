@@ -19,7 +19,7 @@ mod fixtures;
 
 use self::{
     entries::{assertion_line, measure_line},
-    evaluation::evaluation_line,
+    evaluation::evaluation_lines,
 };
 use super::{phrase::entry_name, AssertionStatus, Report, ReportStatus, TerminatedBy};
 
@@ -64,9 +64,9 @@ fn render(report: &Report) -> String {
         lines.push(format!("[recording] {dropped}"));
     }
 
-    // One line per evaluation, before the entries judging its metrics.
+    // One block per evaluation, before the entries judging its metrics.
     for evaluation in report.evaluations() {
-        lines.push(evaluation_line(evaluation));
+        lines.push(evaluation_lines(evaluation));
     }
 
     // One line per assertion, in run-file order.

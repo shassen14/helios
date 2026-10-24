@@ -3,7 +3,7 @@
 
 use super::{
     super::{
-        phrase::{entry_name, reducer_phrase, with_unit},
+        phrase::{entry_name, reducer_phrase, rounded, with_unit},
         AssertionReportEntry, FailureReason, MeasureReportEntry, ReportedUnit, SeriesSummary,
         Verdict,
     },
@@ -62,7 +62,7 @@ pub(super) fn assertion_line(entry: &AssertionReportEntry) -> String {
 /// or why it has none, and whether its window was covered.
 pub(super) fn measure_line(entry: &MeasureReportEntry) -> String {
     let value = match (entry.value(), entry.reason()) {
-        (Some(value), _) => with_unit(value_string(value), entry.unit()),
+        (Some(value), _) => with_unit(measured_string(value), entry.unit()),
         (None, Some(reason)) => format!("none ({})", reason_phrase(reason)),
         (None, None) => "none".to_string(),
     };
@@ -163,6 +163,15 @@ fn value_string(value: &AssertionValue) -> String {
         AssertionValue::Int(i) => i.to_string(),
         AssertionValue::Float(f) => f.to_string(),
         AssertionValue::String(s) => format!("\"{s}\""),
+    }
+}
+
+/// A measured value as [`value_string`] renders it, a float [`rounded`]:
+/// a measure has no bound beside it.
+fn measured_string(value: &AssertionValue) -> String {
+    match value {
+        AssertionValue::Float(value) => rounded(*value),
+        value => value_string(value),
     }
 }
 

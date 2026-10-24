@@ -12,15 +12,15 @@ use helios_runtime::{
 
 use std::collections::HashMap;
 
-pub(super) const CAR: &str = "car";
+pub(crate) const CAR: &str = "car";
 
 /// The world frame the truth is expressed in.
-pub(super) fn datum() -> FrameId {
+pub(crate) fn datum() -> FrameId {
     FrameId::global("datum")
 }
 
 /// A second world frame the host declares, which the truth is not in.
-pub(super) fn site() -> FrameId {
+pub(crate) fn site() -> FrameId {
     FrameId::global("site")
 }
 
@@ -43,7 +43,7 @@ impl PipelineNode for Estimator {
 /// `axes`, pinning its position through a GPS referenced to `pinned_at`, or
 /// reading no input when `None`. The host declares [`datum`] and [`site`]
 /// in ENU.
-pub(super) fn placement(
+pub(crate) fn placement(
     root: FrameId,
     axes: Convention,
     pinned_at: Option<FrameId>,
