@@ -2,10 +2,12 @@
 //! one failing assertion, stopped on the time budget.
 
 use super::super::{
-    AssertionReportEntry, FailureReason, Report, ReportedUnit, SeriesSummary, TerminatedBy, Verdict,
+    AssertionReportEntry, DroppedValues, FailureReason, Report, ReportedUnit, RunEnd, RunEntries,
+    RunIdentity, RunStop, SeriesSummary, Verdict,
 };
 use crate::{
     assertion::{AssertionTarget, AssertionValue, Condition, Window},
+    run::termination::TerminationReason,
     statistics::within_run::Reducer,
 };
 
@@ -59,23 +61,27 @@ pub(super) fn failing_speed(verdict: Verdict) -> AssertionReportEntry {
 // Enough to exercise every rendering branch.
 pub(super) fn sample_report() -> Report {
     Report::new(
-        "smoke".to_string(),
-        "sim.scenarios.parking_lot".to_string(),
-        Some(42),
-        Vec::new(),
-        Vec::new(),
-        47.3,
-        4.1,
-        TerminatedBy::TimeBudget,
-        vec![
-            passing_state(),
-            failing_speed(Verdict::Failed {
-                actual: Some(AssertionValue::Float(7.0)),
-                reason: FailureReason::ConditionFailed,
-                failed_at_secs: None,
-            }),
-        ],
-        Vec::new(),
-        Vec::new(),
+        RunIdentity {
+            run_name: "smoke".to_string(),
+            scenario: "sim.scenarios.parking_lot".to_string(),
+            master_seed: Some(42),
+        },
+        RunEnd {
+            simulated_duration_secs: 47.3,
+            wall_duration_secs: 4.1,
+            stop: RunStop::Ended(TerminationReason::MaxSimulatedSeconds),
+        },
+        DroppedValues::default(),
+        RunEntries {
+            assertions: vec![
+                passing_state(),
+                failing_speed(Verdict::Failed {
+                    actual: Some(AssertionValue::Float(7.0)),
+                    reason: FailureReason::ConditionFailed,
+                    failed_at_secs: None,
+                }),
+            ],
+            ..RunEntries::default()
+        },
     )
 }

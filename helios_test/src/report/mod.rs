@@ -2,6 +2,7 @@ pub mod aggregate;
 pub mod console;
 pub mod evaluation;
 mod phrase;
+pub mod run;
 pub mod toml_writer;
 pub mod unit;
 
@@ -9,6 +10,7 @@ pub use evaluation::{
     BoundEvaluation, DerivedEvaluation, EvaluationOutcome, EvaluationReport, InputReport,
     MetricReport,
 };
+pub use run::{DroppedValues, RunEnd, RunEntries, RunIdentity, RunStop, UnbuiltAgent};
 pub use unit::ReportedUnit;
 
 use crate::{
@@ -78,52 +80,57 @@ impl Report {
     /// values cannot pass however its assertions came out. Measures never
     /// decide it.
     ///
-    /// So is [`AbortCause::UnusableEntries`]: an entry or evaluation the run
-    /// refused aborts it, the cause placed after any pipeline not built, so
-    /// the cause can't disagree with the entries that carry the detail.
-    #[allow(clippy::too_many_arguments)]
+    /// So are the abort's causes, in their fixed order: each pipeline not
+    /// built, then [`AbortCause::UnusableEntries`] when an entry or
+    /// evaluation the run refused is among `entries`, then each host fault.
+    /// No caller states the refused entries' cause, so it can't disagree with
+    /// the entries that carry the detail.
     pub fn new(
-        run_name: String,
-        scenario: String,
-        master_seed: Option<u64>,
-        refused_writes: Vec<String>,
-        recording: Vec<String>,
-        simulated_duration_secs: f64,
-        wall_duration_secs: f64,
-        terminated_by: TerminatedBy,
-        assertions: Vec<AssertionReportEntry>,
-        measures: Vec<MeasureReportEntry>,
-        evaluations: Vec<EvaluationReport>,
+        identity: RunIdentity,
+        end: RunEnd,
+        dropped: DroppedValues,
+        entries: RunEntries,
     ) -> Self {
-        let unusable = assertions
-            .iter()
-            .any(|entry| entry.status() == AssertionStatus::Unusable)
-            || measures.iter().any(MeasureReportEntry::is_unusable)
-            || evaluations.iter().any(EvaluationReport::is_unusable);
-        let terminated_by = match terminated_by {
-            TerminatedBy::Aborted { mut causes } if unusable => {
-                let after_unbuilt = causes
-                    .iter()
-                    .take_while(|cause| matches!(cause, AbortCause::PipelineNotBuilt { .. }))
-                    .count();
-                causes.insert(after_unbuilt, AbortCause::UnusableEntries);
-                TerminatedBy::Aborted { causes }
+        let RunIdentity {
+            run_name,
+            scenario,
+            master_seed,
+        } = identity;
+        let RunEnd {
+            simulated_duration_secs,
+            wall_duration_secs,
+            stop,
+        } = end;
+        let unusable = entries.any_unusable();
+        let terminated_by = match stop {
+            RunStop::Ended(reason) if !unusable => TerminatedBy::from(&reason),
+            RunStop::Ended(_) => TerminatedBy::aborted(Vec::new(), true, Vec::new()),
+            RunStop::Aborted { unbuilt, faults } => {
+                // The runner aborts a run only for a pipeline not built, a
+                // refused entry or a host fault.
+                debug_assert!(
+                    unusable || !unbuilt.is_empty() || !faults.is_empty(),
+                    "an abort with no cause"
+                );
+                TerminatedBy::aborted(unbuilt, unusable, faults)
             }
-            _ if unusable => TerminatedBy::Aborted {
-                causes: vec![AbortCause::UnusableEntries],
-            },
-            terminated_by => terminated_by,
         };
-        let all_passed = assertions
-            .iter()
-            .all(|entry| entry.status() == AssertionStatus::Passed);
         let status = if matches!(terminated_by, TerminatedBy::Aborted { .. }) {
             ReportStatus::Aborted
-        } else if all_passed && refused_writes.is_empty() && recording.is_empty() {
+        } else if entries.all_passed() && dropped.is_empty() {
             ReportStatus::Passed
         } else {
             ReportStatus::Failed
         };
+        let DroppedValues {
+            refused_writes,
+            recording,
+        } = dropped;
+        let RunEntries {
+            assertions,
+            measures,
+            evaluations,
+        } = entries;
         Self {
             schema_version: REPORT_SCHEMA_VERSION,
             run_name,
@@ -217,6 +224,20 @@ pub enum TerminatedBy {
         #[serde(skip_serializing_if = "Option::is_none")]
         instance: Option<String>,
     },
+}
+
+impl TerminatedBy {
+    /// An abort for each of `unbuilt`, for refused entries when `unusable`,
+    /// and for each of `faults`, in that order.
+    fn aborted(unbuilt: Vec<UnbuiltAgent>, unusable: bool, faults: Vec<HostFault>) -> Self {
+        let causes = unbuilt
+            .into_iter()
+            .map(|UnbuiltAgent { agent, errors }| AbortCause::PipelineNotBuilt { agent, errors })
+            .chain(unusable.then_some(AbortCause::UnusableEntries))
+            .chain(faults.into_iter().map(AbortCause::HostFault))
+            .collect();
+        TerminatedBy::Aborted { causes }
+    }
 }
 
 /// Project the per-step stop reason into the report's stable vocabulary.

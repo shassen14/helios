@@ -330,7 +330,11 @@ mod tests {
 
     use crate::{
         assertion::{AssertionValue, Condition, Window},
-        report::{FailureReason, SeriesSummary, TerminatedBy, Verdict},
+        report::{
+            DroppedValues, FailureReason, RunEnd, RunEntries, RunIdentity, RunStop, SeriesSummary,
+            Verdict,
+        },
+        run::termination::TerminationReason,
     };
 
     use helios_core::kernel::si_unit::SiUnit;
@@ -417,17 +421,22 @@ mod tests {
         assertions: Vec<AssertionReportEntry>,
     ) -> Report {
         Report::new(
-            "batch".to_owned(),
-            "sim/scenarios/01_proving_ground.toml".to_owned(),
-            seed,
-            Vec::new(),
-            Vec::new(),
-            20.0,
-            1.0,
-            TerminatedBy::TimeBudget,
-            assertions,
-            measures,
-            Vec::new(),
+            RunIdentity {
+                run_name: "batch".to_owned(),
+                scenario: "sim/scenarios/01_proving_ground.toml".to_owned(),
+                master_seed: seed,
+            },
+            RunEnd {
+                simulated_duration_secs: 20.0,
+                wall_duration_secs: 1.0,
+                stop: RunStop::Ended(TerminationReason::MaxSimulatedSeconds),
+            },
+            DroppedValues::default(),
+            RunEntries {
+                assertions,
+                measures,
+                evaluations: Vec::new(),
+            },
         )
     }
 

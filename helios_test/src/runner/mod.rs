@@ -17,7 +17,7 @@ use crate::{
     assertion::extract::standard_extractors,
     collector::ObservationCollector,
     evaluation::{standard_evaluators, EvaluatorRegistry},
-    report::{AbortCause, HostFault},
+    report::{HostFault, UnbuiltAgent},
     run::{
         validation::{self, ValidationError},
         Run,
@@ -129,17 +129,14 @@ impl Abort {
         }
     }
 
-    /// Each cause the abort holds, as the report names it: the pipelines not
-    /// built, then the host's fault. Whether entries were refused the report
-    /// derives from the entries themselves.
-    fn causes(&self) -> Vec<AbortCause> {
+    /// Each agent whose pipeline wasn't built, as the report names it.
+    fn unbuilt_agents(&self) -> Vec<UnbuiltAgent> {
         self.unbuilt
             .iter()
-            .map(|unbuilt| AbortCause::PipelineNotBuilt {
+            .map(|unbuilt| UnbuiltAgent {
                 agent: unbuilt.agent.as_str().to_owned(),
                 errors: unbuilt.errors.clone(),
             })
-            .chain(self.fault.clone().map(AbortCause::HostFault))
             .collect()
     }
 }

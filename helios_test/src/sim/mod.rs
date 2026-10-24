@@ -205,6 +205,10 @@ impl RunSeed {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        report::{DroppedValues, RunEnd, RunEntries, RunIdentity, RunStop},
+        run::termination::TerminationReason,
+    };
 
     #[test]
     fn verdict_defaults_to_failed() {
@@ -238,17 +242,18 @@ mod tests {
     /// A report of a run named `name` that ran and passed.
     fn report(name: &str) -> Report {
         Report::new(
-            name.to_string(),
-            "scenario".to_string(),
-            Some(99),
-            Vec::new(),
-            Vec::new(),
-            1.0,
-            0.1,
-            crate::report::TerminatedBy::TimeBudget,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            RunIdentity {
+                run_name: name.to_string(),
+                scenario: "scenario".to_string(),
+                master_seed: Some(99),
+            },
+            RunEnd {
+                simulated_duration_secs: 1.0,
+                wall_duration_secs: 0.1,
+                stop: RunStop::Ended(TerminationReason::MaxSimulatedSeconds),
+            },
+            DroppedValues::default(),
+            RunEntries::default(),
         )
     }
 

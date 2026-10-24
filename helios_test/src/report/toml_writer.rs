@@ -52,10 +52,12 @@ mod tests {
         GapWidth,
     };
     use crate::report::{
-        AbortCause, AssertionReportEntry, BoundEvaluation, DerivedEvaluation, EvaluationOutcome,
+        AssertionReportEntry, BoundEvaluation, DerivedEvaluation, DroppedValues, EvaluationOutcome,
         EvaluationReport, FailureReason, FaultStep, HostFault, InputReport, MeasureReportEntry,
-        MetricReport, ReportedUnit, SeriesSummary, TerminatedBy, Verdict,
+        MetricReport, ReportedUnit, RunEnd, RunEntries, RunIdentity, RunStop, SeriesSummary,
+        TerminatedBy, UnbuiltAgent, Verdict,
     };
+    use crate::run::termination::TerminationReason;
     use crate::statistics::within_run::Reducer;
 
     use helios_core::kernel::si_unit::SiUnit;
@@ -114,52 +116,58 @@ mod tests {
     // inside the `assertions` array-of-tables, and the `measures` one.
     fn sample_report() -> Report {
         Report::new(
-            "smoke".to_string(),
-            "sim.scenarios.parking_lot".to_string(),
-            Some(42),
-            Vec::new(),
-            Vec::new(),
-            12.5,
-            0.3,
-            TerminatedBy::TimeBudget,
-            vec![
-                AssertionReportEntry::new(
-                    "parked".to_string(),
-                    AssertionTarget::parse("agent.car.node.estimator.position")
+            RunIdentity {
+                run_name: "smoke".to_string(),
+                scenario: "sim.scenarios.parking_lot".to_string(),
+                master_seed: Some(42),
+            },
+            RunEnd {
+                simulated_duration_secs: 12.5,
+                wall_duration_secs: 0.3,
+                stop: RunStop::Ended(TerminationReason::MaxSimulatedSeconds),
+            },
+            DroppedValues::default(),
+            RunEntries {
+                assertions: vec![
+                    AssertionReportEntry::new(
+                        "parked".to_string(),
+                        AssertionTarget::parse("agent.car.node.estimator.position")
+                            .expect("valid target"),
+                        None,
+                        None,
+                        Window::default(),
+                        Some(Reducer::Final),
+                        Some(ReportedUnit::Declared(SiUnit::Meters)),
+                        Condition::WithinRange([-0.5, 0.5]),
+                        SeriesSummary {
+                            final_age_secs: Some(0.25),
+                            ..series(3)
+                        },
+                        Verdict::Passed {
+                            actual: AssertionValue::Float(0.0),
+                        },
+                    ),
+                    time_above_failing(Verdict::Failed {
+                        actual: Some(AssertionValue::Float(7.0)),
+                        reason: FailureReason::ConditionFailed,
+                        failed_at_secs: None,
+                    }),
+                ],
+                measures: vec![MeasureReportEntry::new(
+                    "goal_distance".to_string(),
+                    AssertionTarget::parse("agent.car.node.eval.goal_distance")
                         .expect("valid target"),
                     None,
                     None,
                     Window::default(),
-                    Some(Reducer::Final),
+                    Reducer::Final,
+                    true,
+                    Some(Ok(AssertionValue::Float(0.5))),
                     Some(ReportedUnit::Declared(SiUnit::Meters)),
-                    Condition::WithinRange([-0.5, 0.5]),
-                    SeriesSummary {
-                        final_age_secs: Some(0.25),
-                        ..series(3)
-                    },
-                    Verdict::Passed {
-                        actual: AssertionValue::Float(0.0),
-                    },
-                ),
-                time_above_failing(Verdict::Failed {
-                    actual: Some(AssertionValue::Float(7.0)),
-                    reason: FailureReason::ConditionFailed,
-                    failed_at_secs: None,
-                }),
-            ],
-            vec![MeasureReportEntry::new(
-                "goal_distance".to_string(),
-                AssertionTarget::parse("agent.car.node.eval.goal_distance").expect("valid target"),
-                None,
-                None,
-                Window::default(),
-                Reducer::Final,
-                true,
-                Some(Ok(AssertionValue::Float(0.5))),
-                Some(ReportedUnit::Declared(SiUnit::Meters)),
-                series(1),
-            )],
-            vec![twist_evaluation()],
+                    series(1),
+                )],
+                evaluations: vec![twist_evaluation()],
+            },
         )
     }
 
@@ -365,50 +373,53 @@ mod tests {
     fn an_aborted_run_writes_each_cause_and_each_refusal() {
         let refused = || vec!["its agent's pipeline wasn't built".to_owned()];
         let report = Report::new(
-            "unbuilt".to_string(),
-            "test/scenarios/unbuilt_pipeline.toml".to_string(),
-            None,
-            Vec::new(),
-            Vec::new(),
-            0.0,
-            0.1,
-            TerminatedBy::Aborted {
-                causes: vec![
-                    AbortCause::PipelineNotBuilt {
+            RunIdentity {
+                run_name: "unbuilt".to_string(),
+                scenario: "test/scenarios/unbuilt_pipeline.toml".to_string(),
+                master_seed: None,
+            },
+            RunEnd {
+                simulated_duration_secs: 0.0,
+                wall_duration_secs: 0.1,
+                stop: RunStop::Aborted {
+                    unbuilt: vec![UnbuiltAgent {
                         agent: "truck".to_string(),
                         errors: vec!["nothing supplies the map".to_string()],
-                    },
-                    AbortCause::HostFault(HostFault::ForeignCollector {
+                    }],
+                    faults: vec![HostFault::ForeignCollector {
                         at: FaultStep::Tick { at_secs: 1.5 },
-                    }),
-                ],
-            },
-            vec![time_above_failing(Verdict::Unusable {
-                problems: refused(),
-            })],
-            vec![MeasureReportEntry::new(
-                "goal_distance".to_string(),
-                AssertionTarget::parse("agent.truck.node.eval.goal_distance")
-                    .expect("valid target"),
-                None,
-                None,
-                Window::default(),
-                Reducer::Final,
-                false,
-                None,
-                None,
-                series(0),
-            )
-            .refused(refused())],
-            vec![EvaluationReport {
-                name: "agent.truck.tracking.twist".to_string(),
-                application: Some("tracking".to_string()),
-                agent: Some("truck".to_string()),
-                kind: "twist_tracking".to_string(),
-                outcome: EvaluationOutcome::Unusable {
-                    problems: refused(),
+                    }],
                 },
-            }],
+            },
+            DroppedValues::default(),
+            RunEntries {
+                assertions: vec![time_above_failing(Verdict::Unusable {
+                    problems: refused(),
+                })],
+                measures: vec![MeasureReportEntry::new(
+                    "goal_distance".to_string(),
+                    AssertionTarget::parse("agent.truck.node.eval.goal_distance")
+                        .expect("valid target"),
+                    None,
+                    None,
+                    Window::default(),
+                    Reducer::Final,
+                    false,
+                    None,
+                    None,
+                    series(0),
+                )
+                .refused(refused())],
+                evaluations: vec![EvaluationReport {
+                    name: "agent.truck.tracking.twist".to_string(),
+                    application: Some("tracking".to_string()),
+                    agent: Some("truck".to_string()),
+                    kind: "twist_tracking".to_string(),
+                    outcome: EvaluationOutcome::Unusable {
+                        problems: refused(),
+                    },
+                }],
+            },
         );
 
         let value = written(&report);

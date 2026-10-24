@@ -6,7 +6,7 @@ use super::reached::Reached;
 use crate::{
     collector::ObservationCollector,
     evaluation::derived::Derived,
-    report::{AbortCause, HostFault, Report, TerminatedBy},
+    report::{DroppedValues, HostFault, Report, RunEnd, RunEntries, RunIdentity, RunStop},
     run::termination::TerminationReason,
     runner::{Phase, Runner},
 };
@@ -80,28 +80,33 @@ impl Runner {
             Phase::AwaitingPipelines | Phase::Aborted(_) => None,
         };
         let (reached, fault) = Reached::new(self, collector, derived.as_deref());
-        let mut causes = match &self.phase {
-            Phase::Aborted(abort) => abort.causes(),
-            Phase::AwaitingPipelines | Phase::Ready(_) => Vec::new(),
+        let (unbuilt, mut faults) = match &self.phase {
+            Phase::Aborted(abort) => (
+                abort.unbuilt_agents(),
+                abort.fault.iter().cloned().collect(),
+            ),
+            Phase::AwaitingPipelines | Phase::Ready(_) => (Vec::new(), Vec::new()),
         };
-        causes.extend(fault.map(AbortCause::HostFault));
+        faults.extend(fault);
         if matches!(self.phase, Phase::Ready(_)) {
             match (self.ticks, &terminated_by_reason) {
-                (None, _) => causes.push(AbortCause::HostFault(HostFault::NeverTicked)),
-                (Some(_), None) => causes.push(AbortCause::HostFault(HostFault::StoppedUnasked)),
+                (None, _) => faults.push(HostFault::NeverTicked),
+                (Some(_), None) => faults.push(HostFault::StoppedUnasked),
                 (Some(_), Some(_)) => {}
             }
         }
-        // Every way the host stops without a reason is a cause above.
-        let terminated_by = match terminated_by_reason {
-            Some(reason) if causes.is_empty() && !self.is_aborted() => TerminatedBy::from(&reason),
-            _ => TerminatedBy::Aborted { causes },
+        // Every way the host stops without a reason is a fault above.
+        let stop = match terminated_by_reason {
+            Some(reason) if faults.is_empty() && !self.is_aborted() => RunStop::Ended(reason),
+            _ => RunStop::Aborted { unbuilt, faults },
         };
 
-        let assertions = reached.assertions();
+        let entries = RunEntries {
+            assertions: reached.assertions(),
+            measures: reached.measures(),
+            evaluations: reached.evaluations(),
+        };
         let recording = reached.recording();
-        let measures = reached.measures();
-        let evaluations = reached.evaluations();
 
         let refused_writes: Vec<String> = refused_writes
             .into_iter()
@@ -117,17 +122,21 @@ impl Runner {
         };
 
         Report::new(
-            run_name,
-            self.run.scenario().path().to_string(),
-            master_seed,
-            refused_writes,
-            recording,
-            simulated_duration_secs,
-            wall_duration_secs,
-            terminated_by,
-            assertions,
-            measures,
-            evaluations,
+            RunIdentity {
+                run_name,
+                scenario: self.run.scenario().path().to_string(),
+                master_seed,
+            },
+            RunEnd {
+                simulated_duration_secs,
+                wall_duration_secs,
+                stop,
+            },
+            DroppedValues {
+                refused_writes,
+                recording,
+            },
+            entries,
         )
     }
 }
