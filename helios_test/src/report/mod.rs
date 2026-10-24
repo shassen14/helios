@@ -229,9 +229,13 @@ pub struct AssertionReportEntry {
     name: String,
     /// The selector as the run file wrote it.
     target: AssertionTarget,
+    /// The agent whose evaluation this entry judged, where its target
+    /// selects every agent's; one entry per agent under `eval.agent.*`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
     /// The instance this entry judged, on a keyed channel; one entry per
     /// instance under `instance = "*"`. So an entry is identified by its
-    /// name and instance.
+    /// name, agent and instance.
     #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<String>,
     /// As the run file wrote it; absent on one over the whole run. Where it
@@ -262,6 +266,7 @@ impl AssertionReportEntry {
     pub fn new(
         name: String,
         target: AssertionTarget,
+        agent: Option<String>,
         instance: Option<String>,
         window: Window,
         reduce: Option<Reducer>,
@@ -273,6 +278,7 @@ impl AssertionReportEntry {
         Self {
             name,
             target,
+            agent,
             instance,
             window,
             reduce,
@@ -285,6 +291,11 @@ impl AssertionReportEntry {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The agent judged, under `eval.agent.*`.
+    pub fn agent(&self) -> Option<&str> {
+        self.agent.as_deref()
     }
 
     /// The instance judged, on a keyed channel.
@@ -322,6 +333,9 @@ pub struct MeasureReportEntry {
     target: AssertionTarget,
     /// As on [`AssertionReportEntry`].
     #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
+    /// As on [`AssertionReportEntry`].
+    #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<String>,
     /// As on [`AssertionReportEntry`].
     #[serde(skip_serializing_if = "Window::is_whole_run")]
@@ -352,6 +366,7 @@ impl MeasureReportEntry {
     pub fn new(
         name: String,
         target: AssertionTarget,
+        agent: Option<String>,
         instance: Option<String>,
         window: Window,
         reduce: Reducer,
@@ -368,6 +383,7 @@ impl MeasureReportEntry {
         Self {
             name,
             target,
+            agent,
             instance,
             window,
             reduce,
@@ -385,6 +401,11 @@ impl MeasureReportEntry {
 
     pub fn covered(&self) -> bool {
         self.covered
+    }
+
+    /// As [`AssertionReportEntry::agent`].
+    pub fn agent(&self) -> Option<&str> {
+        self.agent.as_deref()
     }
 
     /// As [`AssertionReportEntry::instance`].

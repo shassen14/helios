@@ -18,8 +18,6 @@ use crate::{
 
 use helios_runtime::observe::key::RecordedKey;
 
-use std::collections::HashSet;
-
 /// One entry to resolve, read off an assertion or a measure.
 pub(super) struct Wanted<'r> {
     pub(super) owner: EntryOwner,
@@ -33,10 +31,10 @@ pub(super) struct Wanted<'r> {
 }
 
 /// The evaluations an entry's derived target can name: those setup built,
-/// and the names of those it refused.
+/// and the names of those it refused, each in run-file order.
 pub(super) struct Derivable<'a> {
     pub(super) planned: &'a [PlannedEvaluation],
-    pub(super) refused: &'a HashSet<&'a EvaluationName>,
+    pub(super) refused: &'a [&'a EvaluationName],
 }
 
 /// The series an entry the run can evaluate reads.
@@ -61,9 +59,9 @@ pub(super) fn check<'r>(
 ) -> Result<Found<'r>, Vec<TargetProblem>> {
     let mut problems = Vec::new();
     let located = match wanted.target.root() {
-        TargetRoot::Derived(name) => locate_derived(
+        TargetRoot::Derived(selector) => locate_derived(
             wanted.target,
-            name,
+            selector,
             wanted.allow_nondeterministic,
             derived,
             catalogs,

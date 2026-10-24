@@ -3,8 +3,9 @@
 #
 # The one run with more than one agent, so the one proof that recording,
 # setup and evaluation keep each agent's series apart: each car has its
-# own evaluation, named `agent.<car>.tracking.twist`, and its own
-# verdicts.
+# own evaluation, named `agent.<car>.tracking.twist`. Each assertion and
+# measure names `eval.agent.*`, so it is judged once per car, each report
+# entry carrying its `agent`.
 #
 # Both routes are open, so each car must hold its reference through the
 # cruise: from 2 s, once it is up to speed, to 9 s, before it nears its
@@ -24,43 +25,22 @@ from = "test/evaluations/twist.toml"
 agents = ["NorthCar", "SouthCar"]
 
 [[assert]]
-name = "north_surge_settled"
-target = "eval.agent.NorthCar.tracking.twist.surge"
-window = { start = 2.0, end = 9.0 }
-condition = { within_range = [-1.0, 1.0] }
-
-[[assert]]
-name = "south_surge_settled"
-target = "eval.agent.SouthCar.tracking.twist.surge"
+name = "surge_settled"
+target = "eval.agent.*.tracking.twist.surge"
 window = { start = 2.0, end = 9.0 }
 condition = { within_range = [-1.0, 1.0] }
 
 [[measure]]
-name = "north_surge_rms"
-target = "eval.agent.NorthCar.tracking.twist.surge"
+name = "surge_rms"
+target = "eval.agent.*.tracking.twist.surge"
 reduce = "rms"
 
 [[measure]]
-name = "north_surge_final"
-target = "eval.agent.NorthCar.tracking.twist.surge"
+name = "surge_final"
+target = "eval.agent.*.tracking.twist.surge"
 reduce = "final"
 
 [[measure]]
-name = "north_yaw_rate_rms"
-target = "eval.agent.NorthCar.tracking.twist.yaw_rate"
-reduce = "rms"
-
-[[measure]]
-name = "south_surge_rms"
-target = "eval.agent.SouthCar.tracking.twist.surge"
-reduce = "rms"
-
-[[measure]]
-name = "south_surge_final"
-target = "eval.agent.SouthCar.tracking.twist.surge"
-reduce = "final"
-
-[[measure]]
-name = "south_yaw_rate_rms"
-target = "eval.agent.SouthCar.tracking.twist.yaw_rate"
+name = "yaw_rate_rms"
+target = "eval.agent.*.tracking.twist.yaw_rate"
 reduce = "rms"

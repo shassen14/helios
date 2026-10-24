@@ -51,6 +51,9 @@ pub(super) fn report_measure(
     MeasureReportEntry::new(
         measure.name.to_string(),
         measure.target.clone(),
+        judged
+            .and_then(|entry| entry.agent)
+            .map(|agent| agent.as_str().to_owned()),
         judged.and_then(|entry| entry.key.and_then(instance)),
         measure.window.clone(),
         measure.reduce.clone(),

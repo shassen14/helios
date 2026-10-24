@@ -66,7 +66,7 @@ fn measure_line(report: &AggregateReport, row: &MeasureAggregate) -> String {
         .collect();
     let mut line = format!(
         "[mc measure] {}: {} of {} over {} runs ({} samples)",
-        entry_name(&row.name, row.instance.as_deref()),
+        entry_name(&row.name, row.agent.as_deref(), row.instance.as_deref()),
         reducer_phrase(&row.reduce),
         row.target,
         row.runs,
@@ -97,7 +97,7 @@ fn measure_line(report: &AggregateReport, row: &MeasureAggregate) -> String {
 fn assertion_line(row: &AssertionAggregate) -> String {
     let mut line = format!(
         "[mc assert] {}: {} passed {} of {} runs",
-        entry_name(&row.name, row.instance.as_deref()),
+        entry_name(&row.name, row.agent.as_deref(), row.instance.as_deref()),
         row.target,
         row.passed,
         row.runs,

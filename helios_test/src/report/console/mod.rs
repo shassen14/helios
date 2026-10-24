@@ -106,7 +106,7 @@ fn termination_line(report: &Report) -> String {
         TerminatedBy::TimeBudget => format!("time budget reached at {at}"),
         TerminatedBy::AssertionFailed { name, instance, .. } => format!(
             "assertion '{}' {} at {at}",
-            entry_name(name, instance.as_deref()),
+            entry_name(name, None, instance.as_deref()),
             status_label(&AssertionStatus::Failed)
         ),
     }

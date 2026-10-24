@@ -11,7 +11,7 @@ use super::{
     problems::{Unusable, UnusableEntry},
 };
 use crate::{
-    assertion::{Assertion, AssertionTarget, Measure},
+    assertion::{Assertion, AssertionTarget, Measure, TargetRoot},
     collector::{ObservationCollector, Rejection, Series, SeriesId},
     evaluation::{derived::Derived, path::EvaluationName, EvaluatorRegistry},
     report::ReportedUnit,
@@ -21,7 +21,7 @@ use crate::{
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::{observe::key::RecordedKey, port::Writer, AutonomyPipeline};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// _Per-step._ What setup found for each assertion and measure, and the
 /// state each tick folds into it.
@@ -108,6 +108,7 @@ impl ResolvedPlan {
                 let PlanEntry {
                     owner,
                     source,
+                    agent,
                     held,
                     unit,
                     state,
@@ -118,6 +119,7 @@ impl ResolvedPlan {
                 Some(collector.series(*series).map(|series| EntryView {
                     owner: *owner,
                     key: Some(&*key),
+                    agent: agent.as_ref(),
                     held: *held,
                     unit: *unit,
                     series,
@@ -155,11 +157,13 @@ pub enum EntryOwner {
 
 /// One entry in the plan: whose it is, the series it is evaluated from, and
 /// its state so far. An assertion on each instance of a keyed channel owns
-/// one per instance.
+/// one per instance, and one on every agent's evaluation one per agent.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct PlanEntry {
     pub(super) owner: EntryOwner,
     pub(super) source: SeriesSource,
+    /// As [`EntryView::agent`].
+    pub(super) agent: Option<AgentId>,
     /// As [`EntryView::held`].
     pub(super) held: bool,
     /// As [`EntryView::unit`].
@@ -175,6 +179,7 @@ impl PlanEntry {
                 SeriesSource::Recorded { key, .. } => Some(key),
                 SeriesSource::Derived { .. } => None,
             },
+            agent: self.agent.as_ref(),
             held: self.held,
             unit: self.unit,
             series,
@@ -212,6 +217,10 @@ pub(in crate::runner) struct EntryView<'p, 'c, S> {
     /// Which recorded series: the instance, where the target names
     /// several. `None` for a derived series, which its target names whole.
     pub key: Option<&'p RecordedKey>,
+    /// The agent whose evaluation it reads, when its target selects every
+    /// agent's (`eval.agent.*`); `None` for every other entry, whose target
+    /// names its agent.
+    pub agent: Option<&'p AgentId>,
     /// Whether each value holds until the next: true for a channel, whose
     /// value is what the brain could read until it was written again; false
     /// for an emission, whose values are events. A held series carries its
@@ -277,7 +286,7 @@ pub(in crate::runner) fn resolve(
     let mut unusable = Unusable::default();
     let (planned, refused) = resolve_evaluations(evaluations, registry, &catalogs, collector);
     unusable.evaluations = refused;
-    let refused: HashSet<&EvaluationName> = unusable
+    let refused: Vec<&EvaluationName> = unusable
         .evaluations
         .iter()
         .map(|evaluation| &evaluation.name)
@@ -312,21 +321,34 @@ pub(in crate::runner) fn resolve(
     let mut entries = Vec::with_capacity(assertions.len() + measures.len());
     let mut anchors = HashMap::new();
     for wanted in wanted_assertions.chain(wanted_measures) {
+        let each_agent = matches!(
+            wanted.target.root(),
+            TargetRoot::Derived(derived) if derived.selects_each_agent()
+        );
         match check(&wanted, &catalogs, &derived, collector) {
             Ok(found) => {
                 for target in found.targets {
-                    let source = match target {
-                        SeriesTarget::Recorded(key) => SeriesSource::Recorded {
-                            series: collector.bind(wanted.target, key.clone()),
-                            key,
-                        },
-                        SeriesTarget::Derived { evaluation, metric } => {
-                            SeriesSource::Derived { evaluation, metric }
-                        }
+                    let (source, agent) = match target {
+                        SeriesTarget::Recorded(key) => (
+                            SeriesSource::Recorded {
+                                series: collector.bind(wanted.target, key.clone()),
+                                key,
+                            },
+                            None,
+                        ),
+                        SeriesTarget::Derived { evaluation, metric } => (
+                            SeriesSource::Derived { evaluation, metric },
+                            planned
+                                .get(evaluation)
+                                .and_then(|planned| planned.name.applied())
+                                .filter(|_| each_agent)
+                                .map(|(agent, _)| agent.clone()),
+                        ),
                     };
                     entries.push(PlanEntry {
                         owner: wanted.owner,
                         source,
+                        agent,
                         held: found.held,
                         unit: found.unit,
                         state: AssertionState::new(),
@@ -408,6 +430,7 @@ mod tests {
                     .series_id(&key(subject.clone()))
                     .expect("the entry's key is bound"),
             },
+            agent: None,
             held: matches!(subject, Subject::Channel { .. }),
             // NIS declares itself dimensionless; a bare f64 channel declares
             // nothing.

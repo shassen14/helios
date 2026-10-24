@@ -24,7 +24,7 @@ const STATUS_COLUMN: usize = 48;
 pub(super) fn assertion_line(entry: &AssertionReportEntry) -> String {
     let head = format!(
         "[assert] {}: {}{} {}",
-        entry_name(&entry.name, entry.instance()),
+        entry_name(&entry.name, entry.agent(), entry.instance()),
         reduced_of(entry.reduce.as_ref()),
         entry.target,
         condition_phrase(&entry.condition, entry.unit()),
@@ -68,7 +68,7 @@ pub(super) fn measure_line(entry: &MeasureReportEntry) -> String {
     };
     let mut line = format!(
         "[measure] {}: {} of {} = {value} [{}]",
-        entry_name(&entry.name, entry.instance()),
+        entry_name(&entry.name, entry.agent(), entry.instance()),
         reducer_phrase(&entry.reduce),
         entry.target,
         series_phrase(entry.series(), entry.unit()),
@@ -262,6 +262,7 @@ mod tests {
                 "goal_distance".to_string(),
                 AssertionTarget::parse("agent.car.node.eval.goal_distance").expect("valid target"),
                 None,
+                None,
                 Window::default(),
                 Reducer::Final,
                 true,
@@ -272,6 +273,7 @@ mod tests {
             MeasureReportEntry::new(
                 "peak_speed".to_string(),
                 AssertionTarget::parse("agent.car.node.estimator.speed").expect("valid target"),
+                None,
                 None,
                 Window::default(),
                 Reducer::Max,

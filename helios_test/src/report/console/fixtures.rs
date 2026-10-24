@@ -26,6 +26,7 @@ fn passing_state() -> AssertionReportEntry {
         "mission_succeeded".to_string(),
         AssertionTarget::parse("agent.car.node.mission.state").expect("valid target"),
         None,
+        None,
         Window::default(),
         Some(Reducer::Final),
         None,
@@ -44,6 +45,7 @@ pub(super) fn failing_speed(verdict: Verdict) -> AssertionReportEntry {
     AssertionReportEntry::new(
         "speed_capped".to_string(),
         AssertionTarget::parse("agent.car.node.estimator.speed").expect("valid target"),
+        None,
         None,
         Window::default(),
         None,

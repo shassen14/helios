@@ -100,6 +100,9 @@ impl<'p, 'c> Reached<'p, 'c> {
                         AssertionReportEntry::new(
                             assertion.name.to_string(),
                             assertion.target.clone(),
+                            entry
+                                .and_then(|entry| entry.agent)
+                                .map(|agent| agent.as_str().to_owned()),
                             entry.and_then(|entry| entry.key.and_then(instance)),
                             assertion.window.clone(),
                             assertion.reduce.clone(),

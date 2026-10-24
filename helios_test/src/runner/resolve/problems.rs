@@ -19,6 +19,9 @@ pub(super) const INSTANCE_SEPARATOR: &str = ", ";
 /// Between the metrics a problem lists.
 const METRIC_SEPARATOR: &str = ", ";
 
+/// Between the evaluations a problem lists.
+const EVALUATION_SEPARATOR: &str = ", ";
+
 /// Between the unusable evaluations and entries in one message. An entry's
 /// own message holds a `,` but never this.
 const UNUSABLE_SEPARATOR: &str = "; ";
@@ -131,6 +134,18 @@ pub enum TargetProblem {
     /// its own reasons.
     #[error("its evaluation can't run")]
     EvaluationUnusable,
+    /// Under `eval.agent.*`, the agents' evaluations the run can't build,
+    /// by name, each refused for its own reasons. Judging the other agents
+    /// alone would report a fleet verdict missing one.
+    #[error(
+        "it selects every agent's evaluation, and these can't run: {}",
+        .0.join(EVALUATION_SEPARATOR)
+    )]
+    EvaluationsUnusable(Vec<String>),
+    /// Under `eval.agent.*`, no agent's evaluation of that suite entry was
+    /// planned, so it would judge nothing.
+    #[error("it selects every agent's evaluation, and the run planned none")]
+    NoEvaluationSelected,
     /// A metric its evaluation doesn't offer, when the offered ones are
     /// known only once the evaluation is bound, too late for load to check.
     #[error("its evaluation offers no such metric (it offers {})", .0.join(METRIC_SEPARATOR))]

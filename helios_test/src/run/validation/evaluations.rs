@@ -7,7 +7,7 @@ use crate::{
     assertion::{EntryName, TargetRoot},
     evaluation::{
         kind::EvaluatorKind,
-        path::{AgentEntry, DerivedName, EvaluationName},
+        path::{AgentEntry, AgentSelector, DerivedTarget, EvaluationSelector},
         suite::{AgentSelection, Suite},
         Evaluation, EvaluatorRegistry,
     },
@@ -158,8 +158,9 @@ fn check_evaluation<'r, I>(
 /// Whether each derived series an assertion or measure names is a metric
 /// of an evaluation the run declares: an inline entry, or an entry of a
 /// suite applied under that name, to that agent when the suite lists its
-/// agents. Under `"*"`, whether the run has the agent is known only at
-/// setup.
+/// agents. Under an application to `"*"`, whether the run has the agent is
+/// known only at setup; a target selecting every agent (`eval.agent.*`)
+/// names no agent to check.
 pub(super) fn check_derived_targets(run: &Run, kinds: &Kinds) -> Result<(), ValidationError> {
     let targets = run
         .assertions()
@@ -208,12 +209,12 @@ pub(super) fn check_derived_targets(run: &Run, kinds: &Kinds) -> Result<(), Vali
 /// declares none: `None` for an inline name, which no entry has, or what
 /// is wrong with a suite's.
 fn kind_of<'r>(
-    derived: &DerivedName,
+    derived: &DerivedTarget,
     kinds: &Kinds<'_, 'r>,
 ) -> Result<&'r dyn EvaluatorKind, Option<String>> {
     match derived.evaluation() {
-        EvaluationName::Inline(entry) => kinds.inline.get(entry).copied().ok_or(None),
-        EvaluationName::Agent(named) => {
+        EvaluationSelector::Inline(entry) => kinds.inline.get(entry).copied().ok_or(None),
+        EvaluationSelector::Agent(named) => {
             let AgentEntry {
                 agent,
                 application,
@@ -233,7 +234,9 @@ fn kind_of<'r>(
                     names.join(", ")
                 )));
             };
-            if let AgentSelection::Listed(agents) = &applied.suite.application.agents {
+            if let (AgentSelection::Listed(agents), AgentSelector::One(agent)) =
+                (&applied.suite.application.agents, agent)
+            {
                 if !agents.contains(agent) {
                     let listed: Vec<&str> = agents.iter().map(|agent| agent.as_str()).collect();
                     return Err(Some(format!(
@@ -492,6 +495,33 @@ mod tests {
                 &max_of("a", "eval.agent.truck.tracking.twist.surge_error"),
                 &suites
             )),
+            Err(ValidationError::UnknownMetric { .. })
+        ));
+    }
+
+    #[test]
+    fn a_target_on_every_agent_skips_only_the_agent_check() {
+        let suites = [("tracking", "[\"car\"]", TWIST_SUITE)];
+        let each = |target: &str| check(&applying(&max_of("a", target), &suites));
+
+        assert_eq!(each("eval.agent.*.tracking.twist.surge"), Ok(()));
+        let unapplied = each("eval.agent.*.steering.twist.surge").expect_err("no such suite");
+        assert!(
+            matches!(unapplied, ValidationError::UnappliedSuiteTarget { .. }),
+            "{unapplied:?}"
+        );
+        assert!(
+            unapplied
+                .to_string()
+                .contains("'eval.agent.*.steering.twist.surge'"),
+            "{unapplied}"
+        );
+        assert!(matches!(
+            each("eval.agent.*.tracking.yaw.surge"),
+            Err(ValidationError::UnappliedSuiteTarget { .. })
+        ));
+        assert!(matches!(
+            each("eval.agent.*.tracking.twist.surge_error"),
             Err(ValidationError::UnknownMetric { .. })
         ));
     }

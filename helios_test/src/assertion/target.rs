@@ -1,4 +1,4 @@
-use crate::evaluation::path::{DerivedName, DerivedProblem};
+use crate::evaluation::path::{DerivedProblem, DerivedTarget};
 
 use helios_core::prelude::{AgentId, FrameId};
 use helios_runtime::{
@@ -17,7 +17,8 @@ use std::{fmt, sync::Arc};
 const PATH_KEY: &str = "path";
 const INSTANCE_KEY: &str = "instance";
 
-/// How a selector asks for every instance of a keyed channel, and a suite
+/// How a selector asks for every instance of a keyed channel, a derived
+/// target for every agent's evaluation of a suite entry, and a suite
 /// application for every agent of the run.
 pub(crate) const WILDCARD: &str = "*";
 
@@ -26,7 +27,9 @@ pub(crate) const WILDCARD: &str = "*";
 /// recorded series' path is the watcher path it is recorded under
 /// (`agent.<agent>.node.<node>.<leaf>` or `agent.<agent>.channel.<channel>`);
 /// a derived one's is `eval.inline.<evaluation>.<metric>`, or
-/// `eval.agent.<agent>.<suite>.<evaluation>.<metric>` for a suite's.
+/// `eval.agent.<agent>.<suite>.<evaluation>.<metric>` for a suite's, where
+/// `<agent>` may be `*` for every agent the suite was applied to. A recorded
+/// path names one agent.
 ///
 /// Written as the path alone, or as `{ path = "…", instance = "…" }`: an
 /// instance gets its own field because its spelling holds dots (a frame,
@@ -48,17 +51,19 @@ impl AssertionTarget {
     /// The target `path` names, with no instance, or why it names none.
     pub fn parse(path: impl Into<String>) -> Result<Self, MalformedTarget> {
         let path = path.into();
-        let root = if DerivedName::is_derived(&path) {
-            DerivedName::parse(&path)
+        let root = if DerivedTarget::is_derived(&path) {
+            DerivedTarget::parse(&path)
                 .map(TargetRoot::Derived)
                 .map_err(TargetFault::Derived)
         } else {
-            AgentPathParts::split(&path)
-                .map(|parts| TargetRoot::Agent {
+            match AgentPathParts::split(&path) {
+                Ok(parts) if parts.agent == WILDCARD => Err(TargetFault::EachAgentRecorded),
+                Ok(parts) => Ok(TargetRoot::Agent {
                     agent: AgentId::new(parts.agent),
                     subject: TargetSubject::from(parts.subject),
-                })
-                .map_err(TargetFault::Recorded)
+                }),
+                Err(part) => Err(TargetFault::Recorded(part)),
+            }
         };
         match root {
             Ok(root) => Ok(Self {
@@ -246,7 +251,7 @@ pub enum TargetRoot {
         agent: AgentId,
         subject: TargetSubject,
     },
-    Derived(DerivedName),
+    Derived(DerivedTarget),
 }
 
 /// _Shared (pre + per)._ What kind of value a target names, with its parts
@@ -306,6 +311,14 @@ pub enum TargetFault {
          eval.agent.<agent>.<suite>.<evaluation>.<metric>: {0}"
     )]
     Derived(DerivedProblem),
+    /// A recorded path whose agent is `*`. A recorded path names one agent;
+    /// `*` selects agents only in a suite's derived series.
+    #[error(
+        "names every agent ('{WILDCARD}') on a recorded path, which names one agent; \
+         '{WILDCARD}' selects agents only in a suite's derived series \
+         eval.agent.{WILDCARD}.<suite>.<evaluation>.<metric>"
+    )]
+    EachAgentRecorded,
 }
 
 /// What is wrong with a target whose `part` is the first that is.
@@ -326,8 +339,6 @@ fn what_is_wrong(part: PathPart) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::{assertion::EntryName, evaluation::path::EvaluationName};
 
     use helios_runtime::channels;
 
@@ -372,11 +383,29 @@ mod tests {
         assert!(!target.is_recorded());
         assert_eq!(
             target.root(),
-            &TargetRoot::Derived(DerivedName::new(
-                EvaluationName::Inline(EntryName::parse("twist").expect("valid name")),
-                "surge_error"
-            ))
+            &TargetRoot::Derived(
+                DerivedTarget::parse("eval.inline.twist.surge_error").expect("valid name")
+            )
         );
+    }
+
+    #[test]
+    fn every_agent_is_a_derived_targets_and_refused_on_a_recorded_path() {
+        let each = AssertionTarget::parse("eval.agent.*.tracking.twist.surge")
+            .expect("a derived target selects every agent");
+        assert!(
+            matches!(each.root(), TargetRoot::Derived(derived) if derived.selects_each_agent())
+        );
+
+        for path in ["agent.*.channel.truth.tf", "agent.*.node.estimator.nis"] {
+            assert_eq!(
+                AssertionTarget::parse(path),
+                Err(MalformedTarget {
+                    path: path.to_owned(),
+                    fault: TargetFault::EachAgentRecorded,
+                })
+            );
+        }
     }
 
     #[test]

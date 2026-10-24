@@ -51,9 +51,9 @@ pub struct AggregateReport {
 }
 
 impl AggregateReport {
-    /// The batch summary of `runs`, in run order. A row is one entry, by name
-    /// and instance, gathered from every report that has it: under
-    /// `instance = "*"` an instance may be absent from some runs.
+    /// The batch summary of `runs`, in run order. A row is one entry, by
+    /// name, agent and instance, gathered from every report that has it:
+    /// under `instance = "*"` an instance may be absent from some runs.
     pub fn from_runs(runs: &[BatchRun]) -> Self {
         let reports: Vec<&Report> = runs.iter().filter_map(|run| run.report.as_ref()).collect();
         let no_report: Vec<usize> = runs
@@ -66,13 +66,13 @@ impl AggregateReport {
             no_report: no_report.len(),
         };
         let measures = rows(&reports, Report::measures, |entry| {
-            (&entry.name, entry.instance())
+            (&entry.name, entry.agent(), entry.instance())
         })
         .iter()
         .filter_map(|entries| MeasureAggregate::of(entries, missing(entries.len())))
         .collect();
         let assertions = rows(&reports, Report::assertions, |entry| {
-            (&entry.name, entry.instance())
+            (&entry.name, entry.agent(), entry.instance())
         })
         .iter()
         .filter_map(|entries| AssertionAggregate::of(entries, missing(entries.len())))
@@ -105,6 +105,8 @@ pub struct BatchRun {
 pub struct MeasureAggregate {
     name: String,
     target: AssertionTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<String>,
     reduce: Reducer,
@@ -165,6 +167,7 @@ impl MeasureAggregate {
         Some(Self {
             name: first.name.clone(),
             target: first.target.clone(),
+            agent: first.agent.clone(),
             instance: first.instance.clone(),
             reduce: first.reduce.clone(),
             unit: entries.iter().find_map(|entry| entry.unit()),
@@ -187,6 +190,8 @@ impl MeasureAggregate {
 pub struct AssertionAggregate {
     name: String,
     target: AssertionTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<String>,
     /// The batch's runs: `passed + failed + unjudged + absent + no_report`.
@@ -231,6 +236,7 @@ impl AssertionAggregate {
         Some(Self {
             name: first.name.clone(),
             target: first.target.clone(),
+            agent: first.agent.clone(),
             instance: first.instance.clone(),
             runs: verdicts.len(),
             passed: count(AssertionStatus::Passed),
@@ -337,6 +343,7 @@ mod tests {
             name.to_owned(),
             AssertionTarget::parse("eval.inline.pose.x").expect("valid target"),
             None,
+            None,
             Window::default(),
             Reducer::Final,
             covered,
@@ -351,6 +358,7 @@ mod tests {
         AssertionReportEntry::new(
             name.to_owned(),
             AssertionTarget::parse("agent.car.node.primary.aiding.gps.nis").expect("valid target"),
+            None,
             None,
             Window::default(),
             Some(Reducer::Final),
@@ -484,6 +492,28 @@ mod tests {
         let report = batch(&[(vec![measure("final_x", None, 0, true)], vec![])]);
 
         assert_eq!(report.measures[0].statistics, Statistics(Vec::new()));
+    }
+
+    #[test]
+    fn each_agents_entry_of_one_name_is_its_own_row() {
+        let on = |agent: &str, value: f64| {
+            let entry = measure("surge_final", Some(value), 1, true);
+            MeasureReportEntry {
+                agent: Some(agent.to_owned()),
+                ..entry
+            }
+        };
+        let report = batch(&[
+            (vec![on("north", 1.0), on("south", 3.0)], vec![]),
+            (vec![on("north", 2.0), on("south", 4.0)], vec![]),
+        ]);
+
+        let rows: Vec<(Option<&str>, usize)> = report
+            .measures
+            .iter()
+            .map(|row| (row.agent.as_deref(), row.runs))
+            .collect();
+        assert_eq!(rows, [(Some("north"), 2), (Some("south"), 2)]);
     }
 
     #[test]

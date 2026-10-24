@@ -520,7 +520,10 @@ mod tests {
     use crate::{
         assertion::{extract::standard_extractors, Assertion, EntryName},
         evaluation::standard_evaluators,
-        runner::resolve::{plan::resolve, ResolvedPlan, Unusable},
+        runner::resolve::{
+            plan::{resolve, EntryOwner, SeriesSource},
+            ResolvedPlan, TargetProblem, Unusable,
+        },
     };
 
     use helios_core::interchange::motion::StampedTwist;
@@ -788,9 +791,112 @@ mod tests {
         );
 
         let unusable = plan.expect_err("no truck");
+        assert_eq!(unusable.entries[0].problems, [TargetProblem::UnknownAgent]);
+    }
+
+    #[test]
+    fn under_every_agents_evaluation_one_assertion_judges_each_agent_apart() {
+        let (_, plan) = resolved(
+            &[applied("motion", "\"*\"", SPEED_SUITE)],
+            None,
+            &[
+                max_of("eval.agent.*.motion.speed.speed"),
+                max_of("eval.agent.truck.motion.speed.speed"),
+            ],
+            &[(CAR, at_base_link(CAR)), (TRUCK, at_base_link(TRUCK))],
+        );
+
+        let plan = plan.expect("both agents have truth");
+        let entries: Vec<(EntryOwner, Option<&str>, &SeriesSource)> = plan
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.owner,
+                    entry.agent.as_ref().map(AgentId::as_str),
+                    &entry.source,
+                )
+            })
+            .collect();
+        // One entry per agent, in the order the evaluations were planned;
+        // the concrete target names its agent and carries none.
+        assert_eq!(
+            entries,
+            [
+                (
+                    EntryOwner::Assertion(0),
+                    Some(CAR),
+                    &SeriesSource::Derived {
+                        evaluation: 0,
+                        metric: 0
+                    }
+                ),
+                (
+                    EntryOwner::Assertion(0),
+                    Some(TRUCK),
+                    &SeriesSource::Derived {
+                        evaluation: 1,
+                        metric: 0
+                    }
+                ),
+                (
+                    EntryOwner::Assertion(1),
+                    None,
+                    &SeriesSource::Derived {
+                        evaluation: 1,
+                        metric: 0
+                    }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn under_every_agents_evaluation_a_refused_agent_refuses_the_entry_naming_it() {
+        let antenna = FrameId::agent(AgentId::new(TRUCK), "antenna");
+        let (_, plan) = resolved(
+            &[applied("motion", "\"*\"", SPEED_SUITE)],
+            None,
+            &[max_of("eval.agent.*.motion.speed.speed")],
+            &[
+                (CAR, at_base_link(CAR)),
+                (TRUCK, truth_body(TRUCK, antenna)),
+            ],
+        );
+
+        let unusable = plan.expect_err("the truck's evaluation is refused");
+        assert_eq!(
+            unusable.evaluations[0].name,
+            agent_scoped(TRUCK, "motion", "speed")
+        );
         assert_eq!(
             unusable.entries[0].problems,
-            [crate::runner::resolve::TargetProblem::UnknownAgent]
+            [TargetProblem::EvaluationsUnusable(vec![
+                "agent.truck.motion.speed".to_owned()
+            ])]
+        );
+        assert!(
+            unusable.to_string().ends_with(
+                "'fast' on 'eval.agent.*.motion.speed.speed': it selects every agent's \
+                 evaluation, and these can't run: agent.truck.motion.speed"
+            ),
+            "{unusable}"
+        );
+    }
+
+    #[test]
+    fn under_every_agents_evaluation_a_run_with_none_planned_is_refused() {
+        let (_, plan) = resolved(
+            &[applied("motion", "\"*\"", SPEED_SUITE)],
+            None,
+            &[max_of("eval.agent.*.motion.speed.speed")],
+            &[],
+        );
+
+        let unusable = plan.expect_err("no agent, no evaluation");
+        assert_eq!(
+            unusable.entries[0].problems,
+            [TargetProblem::NoEvaluationSelected]
         );
     }
 }

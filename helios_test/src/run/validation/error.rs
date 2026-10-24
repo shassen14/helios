@@ -3,7 +3,7 @@
 
 use crate::{
     assertion::{condition::OperandProblem, config::WindowProblem, EntryName},
-    evaluation::path::DerivedName,
+    evaluation::path::DerivedTarget,
 };
 
 use thiserror::Error;
@@ -51,7 +51,7 @@ pub enum ValidationError {
     #[error("'{name}': its window is anchored after '{anchor}', a derived series; anchor it on a recorded one")]
     AnchorOnDerived {
         name: EntryName,
-        anchor: DerivedName,
+        anchor: DerivedTarget,
     },
     #[error("evaluation '{name}': no evaluator kind '{kind}' (there are: {known})")]
     UnknownKind {
@@ -92,7 +92,7 @@ pub enum ValidationError {
     #[error("'{name}': '{target}' names no [[evaluate]] entry")]
     UnknownEvaluation {
         name: EntryName,
-        target: DerivedName,
+        target: DerivedTarget,
     },
     /// A derived series of a suite's evaluation the run doesn't apply: no
     /// suite of that name, no entry of that name in it, or an agent it isn't
@@ -100,7 +100,7 @@ pub enum ValidationError {
     #[error("'{name}': '{target}' {why}")]
     UnappliedSuiteTarget {
         name: EntryName,
-        target: DerivedName,
+        target: DerivedTarget,
         why: String,
     },
     #[error(
@@ -108,7 +108,7 @@ pub enum ValidationError {
     )]
     UnknownMetric {
         name: EntryName,
-        target: DerivedName,
+        target: DerivedTarget,
         metrics: String,
     },
 }

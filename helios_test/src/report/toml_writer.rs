@@ -96,6 +96,7 @@ mod tests {
             "rarely_fast".to_string(),
             AssertionTarget::parse("agent.car.channel.speed").expect("valid target"),
             None,
+            None,
             window(),
             Some(Reducer::TimeAbove(5.0)),
             Some(ReportedUnit::Declared(SiUnit::Seconds)),
@@ -127,6 +128,7 @@ mod tests {
                     AssertionTarget::parse("agent.car.node.estimator.position")
                         .expect("valid target"),
                     None,
+                    None,
                     Window::default(),
                     Some(Reducer::Final),
                     Some(ReportedUnit::Declared(SiUnit::Meters)),
@@ -148,6 +150,7 @@ mod tests {
             vec![MeasureReportEntry::new(
                 "goal_distance".to_string(),
                 AssertionTarget::parse("agent.car.node.eval.goal_distance").expect("valid target"),
+                None,
                 None,
                 Window::default(),
                 Reducer::Final,
@@ -397,6 +400,7 @@ mod tests {
         report.assertions[0] = AssertionReportEntry::new(
             "level".to_string(),
             each,
+            None,
             Some("agent.car.base_link".to_string()),
             Window::default(),
             None,
@@ -431,6 +435,39 @@ mod tests {
         assert!(value["assertions"].as_array().unwrap()[1]
             .get("instance")
             .is_none());
+    }
+
+    #[test]
+    fn an_entry_on_every_agents_evaluation_carries_its_selector_and_agent() {
+        let mut report = sample_report();
+        let each =
+            AssertionTarget::parse("eval.agent.*.tracking.twist.surge").expect("valid target");
+        report.assertions[0] = AssertionReportEntry::new(
+            "surge_settled".to_string(),
+            each,
+            Some("north".to_string()),
+            None,
+            Window::default(),
+            None,
+            Some(ReportedUnit::Declared(SiUnit::MetersPerSecond)),
+            Condition::LessThan(1.0),
+            series(3),
+            Verdict::Passed {
+                actual: AssertionValue::Float(0.0),
+            },
+        );
+
+        let value = written(&report);
+
+        let assertions = value["assertions"].as_array().unwrap();
+        assert_eq!(
+            assertions[0]["target"].as_str(),
+            Some("eval.agent.*.tracking.twist.surge")
+        );
+        assert_eq!(assertions[0]["agent"].as_str(), Some("north"));
+        assert!(assertions[0].get("instance").is_none());
+        // A target naming its agent carries none.
+        assert!(assertions[1].get("agent").is_none());
     }
 
     #[test]

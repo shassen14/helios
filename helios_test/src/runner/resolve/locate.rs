@@ -2,13 +2,15 @@
 //! records, the series a recorded or derived target selects there, the
 //! kind and unit of value they hold, and why a target names none.
 
-use super::{entries::Derivable, plan::SeriesTarget, problems::TargetProblem};
+use super::{
+    entries::Derivable, evaluations::PlannedEvaluation, plan::SeriesTarget, problems::TargetProblem,
+};
 use crate::{
     assertion::{
         extract::Extracted, AssertionTarget, InstanceSelector, TargetRoot, TargetSubject, ValueKind,
     },
     collector::{instance_of, ObservationCollector},
-    evaluation::path::DerivedName,
+    evaluation::path::{AgentSelector, DerivedTarget, EvaluationSelector},
 };
 
 use helios_core::kernel::si_unit::SiUnit;
@@ -161,64 +163,96 @@ pub(super) fn find<'c, 'a>(
     Ok((catalog, selected))
 }
 
-/// What the derived `target`, metric `name` of an evaluation, names: one
-/// series of floats in the metric's unit, held when the evaluation's base
-/// is, or why the run can't read it. A refused evaluation's metric is
-/// refused for that alone; its own reasons are reported with it. A suite's
-/// entry on an agent `catalogs` lacks is refused as an unknown agent.
+/// What the derived `target` names: a series of floats in its metric's
+/// unit per evaluation `derived` selects, one, or every agent's under `*`,
+/// in run-file order, held when every evaluation's base is; or why the run
+/// can't read it. A selected evaluation the run refused refuses the target
+/// for that alone, its own reasons reported with it, naming each under
+/// `*`. A suite's entry on an agent `catalogs` lacks is refused as an
+/// unknown agent, and `*` selecting nothing as such.
 pub(super) fn locate_derived(
     target: &AssertionTarget,
-    name: &DerivedName,
+    derived: &DerivedTarget,
     allow_nondeterministic: bool,
     derivable: &Derivable,
     catalogs: &[Catalog],
 ) -> Result<Located, Vec<TargetProblem>> {
-    if derivable.refused.contains(name.evaluation()) {
-        return Err(vec![TargetProblem::EvaluationUnusable]);
+    let each = derived.selects_each_agent();
+    let refused: Vec<String> = derivable
+        .refused
+        .iter()
+        .filter(|name| derived.selects(name))
+        .map(ToString::to_string)
+        .collect();
+    if !refused.is_empty() {
+        return Err(vec![if each {
+            TargetProblem::EvaluationsUnusable(refused)
+        } else {
+            TargetProblem::EvaluationUnusable
+        }]);
     }
     // Load checked the evaluation exists, and the metric when its kind's
     // menu is fixed; under `"*"`, only setup knows the run's agents.
-    let Some((evaluation, planned)) = derivable
+    let selected: Vec<(usize, &PlannedEvaluation)> = derivable
         .planned
         .iter()
         .enumerate()
-        .find(|(_, planned)| &planned.name == name.evaluation())
-    else {
-        let unknown_agent = name
-            .evaluation()
-            .applied()
-            .is_some_and(|(agent, _)| !catalogs.iter().any(|catalog| catalog.agent == agent));
-        return Err(vec![if unknown_agent {
+        .filter(|(_, planned)| derived.selects(&planned.name))
+        .collect();
+    if selected.is_empty() {
+        let unknown_agent = match derived.evaluation() {
+            EvaluationSelector::Agent(applied) => match &applied.agent {
+                AgentSelector::One(agent) => !catalogs.iter().any(|catalog| catalog.agent == agent),
+                AgentSelector::Each => false,
+            },
+            EvaluationSelector::Inline(_) => false,
+        };
+        return Err(vec![if each {
+            TargetProblem::NoEvaluationSelected
+        } else if unknown_agent {
             TargetProblem::UnknownAgent
         } else {
             TargetProblem::Unreported
         }]);
-    };
-    let Some(metric) = planned
-        .metrics
-        .iter()
-        .position(|metric| metric.name == name.metric())
-    else {
-        return Err(vec![TargetProblem::UnofferedMetric(
-            planned.metrics.iter().map(|metric| metric.name).collect(),
-        )]);
-    };
+    }
+
+    let mut series = Vec::with_capacity(selected.len());
+    let mut si_unit = None;
+    for (evaluation, planned) in &selected {
+        let Some(metric) = planned
+            .metrics
+            .iter()
+            .position(|metric| metric.name == derived.metric())
+        else {
+            return Err(vec![TargetProblem::UnofferedMetric(
+                planned.metrics.iter().map(|metric| metric.name).collect(),
+            )]);
+        };
+        // One kind's metric of one name declares one unit, whichever agent
+        // its evaluation is bound to.
+        si_unit.get_or_insert(planned.metrics[metric].si_unit);
+        series.push(SeriesTarget::Derived {
+            evaluation: *evaluation,
+            metric,
+        });
+    }
 
     let mut problems = Vec::new();
     if target.instance().is_some() {
         problems.push(TargetProblem::InstanceOnDerived);
     }
-    if planned.nondeterministic && !allow_nondeterministic {
+    let nondeterministic = selected.iter().any(|(_, planned)| planned.nondeterministic);
+    if nondeterministic && !allow_nondeterministic {
         problems.push(TargetProblem::Nondeterministic);
     }
     if !problems.is_empty() {
         return Err(problems);
     }
     Ok(Located {
-        series: vec![SeriesTarget::Derived { evaluation, metric }],
+        series,
         kind: ValueKind::Float,
-        si_unit: Some(planned.metrics[metric].si_unit),
-        held: planned.held,
+        si_unit,
+        held: selected.iter().all(|(_, planned)| planned.held),
     })
 }
 
