@@ -44,11 +44,11 @@ output = "sensor.lidar.front.points"
 # this output, because the 2D grid would mark the rings' ground returns as walls.
 # A body without this lidar fails validation here, so remove this node together
 # with the sim agent's `rear_lidar` sensor.
-[nodes.rear_lidar_deproject]
-kind = "Deproject"
-input = "sensor.lidar.rear"
-output = "sensor.lidar.rear.points"
-
+# [nodes.rear_lidar_deproject]
+# kind = "Deproject"
+# input = "sensor.lidar.rear"
+# output = "sensor.lidar.rear.points"
+#
 # The path follower reads the planner's path by its node name and publishes its
 # reference on a channel named after itself. `[reference]` below decides where
 # that reference goes.
@@ -68,8 +68,8 @@ max_lateral_acceleration = 3.0
 # ↑/↓ surge, ←/→ yaw.
 [nodes.teleop]
 kind = "TwistTeleop"
-surge = 5.0  # peak forward speed at full deflection, m/s (matches max_speed_m_s)
-yaw = 1.0    # peak turn rate at full deflection, rad/s
+surge = 5.0          # peak forward speed at full deflection, m/s (matches max_speed_m_s)
+yaw = 1.0            # peak turn rate at full deflection, rad/s
 
 # The guidance reference the controllers track. The follower is the base; teleop
 # is preferred while fresh, so driving the keys takes over, and releasing them

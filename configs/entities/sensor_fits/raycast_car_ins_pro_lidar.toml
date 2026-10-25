@@ -47,7 +47,7 @@ channel = "sensor.lidar.front"
 # on a real rear mount; to the sides and rear every ring clears. Rings below 0°
 # also strike the ground, which the 2D occupancy grid would read as walls, so no
 # mapper consumes this lidar.
-[rear_lidar]
-device = { from = "entities.sensors.lidar3d_16" }
-transform = { translation = [-1.5, 0.0, 0.9], rotation = [0.0, 0.0, 0.0] }
-channel = "sensor.lidar.rear"
+# [rear_lidar]
+# device = { from = "entities.sensors.lidar3d_16" }
+# transform = { translation = [-1.5, 0.0, 0.9], rotation = [0.0, 0.0, 0.0] }
+# channel = "sensor.lidar.rear"
