@@ -26,6 +26,8 @@ pub enum SiUnit {
     MetersPerSecondSquared,
     RadiansPerSecond,
     Microtesla,
+    /// Curvature: the inverse of a turning radius.
+    PerMeter,
 }
 
 impl SiUnit {
@@ -41,6 +43,7 @@ impl SiUnit {
             Self::MetersPerSecondSquared => "m/s^2",
             Self::RadiansPerSecond => "rad/s",
             Self::Microtesla => "µT",
+            Self::PerMeter => "1/m",
         }
     }
 }
@@ -59,5 +62,6 @@ mod tests {
     fn a_unit_displays_as_its_symbol() {
         assert_eq!(SiUnit::RadiansPerSecond.to_string(), "rad/s");
         assert_eq!(SiUnit::Dimensionless.to_string(), "dimensionless");
+        assert_eq!(SiUnit::PerMeter.to_string(), "1/m");
     }
 }
