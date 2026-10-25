@@ -4,9 +4,11 @@
 //! state-vector slots), and [`FrameAwareState`] (the bundled state + covariance + layout
 //! used by all filters). Index into `FrameAwareState` only via layout lookup — never
 //! hardcode numeric indices. Also holds the frame `primitives` (`AgentId`, monotonic
-//! time), the `tf` provider port, the `state` layout blocks, and the compile-time
-//! frame typing under `conventions`.
+//! time), the `tf` provider port, the `state` layout blocks, the compile-time
+//! frame typing under `conventions`, and the `configuration` spaces planners
+//! search and trajectories are sampled in.
 
+pub mod configuration;
 pub mod conventions;
 pub mod id;
 pub mod primitives;

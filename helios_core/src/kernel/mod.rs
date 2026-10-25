@@ -12,7 +12,10 @@
 //!   levels joined by `.` for names that address something.
 //! - [`si_unit`] — [`SiUnit`](si_unit::SiUnit), the SI unit a number is
 //!   measured in.
+//! - [`angle`] — wrapping an angle into one range and differencing two angles
+//!   the short way round.
 
+pub mod angle;
 pub mod determinism;
 pub mod identifier;
 pub mod integrators;
