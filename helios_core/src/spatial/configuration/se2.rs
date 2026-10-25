@@ -20,6 +20,13 @@ use std::marker::PhantomData;
 /// axis, in radians, counterclockwise from x when z points at the viewer. The
 /// heading is always held in (−π, π]: every way of making one, deserializing
 /// included, wraps it.
+///
+/// As a space this is the plane times the circle, the usual choice for
+/// planning: position and heading move independently, so
+/// [`interpolate`](Configuration::interpolate) slides along a straight line
+/// while turning. It is not the SE(2) Lie group, whose interpolation follows
+/// a constant-curvature arc; an optimizer that needs the group's operations
+/// must not assume them here.
 //
 // `#[serde(skip)]` on the phantom keeps `F` out of the wire form and out of
 // the bounds serde's derive infers, as on `Point`. Reading goes through

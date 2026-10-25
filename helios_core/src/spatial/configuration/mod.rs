@@ -44,8 +44,10 @@ pub trait Configuration: Sized {
     /// such as a joint space read from a robot description, can answer it.
     fn dimension(&self) -> usize;
 
-    /// The physical length, in meters, of the path from `self` to `other` that
-    /// [`interpolate`](Self::interpolate) traces.
+    /// The physical length of the path from `self` to `other` that
+    /// [`interpolate`](Self::interpolate) traces, in the space's own unit:
+    /// meters for a position or a planar pose, radians for a space of
+    /// revolute joints.
     ///
     /// A length, not a cost: it never depends on a planner's weights. A space
     /// whose coordinates are not all lengths says which part it measures; a
