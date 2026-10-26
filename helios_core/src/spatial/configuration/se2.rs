@@ -3,8 +3,11 @@
 //! meter.
 
 use crate::kernel::angle;
-use crate::spatial::configuration::{BodyFrame, Configuration, FromState, Metric};
+use crate::spatial::configuration::{
+    BodyFrame, Configuration, FromState, FromStateError, InFrame, Metric,
+};
 use crate::spatial::conventions::Frame;
+use crate::spatial::state::Quantity;
 use crate::spatial::transforms::ConventionOf;
 use crate::spatial::FrameAwareState;
 
@@ -112,16 +115,34 @@ impl<F: Frame> Configuration for Se2<F> {
 
         Self::new(x, y, heading)
     }
+
+    fn is_finite(&self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && self.heading.is_finite()
+    }
 }
 
 /// Reads the state's position in its reference frame, dropping height, and the
 /// heading of the body named by the key. The key names the body's frame and
 /// convention, since the state's orientation block is held per body.
 impl<F: ConventionOf, B: ConventionOf> FromState<BodyFrame<B>> for Se2<F> {
-    fn from_state(state: &FrameAwareState, key: &BodyFrame<B>) -> Option<Self> {
-        let root = state.reference_frame()?;
-        let position = state.position::<F>(root.clone())?;
-        let orientation = state.orientation::<B, F>(key.frame().clone(), root)?;
+    fn from_state(
+        state: &FrameAwareState,
+        key: &BodyFrame<B>,
+    ) -> Result<InFrame<Self>, FromStateError> {
+        let root = state
+            .reference_frame()
+            .ok_or(FromStateError::NoReferenceFrame)?;
+        let position = state
+            .position::<F>(root.clone())
+            .ok_or_else(|| FromStateError::Absent(Quantity::Position(root.clone())))?;
+        let orientation = state
+            .orientation::<B, F>(key.frame().clone(), root.clone())
+            .ok_or_else(|| {
+                FromStateError::Absent(Quantity::Orientation {
+                    from: key.frame().clone(),
+                    to: root.clone(),
+                })
+            })?;
         // The heading is the yaw of a roll–pitch–yaw decomposition: the turn
         // about `F`'s z axis, which is the direction the body's forward axis
         // points once projected onto the plane. A tilted body, such as a car on
@@ -129,7 +150,14 @@ impl<F: ConventionOf, B: ConventionOf> FromState<BodyFrame<B>> for Se2<F> {
         // down has none, and the decomposition then picks one.
         let heading = orientation.into_inner().euler_angles().2;
 
-        Some(Self::new(position.x(), position.y(), heading))
+        // `new` wraps a NaN heading into a NaN, so checking after it still
+        // catches one.
+        let configuration = Self::new(position.x(), position.y(), heading);
+        if !configuration.is_finite() {
+            return Err(FromStateError::NotFinite);
+        }
+
+        Ok(InFrame::new(root, configuration))
     }
 }
 
@@ -299,6 +327,18 @@ mod tests {
     }
 
     #[test]
+    fn a_finite_pose_is_finite() {
+        assert!(Se2::<Enu>::new(1.0, -2.0, 0.5).is_finite());
+    }
+
+    #[test]
+    fn a_nan_heading_is_not_finite() {
+        // Wrapping a NaN heading leaves it NaN rather than hiding it.
+        assert!(!Se2::<Enu>::new(0.0, 0.0, f64::NAN).is_finite());
+        assert!(!Se2::<Enu>::new(f64::INFINITY, 0.0, 0.0).is_finite());
+    }
+
+    #[test]
     fn path_length_ignores_the_heading() {
         let a = Se2::<Enu>::new(1.0, 1.0, 0.0);
         let b = Se2::<Enu>::new(4.0, 5.0, 2.0);
@@ -363,9 +403,11 @@ mod tests {
             .unwrap();
 
         let read = Se2::<Enu>::from_state(&state, &BodyFrame::<Flu>::new(body())).unwrap();
-        assert!((read.x() - 2.0).abs() < TOLERANCE);
-        assert!((read.y() + 3.0).abs() < TOLERANCE);
-        assert!((read.heading() - FRAC_PI_2).abs() < TOLERANCE);
+        let pose = read.configuration();
+        assert!((pose.x() - 2.0).abs() < TOLERANCE);
+        assert!((pose.y() + 3.0).abs() < TOLERANCE);
+        assert!((pose.heading() - FRAC_PI_2).abs() < TOLERANCE);
+        assert_eq!(read.frame(), &FrameId::global(DATUM));
     }
 
     #[test]
@@ -382,24 +424,44 @@ mod tests {
             .unwrap();
 
         let read = Se2::<Enu>::from_state(&state, &BodyFrame::<Flu>::new(body())).unwrap();
-        assert!((read.heading() - FRAC_PI_2).abs() < TOLERANCE);
+        assert!((read.configuration().heading() - FRAC_PI_2).abs() < TOLERANCE);
     }
 
     #[test]
-    fn a_state_with_no_orientation_reads_as_none() {
+    fn a_state_with_no_orientation_names_the_missing_block() {
         let state = state_of(vec![position_block()]);
-        assert_eq!(
-            Se2::<Enu>::from_state(&state, &BodyFrame::<Flu>::new(body())),
-            None
+        let missing = Quantity::Orientation {
+            from: body(),
+            to: FrameId::global(DATUM),
+        };
+        let refused = Se2::<Enu>::from_state(&state, &BodyFrame::<Flu>::new(body()));
+        assert_eq!(refused, Err(FromStateError::Absent(missing.clone())));
+        // The message names the block, so a warning says what to add.
+        let message = refused.unwrap_err().to_string();
+        assert!(
+            message.contains(&missing.to_string()),
+            "{message} does not name {missing}"
         );
     }
 
     #[test]
-    fn a_state_with_no_position_reads_as_none() {
+    fn a_state_with_no_position_has_no_reference_frame() {
         let state = state_of(vec![orientation_block()]);
         assert_eq!(
             Se2::<Enu>::from_state(&state, &BodyFrame::<Flu>::new(body())),
-            None
+            Err(FromStateError::NoReferenceFrame)
+        );
+    }
+
+    #[test]
+    fn a_non_finite_pose_is_refused() {
+        let mut state = state_of(vec![position_block(), orientation_block()]);
+        state
+            .set_position::<Enu>(FrameId::global(DATUM), Point::new(0.0, f64::NAN, 0.0))
+            .unwrap();
+        assert_eq!(
+            Se2::<Enu>::from_state(&state, &BodyFrame::<Flu>::new(body())),
+            Err(FromStateError::NotFinite)
         );
     }
 

@@ -1,8 +1,9 @@
 //! [`R2`]: the plane as a configuration space, a position with no heading,
 //! and [`EuclideanR2Metric`], straight-line distance across it.
 
-use crate::spatial::configuration::{Configuration, FromState, Metric};
+use crate::spatial::configuration::{Configuration, FromState, FromStateError, InFrame, Metric};
 use crate::spatial::conventions::Frame;
+use crate::spatial::state::Quantity;
 use crate::spatial::transforms::ConventionOf;
 use crate::spatial::FrameAwareState;
 
@@ -75,15 +76,29 @@ impl<F: Frame> Configuration for R2<F> {
         let y = self.y * (1.0 - fraction) + other.y * fraction;
         Self::new(x, y)
     }
+
+    fn is_finite(&self) -> bool {
+        self.x.is_finite() && self.y.is_finite()
+    }
 }
 
 /// Reads the state's position in its reference frame, dropping height. The
 /// key is `()`: the position is the whole answer, so nothing else is named.
 impl<F: ConventionOf> FromState<()> for R2<F> {
-    fn from_state(state: &FrameAwareState, _key: &()) -> Option<Self> {
-        let root = state.reference_frame()?;
-        let position = state.position::<F>(root)?;
-        Some(Self::new(position.x(), position.y()))
+    fn from_state(state: &FrameAwareState, _key: &()) -> Result<InFrame<Self>, FromStateError> {
+        let root = state
+            .reference_frame()
+            .ok_or(FromStateError::NoReferenceFrame)?;
+        let position = state
+            .position::<F>(root.clone())
+            .ok_or_else(|| FromStateError::Absent(Quantity::Position(root.clone())))?;
+
+        let configuration = Self::new(position.x(), position.y());
+        if !configuration.is_finite() {
+            return Err(FromStateError::NotFinite);
+        }
+
+        Ok(InFrame::new(root, configuration))
     }
 }
 
@@ -195,6 +210,17 @@ mod tests {
     }
 
     #[test]
+    fn a_finite_point_is_finite() {
+        assert!(R2::<Enu>::new(1.0, -2.0).is_finite());
+    }
+
+    #[test]
+    fn a_nan_or_infinite_coordinate_is_not_finite() {
+        assert!(!R2::<Enu>::new(f64::NAN, 0.0).is_finite());
+        assert!(!R2::<Enu>::new(0.0, f64::NEG_INFINITY).is_finite());
+    }
+
+    #[test]
     fn the_euclidean_metric_equals_path_length() {
         let a = R2::<Enu>::new(1.0, 1.0);
         let b = R2::<Enu>::new(4.0, 5.0);
@@ -208,13 +234,45 @@ mod tests {
             .set_position::<Enu>(FrameId::global(DATUM), Point::new(2.0, -3.0, 7.0))
             .unwrap();
         let read = R2::<Enu>::from_state(&state, &()).unwrap();
-        assert_eq!(read, R2::new(2.0, -3.0));
+        assert_eq!(read.configuration(), &R2::new(2.0, -3.0));
     }
 
     #[test]
-    fn a_state_with_no_position_reads_as_none() {
+    fn reading_from_a_state_carries_its_reference_frame() {
+        let state = state_of(vec![position_block()]);
+        let read = R2::<Enu>::from_state(&state, &()).unwrap();
+        assert_eq!(read.frame(), &FrameId::global(DATUM));
+    }
+
+    #[test]
+    fn a_state_with_no_position_has_no_reference_frame() {
         let state = state_of(vec![orientation_block()]);
-        assert_eq!(R2::<Enu>::from_state(&state, &()), None);
+        assert_eq!(
+            R2::<Enu>::from_state(&state, &()),
+            Err(FromStateError::NoReferenceFrame)
+        );
+    }
+
+    #[test]
+    fn a_non_finite_position_is_refused() {
+        let mut state = state_of(vec![position_block()]);
+        state
+            .set_position::<Enu>(FrameId::global(DATUM), Point::new(f64::NAN, 0.0, 0.0))
+            .unwrap();
+        assert_eq!(
+            R2::<Enu>::from_state(&state, &()),
+            Err(FromStateError::NotFinite)
+        );
+    }
+
+    #[test]
+    fn a_non_finite_height_is_not_read_and_not_refused() {
+        // Height is dropped, so a NaN there never reaches the configuration.
+        let mut state = state_of(vec![position_block()]);
+        state
+            .set_position::<Enu>(FrameId::global(DATUM), Point::new(1.0, 2.0, f64::NAN))
+            .unwrap();
+        assert!(R2::<Enu>::from_state(&state, &()).is_ok());
     }
 
     #[test]
