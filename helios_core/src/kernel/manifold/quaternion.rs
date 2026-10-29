@@ -9,21 +9,14 @@
 //! - `oplus(q, δ) = q ⊗ exp(δ)` — rotate `q` by the small rotation `exp(δ)`.
 //! - `ominus(y, x) = log(x⁻¹ ⊗ y)` — the tangent rotation that carries `x` to `y`.
 //!
-//! `exp` / `log` are the `SO(3)` maps, supplied by `nalgebra` as
-//! `UnitQuaternion::from_scaled_axis` / `scaled_axis` (a tangent vector is an
-//! axis scaled by its angle). The increment is applied on the **right** — a
-//! body-frame error — matching the INS kinematics `q̇ = ½ q ⊗ ω_body`; that
-//! choice is fixed by the dynamics, not free.
-//!
-//! **Two orderings collide, so every conversion reorders deliberately.** The
-//! stored vector is `[x, y, z, w]` (scalar last), while `Quaternion::new` takes
-//! `(w, i, j, k)` (scalar first) — hence `Quaternion::new(v[3], v[0], v[1], v[2])`
-//! on the way in. On the way out, `.coords` is `[i, j, k, w] = [x, y, z, w]`,
-//! already in storage order, so it copies back with no reorder.
+//! The maths, the body-side convention and the `[x, y, z, w]` storage order
+//! live in [`rotation`], shared with every other stored orientation, so the
+//! estimator's attitude error and any other attitude error mean the same
+//! thing. This block only moves its state slices in and out of it.
 
-use super::{StateBlock, TangentNoise};
+use super::{rotation, StateBlock, TangentNoise};
 
-use nalgebra::{DMatrix, DVector, DVectorView, Quaternion, UnitQuaternion, Vector3};
+use nalgebra::{DMatrix, DVector, DVectorView, Vector3};
 
 #[derive(Debug)]
 pub struct QuaternionBlock {
@@ -38,10 +31,26 @@ impl QuaternionBlock {
         initial_value: DVector<f64>,
         initial_covariance: DMatrix<f64>,
     ) -> Self {
-        assert_eq!(initial_value.len(), 4, "quaternion storage must be 4");
-        assert_eq!(process_noise.covariance().nrows(), 3, "noise must be 3×3");
-        assert_eq!(initial_covariance.nrows(), 3, "init-cov must be 3×3");
-        assert_eq!(initial_covariance.ncols(), 3, "init-cov not square");
+        assert_eq!(
+            initial_value.len(),
+            rotation::STORAGE_DIM,
+            "quaternion storage must be 4"
+        );
+        assert_eq!(
+            process_noise.covariance().nrows(),
+            rotation::TANGENT_DIM,
+            "noise must be 3×3"
+        );
+        assert_eq!(
+            initial_covariance.nrows(),
+            rotation::TANGENT_DIM,
+            "init-cov must be 3×3"
+        );
+        assert_eq!(
+            initial_covariance.ncols(),
+            rotation::TANGENT_DIM,
+            "init-cov not square"
+        );
 
         Self {
             process_noise,
@@ -53,11 +62,11 @@ impl QuaternionBlock {
 
 impl StateBlock for QuaternionBlock {
     fn storage_dim(&self) -> usize {
-        4
+        rotation::STORAGE_DIM
     }
 
     fn tangent_dim(&self) -> usize {
-        3
+        rotation::TANGENT_DIM
     }
 
     fn is_euclidean(&self) -> bool {
@@ -65,28 +74,19 @@ impl StateBlock for QuaternionBlock {
     }
 
     fn oplus(&self, x: DVectorView<f64>, delta: DVectorView<f64>) -> DVector<f64> {
-        // Stored order is [x, y, z, w] (scalar last); Quaternion::new wants
-        // (w, i, j, k) (scalar first), so the scalar x[3] leads.
-        let q = UnitQuaternion::from_quaternion(Quaternion::new(x[3], x[0], x[1], x[2]));
-        // exp: the tangent rotation vector (axis·angle) becomes a unit quaternion.
-        let exp_delta =
-            UnitQuaternion::from_scaled_axis(Vector3::new(delta[0], delta[1], delta[2]));
+        let q = rotation::from_storage(x.as_slice());
+        let delta_vec = Vector3::new(delta[0], delta[1], delta[2]);
 
-        // Right-multiply — the error is applied in the body frame, matching the
-        // INS kinematics q̇ = ½ q ⊗ ω_body.
-        let retracted = q * exp_delta;
+        let retracted = rotation::oplus(&q, &delta_vec);
 
-        // `.coords` is [i, j, k, w] = [x, y, z, w], already in storage order.
-        DVector::from_column_slice(retracted.coords.as_slice())
+        DVector::from_column_slice(&rotation::to_storage(&retracted))
     }
 
     fn ominus(&self, y: DVectorView<f64>, x: DVectorView<f64>) -> DVector<f64> {
-        let qx = UnitQuaternion::from_quaternion(Quaternion::new(x[3], x[0], x[1], x[2]));
-        let qy = UnitQuaternion::from_quaternion(Quaternion::new(y[3], y[0], y[1], y[2]));
+        let q_y = rotation::from_storage(y.as_slice());
+        let q_x = rotation::from_storage(x.as_slice());
 
-        // log of the relative rotation x⁻¹ ⊗ y: the tangent vector that, applied
-        // to x via oplus, lands on y. `scaled_axis` is the SO(3) log map.
-        let delta = (qx.inverse() * qy).scaled_axis();
+        let delta = rotation::ominus(&q_y, &q_x);
         DVector::from_column_slice(delta.as_slice())
     }
 

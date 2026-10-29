@@ -19,6 +19,7 @@
 
 pub mod euclidean;
 pub mod quaternion;
+pub mod rotation;
 
 use std::fmt::Debug;
 
