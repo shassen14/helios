@@ -18,6 +18,7 @@
 //! reads, and the sampler a particle filter or simulator draws from.
 
 pub mod euclidean;
+pub mod geometry;
 pub mod quaternion;
 pub mod rotation;
 
