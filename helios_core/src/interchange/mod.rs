@@ -19,3 +19,4 @@ pub mod measurement;
 pub mod motion;
 pub mod path;
 pub mod perception;
+pub mod trajectory;
