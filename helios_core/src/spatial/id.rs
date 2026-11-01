@@ -35,6 +35,7 @@ use std::fmt::Display;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 
 /// Leaf name of a per-agent localization / SLAM root. The `map -> odom` edge above
@@ -162,12 +163,9 @@ impl FromStr for FrameId {
         if leaf.is_empty() {
             return Err(FrameSpellingError::NoLeaf);
         }
-        if !is_dotted_name(leaf) {
-            return Err(FrameSpellingError::MalformedLeaf);
-        }
         Ok(Self {
             scope,
-            leaf: FrameName(Arc::from(leaf)),
+            leaf: FrameName::new(leaf)?,
         })
     }
 }
@@ -224,13 +222,24 @@ pub enum FrameScope {
     Agent(AgentId),
 }
 
-/// The leaf name of a frame within its scope. Wraps an `Arc<str>` so the name is
-/// carried by reference-count, not copied, on every clone of a [`FrameId`]; it
-/// serializes as (and loads from) a plain string.
+/// The leaf name of a frame within its scope: one or more levels joined by
+/// the level separator (`base_link`, `front.lidar`). Wraps an `Arc<str>` so the
+/// name is carried by reference-count, not copied, on every clone of a
+/// [`FrameId`]; it serializes as (and loads from) a plain string, refused on
+/// load when it is not a leaf.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FrameName(Arc<str>);
 
 impl FrameName {
+    /// The leaf `name`, refused when it is not levels joined by the level
+    /// separator (an empty name included).
+    pub fn new(name: &str) -> Result<Self, FrameSpellingError> {
+        if !is_dotted_name(name) {
+            return Err(FrameSpellingError::MalformedLeaf);
+        }
+        Ok(Self(Arc::from(name)))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -250,7 +259,8 @@ impl<'de> Deserialize<'de> for FrameName {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(FrameName(String::deserialize(deserializer)?.into()))
+        let name = String::deserialize(deserializer)?;
+        FrameName::new(&name).map_err(|why| D::Error::custom(format!("frame leaf '{name}': {why}")))
     }
 }
 
@@ -415,5 +425,30 @@ mod tests {
             let back: FrameId = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(frame, back);
         }
+    }
+
+    #[test]
+    fn a_frame_name_is_one_or_more_levels() {
+        for name in [BASE_LINK, "imu0", "front.lidar"] {
+            assert_eq!(
+                FrameName::new(name).map(|n| n.as_str().to_owned()),
+                Ok(name.to_owned())
+            );
+        }
+        for name in ["", "front..lidar", "base_link.", "base-link", "test datum"] {
+            assert_eq!(
+                FrameName::new(name),
+                Err(FrameSpellingError::MalformedLeaf),
+                "'{name}'"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_leaf_is_refused_on_load() {
+        let refused = serde_json::from_str::<FrameName>("\"base-link\"");
+
+        let message = refused.expect_err("a malformed leaf loads").to_string();
+        assert!(message.contains("base-link"), "{message}");
     }
 }
