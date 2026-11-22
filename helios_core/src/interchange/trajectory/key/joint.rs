@@ -15,8 +15,8 @@ use std::num::NonZeroUsize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JointType {
     /// Turns, in radians. A joint that wraps (a continuous wrist, a wheel)
-    /// takes the short way round; one that doesn't is bounded short of a full
-    /// turn either way, so it is flat.
+    /// takes the short way round; one that doesn't is flat, its value never
+    /// taken mod 2π however wide its limits (±2π is two turns apart).
     Revolute { wraps: bool },
     /// Slides, in meters, and never wraps.
     Prismatic,
