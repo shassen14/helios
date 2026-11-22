@@ -1,5 +1,5 @@
 //! [`KeyName`]: the name of a joint, a joint group, or another named
-//! trajectory key.
+//! key.
 
 use crate::kernel::identifier::is_level;
 
@@ -7,7 +7,7 @@ use std::error::Error;
 use std::fmt::{self, Display};
 use std::sync::Arc;
 
-/// A name inside a trajectory key: one level of ASCII letters, digits and
+/// A name inside a key: one level of ASCII letters, digits and
 /// `_`, checked once when it is made. Wraps an `Arc<str>` so a key is cheap
 /// to clone.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

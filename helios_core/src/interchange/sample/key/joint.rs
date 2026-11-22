@@ -1,7 +1,7 @@
 //! A joint group: the joints one geometry key holds, and why a list of
 //! joints can be refused as one.
 
-use crate::interchange::trajectory::name::KeyName;
+use crate::interchange::sample::name::KeyName;
 use crate::kernel::manifold::geometry::GeometryKind;
 use crate::kernel::si_unit::SiUnit;
 

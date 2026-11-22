@@ -1,4 +1,4 @@
-//! The kinds of trajectory key.
+//! The kinds of key.
 
 mod geometry;
 mod joint;

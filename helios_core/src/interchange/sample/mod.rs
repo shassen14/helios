@@ -1,9 +1,11 @@
-//! The keys a trajectory's columns are declared by. A trajectory is a table:
-//! one row per sample, one column per stored number, and a key is the header
-//! of one or more columns, saying what those numbers mean.
+//! The keys a sample is declared by. A sample is one row of numbers about an
+//! agent at one instant, and a key is the header of one or more of its
+//! columns, saying what those numbers mean. A trajectory is a table of
+//! samples; an estimate is one sample with its uncertainty; both name their
+//! columns with these keys.
 //!
 //! A key names a role, never a subject (ego, a track, a candidate), so one
-//! set of keys serves every member of a set of trajectories.
+//! set of keys serves every member of a set.
 //!
 //! - [`GeometryKey`]: where, from a closed list of roles. The role decides
 //!   the [`GeometryKind`](crate::kernel::manifold::geometry::GeometryKind) and

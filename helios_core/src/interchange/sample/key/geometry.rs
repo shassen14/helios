@@ -1,8 +1,8 @@
 //! [`GeometryKey`]: where something is, from a closed list of roles.
 
-use crate::interchange::trajectory::anchor::{Anchor, Root};
-use crate::interchange::trajectory::key::joint::JointGroup;
-use crate::interchange::trajectory::name::KeyName;
+use crate::interchange::sample::anchor::{Anchor, Root};
+use crate::interchange::sample::key::joint::JointGroup;
+use crate::interchange::sample::name::KeyName;
 use crate::kernel::manifold::{geometry::GeometryKind, rotation};
 use crate::kernel::si_unit::SiUnit;
 
@@ -130,7 +130,7 @@ pub enum GeometryId {
 mod tests {
     use super::*;
 
-    use crate::interchange::trajectory::key::joint::{Joint, JointType};
+    use crate::interchange::sample::key::joint::{Joint, JointType};
     use crate::spatial::id::{FrameName, BASE_LINK};
 
     fn anchor(spelling: &str) -> Anchor {

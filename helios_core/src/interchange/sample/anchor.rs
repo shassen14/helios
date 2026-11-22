@@ -27,7 +27,7 @@ impl Anchor {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Root {
     /// The one frame all geometry is finally rooted at, named once for the
-    /// whole trajectory.
+    /// whole sample.
     Reference,
     /// Another anchor of the same sample (a tool rooted at the base it is
     /// mounted on). That anchor must have an orientation.

@@ -11,12 +11,16 @@
 //!   [`StampedTwist`](motion::StampedTwist)).
 //! - [`path`] — planner output ([`Path`](path::Path),
 //!   [`PlannerGoal`](path::PlannerGoal)) consumed by path following.
+//! - [`sample`] — the key vocabulary that names what one sample of an agent
+//!   holds (geometry, and later rates and annotations), shared by every noun
+//!   built from samples.
 //!
 //! The [`measurement`] ⊥ [`perception`] split partitions *world-derived* nouns
-//! only; `motion` and `path` are not world-derived and stay flat at the root.
+//! only; `motion`, `path` and `sample` are not world-derived and stay flat at
+//! the root.
 
 pub mod measurement;
 pub mod motion;
 pub mod path;
 pub mod perception;
-pub mod trajectory;
+pub mod sample;
